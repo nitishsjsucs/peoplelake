@@ -24,7 +24,7 @@
         "start_month": "2024-01"
       },
       "id": "q01",
-      "latency_ms": 50.0,
+      "latency_ms": 74.8,
       "model": null,
       "question": "What was our total headcount at the end of 2024?",
       "score": {
@@ -51,7 +51,7 @@
         "start_month": "2023-06"
       },
       "id": "q02",
-      "latency_ms": 5.2,
+      "latency_ms": 7.7,
       "model": null,
       "question": "How many employees did Engineering have in June 2023?",
       "score": {
@@ -78,7 +78,7 @@
         "start_month": "2025-01"
       },
       "id": "q03",
-      "latency_ms": 3.7,
+      "latency_ms": 5.4,
       "model": null,
       "question": "Show me headcount for the Sales department across 2025.",
       "score": {
@@ -105,7 +105,7 @@
         "start_month": "2024-07"
       },
       "id": "q04",
-      "latency_ms": 3.2,
+      "latency_ms": 5.5,
       "model": null,
       "question": "Monthly headcount in Q3 2024 for Customer Success",
       "score": {
@@ -132,7 +132,7 @@
         "start_month": "2025-03"
       },
       "id": "q05",
-      "latency_ms": 3.0,
+      "latency_ms": 5.5,
       "model": null,
       "question": "How many people worked in Finance in March 2025?",
       "score": {
@@ -159,7 +159,7 @@
         "start_month": "2023-01"
       },
       "id": "q06",
-      "latency_ms": 3.2,
+      "latency_ms": 4.5,
       "model": null,
       "question": "Company headcount by month from January 2023 to June 2023",
       "score": {
@@ -186,7 +186,7 @@
         "start_month": "2025-01"
       },
       "id": "q07",
-      "latency_ms": 2.9,
+      "latency_ms": 5.1,
       "model": null,
       "question": "Headcount for D03 in the first half of 2025",
       "score": {
@@ -213,7 +213,7 @@
         "start_month": "2023-10"
       },
       "id": "q08",
-      "latency_ms": 3.4,
+      "latency_ms": 5.2,
       "model": null,
       "question": "How big was the Legal team in Q4 2023?",
       "score": {
@@ -240,7 +240,7 @@
         "start_month": "2023-01"
       },
       "id": "q09",
-      "latency_ms": 3.2,
+      "latency_ms": 4.4,
       "model": null,
       "question": "What is the headcount trend for the whole company?",
       "score": {
@@ -267,7 +267,7 @@
         "start_month": "2023-01"
       },
       "id": "q10",
-      "latency_ms": 2.8,
+      "latency_ms": 7.9,
       "model": null,
       "question": "Number of active employees in Operations at year-end 2023",
       "score": {
@@ -294,7 +294,7 @@
         "start_month": "2025-07"
       },
       "id": "q11",
-      "latency_ms": 3.0,
+      "latency_ms": 5.0,
       "model": null,
       "question": "Staff count in the Data department since July 2025",
       "score": {
@@ -321,7 +321,7 @@
         "start_month": "2023-01"
       },
       "id": "q12",
-      "latency_ms": 3.3,
+      "latency_ms": 5.0,
       "model": null,
       "question": "How many employees were in the People department in 2023?",
       "score": {
@@ -348,7 +348,7 @@
         "start_month": "2025-12"
       },
       "id": "q13",
-      "latency_ms": 2.7,
+      "latency_ms": 4.0,
       "model": null,
       "question": "What was total FTE in December 2025?",
       "score": {
@@ -375,7 +375,7 @@
         "start_month": "2024-01"
       },
       "id": "q14",
-      "latency_ms": 3.0,
+      "latency_ms": 4.8,
       "model": null,
       "question": "Full-time equivalents in Engineering during 2024",
       "score": {
@@ -402,7 +402,7 @@
         "start_month": "2023-01"
       },
       "id": "q15",
-      "latency_ms": 3.5,
+      "latency_ms": 5.7,
       "model": null,
       "question": "FTE for the Product department in Q1 2023",
       "score": {
@@ -429,7 +429,7 @@
         "start_month": "2024-04"
       },
       "id": "q16",
-      "latency_ms": 2.7,
+      "latency_ms": 4.4,
       "model": null,
       "question": "Show FTE for D12 between April 2024 and September 2024",
       "score": {
@@ -456,7 +456,7 @@
         "start_month": "2023-01"
       },
       "id": "q17",
-      "latency_ms": 2.8,
+      "latency_ms": 4.2,
       "model": null,
       "question": "How many full-time equivalents did Marketing have at the end of 2023?",
       "score": {
@@ -483,7 +483,7 @@
         "start_month": "2024-01"
       },
       "id": "q18",
-      "latency_ms": 2.6,
+      "latency_ms": 4.8,
       "model": null,
       "question": "Company-wide FTE over the second half of 2024",
       "score": {
@@ -510,7 +510,7 @@
         "start_month": "2025-01"
       },
       "id": "q19",
-      "latency_ms": 3.9,
+      "latency_ms": 6.1,
       "model": null,
       "question": "FTE in Design for 2025",
       "score": {
@@ -537,7 +537,7 @@
         "start_month": "2024-05"
       },
       "id": "q20",
-      "latency_ms": 2.7,
+      "latency_ms": 5.1,
       "model": null,
       "question": "What is the FTE of the Security team in May 2024?",
       "score": {
@@ -564,7 +564,7 @@
         "start_month": "2023-01"
       },
       "id": "q21",
-      "latency_ms": 2.7,
+      "latency_ms": 4.6,
       "model": null,
       "question": "Give me the FTE trend across all departments",
       "score": {
@@ -591,7 +591,7 @@
         "start_month": "2025-04"
       },
       "id": "q22",
-      "latency_ms": 2.8,
+      "latency_ms": 10.9,
       "model": null,
       "question": "FTE in Customer Success in Q2 2025",
       "score": {
@@ -618,7 +618,7 @@
         "start_month": "2023-10"
       },
       "id": "q23",
-      "latency_ms": 2.8,
+      "latency_ms": 7.4,
       "model": null,
       "question": "Total full-time equivalent capacity in Finance from October 2023 through March 2024",
       "score": {
@@ -645,7 +645,7 @@
         "start_month": "2023-01"
       },
       "id": "q24",
-      "latency_ms": 2.6,
+      "latency_ms": 4.5,
       "model": null,
       "question": "What was the FTE for Operations in 2023?",
       "score": {
@@ -672,7 +672,7 @@
         "start_month": "2024-01"
       },
       "id": "q25",
-      "latency_ms": 4.2,
+      "latency_ms": 4.6,
       "model": null,
       "question": "How many people did we hire in 2024?",
       "score": {
@@ -699,7 +699,7 @@
         "start_month": "2023-04"
       },
       "id": "q26",
-      "latency_ms": 3.2,
+      "latency_ms": 5.8,
       "model": null,
       "question": "New hires in Engineering in Q2 2023",
       "score": {
@@ -726,7 +726,7 @@
         "start_month": "2025-01"
       },
       "id": "q27",
-      "latency_ms": 2.6,
+      "latency_ms": 3.7,
       "model": null,
       "question": "How many hires did Sales make in January 2025?",
       "score": {
@@ -753,7 +753,7 @@
         "start_month": "2024-01"
       },
       "id": "q28",
-      "latency_ms": 2.7,
+      "latency_ms": 3.5,
       "model": null,
       "question": "Hiring in the Data department during the first half of 2024",
       "score": {
@@ -780,7 +780,7 @@
         "start_month": "2023-02"
       },
       "id": "q29",
-      "latency_ms": 2.5,
+      "latency_ms": 6.4,
       "model": null,
       "question": "Show monthly hires for Marketing from February 2023 to August 2023",
       "score": {
@@ -807,7 +807,7 @@
         "start_month": "2025-10"
       },
       "id": "q30",
-      "latency_ms": 2.7,
+      "latency_ms": 5.1,
       "model": null,
       "question": "How many employees joined the company in Q4 2025?",
       "score": {
@@ -834,7 +834,7 @@
         "start_month": "2025-01"
       },
       "id": "q31",
-      "latency_ms": 2.7,
+      "latency_ms": 4.3,
       "model": null,
       "question": "Hires for D06 in 2025",
       "score": {
@@ -861,7 +861,7 @@
         "start_month": "2023-01"
       },
       "id": "q32",
-      "latency_ms": 2.6,
+      "latency_ms": 4.3,
       "model": null,
       "question": "How many people were hired into Product overall?",
       "score": {
@@ -888,7 +888,7 @@
         "start_month": "2023-01"
       },
       "id": "q33",
-      "latency_ms": 2.8,
+      "latency_ms": 5.4,
       "model": null,
       "question": "Total hires including rehires in Legal in 2023",
       "score": {
@@ -915,7 +915,7 @@
         "start_month": "2024-11"
       },
       "id": "q34",
-      "latency_ms": 3.6,
+      "latency_ms": 5.0,
       "model": null,
       "question": "How many new employees started in Security in November 2024?",
       "score": {
@@ -942,7 +942,7 @@
         "start_month": "2024-10"
       },
       "id": "q35",
-      "latency_ms": 3.5,
+      "latency_ms": 5.2,
       "model": null,
       "question": "Hiring volume company-wide since October 2024",
       "score": {
@@ -969,7 +969,7 @@
         "start_month": "2025-07"
       },
       "id": "q36",
-      "latency_ms": 3.3,
+      "latency_ms": 8.0,
       "model": null,
       "question": "New hires in Design in Q3 2025",
       "score": {
@@ -996,7 +996,7 @@
         "start_month": "2023-01"
       },
       "id": "q37",
-      "latency_ms": 2.9,
+      "latency_ms": 7.8,
       "model": null,
       "question": "How many employees left in 2023?",
       "score": {
@@ -1023,7 +1023,7 @@
         "start_month": "2025-01"
       },
       "id": "q38",
-      "latency_ms": 3.1,
+      "latency_ms": 5.6,
       "model": null,
       "question": "Departures from Engineering in Q1 2025",
       "score": {
@@ -1050,7 +1050,7 @@
         "start_month": "2024-01"
       },
       "id": "q39",
-      "latency_ms": 2.8,
+      "latency_ms": 6.0,
       "model": null,
       "question": "What was attrition in Sales during 2024?",
       "score": {
@@ -1077,7 +1077,7 @@
         "start_month": "2023-08"
       },
       "id": "q40",
-      "latency_ms": 3.5,
+      "latency_ms": 6.0,
       "model": null,
       "question": "Terminations in Finance in August 2023",
       "score": {
@@ -1104,7 +1104,7 @@
         "start_month": "2025-01"
       },
       "id": "q41",
-      "latency_ms": 2.8,
+      "latency_ms": 4.2,
       "model": null,
       "question": "How many people quit or were let go from Customer Success in the second half of 2025?",
       "score": {
@@ -1131,7 +1131,7 @@
         "start_month": "2024-06"
       },
       "id": "q42",
-      "latency_ms": 3.0,
+      "latency_ms": 4.9,
       "model": null,
       "question": "Monthly departures for D05 between June 2024 and December 2024",
       "score": {
@@ -1158,7 +1158,7 @@
         "start_month": "2023-01"
       },
       "id": "q43",
-      "latency_ms": 2.9,
+      "latency_ms": 4.1,
       "model": null,
       "question": "Show company departures across the whole period",
       "score": {
@@ -1185,7 +1185,7 @@
         "start_month": "2024-04"
       },
       "id": "q44",
-      "latency_ms": 2.7,
+      "latency_ms": 4.9,
       "model": null,
       "question": "How many leavers did the Data team have in Q2 2024?",
       "score": {
@@ -1212,7 +1212,7 @@
         "start_month": "2025-01"
       },
       "id": "q45",
-      "latency_ms": 3.1,
+      "latency_ms": 5.7,
       "model": null,
       "question": "Exits from Operations in 2025",
       "score": {
@@ -1239,7 +1239,7 @@
         "start_month": "2024-03"
       },
       "id": "q46",
-      "latency_ms": 2.8,
+      "latency_ms": 4.6,
       "model": null,
       "question": "How many people left the People department in March 2024?",
       "score": {
@@ -1266,7 +1266,7 @@
         "start_month": "2025-04"
       },
       "id": "q47",
-      "latency_ms": 3.2,
+      "latency_ms": 4.8,
       "model": null,
       "question": "Departures in Product since April 2025",
       "score": {
@@ -1293,7 +1293,7 @@
         "start_month": "2023-07"
       },
       "id": "q48",
-      "latency_ms": 2.9,
+      "latency_ms": 4.1,
       "model": null,
       "question": "Employee turnover count in Legal for Q3 2023",
       "score": {
@@ -1320,7 +1320,7 @@
         "start_month": "2024-01"
       },
       "id": "q49",
-      "latency_ms": 2.7,
+      "latency_ms": 4.3,
       "model": null,
       "question": "What was the offer acceptance rate in 2024?",
       "score": {
@@ -1347,7 +1347,7 @@
         "start_month": "2023-07"
       },
       "id": "q50",
-      "latency_ms": 2.9,
+      "latency_ms": 4.7,
       "model": null,
       "question": "Offer acceptance rate for Engineering in Q3 2023",
       "score": {
@@ -1374,7 +1374,7 @@
         "start_month": "2025-01"
       },
       "id": "q51",
-      "latency_ms": 2.9,
+      "latency_ms": 4.7,
       "model": null,
       "question": "What share of offers did candidates accept in Sales in 2025?",
       "score": {
@@ -1401,7 +1401,7 @@
         "start_month": "2024-10"
       },
       "id": "q52",
-      "latency_ms": 3.2,
+      "latency_ms": 6.5,
       "model": null,
       "question": "Offer accept rate for the Design department in October 2024",
       "score": {
@@ -1428,7 +1428,7 @@
         "start_month": "2023-01"
       },
       "id": "q53",
-      "latency_ms": 3.2,
+      "latency_ms": 5.1,
       "model": null,
       "question": "How often were our offers accepted company-wide in the first half of 2023?",
       "score": {
@@ -1455,7 +1455,7 @@
         "start_month": "2025-05"
       },
       "id": "q54",
-      "latency_ms": 3.2,
+      "latency_ms": 4.8,
       "model": null,
       "question": "Acceptance rate of offers in D10 from May 2025 to November 2025",
       "score": {
@@ -1482,7 +1482,7 @@
         "start_month": "2023-01"
       },
       "id": "q55",
-      "latency_ms": 2.8,
+      "latency_ms": 5.5,
       "model": null,
       "question": "Offer acceptance in Marketing over the whole period",
       "score": {
@@ -1509,7 +1509,7 @@
         "start_month": "2024-01"
       },
       "id": "q56",
-      "latency_ms": 2.8,
+      "latency_ms": 7.0,
       "model": null,
       "question": "What percentage of offers extended by Finance were accepted in Q1 2024?",
       "score": {
@@ -1536,7 +1536,7 @@
         "start_month": "2023-01"
       },
       "id": "q57",
-      "latency_ms": 2.7,
+      "latency_ms": 6.8,
       "model": null,
       "question": "Offer acceptance rate for Security in 2023",
       "score": {
@@ -1563,7 +1563,7 @@
         "start_month": "2024-10"
       },
       "id": "q58",
-      "latency_ms": 2.6,
+      "latency_ms": 4.5,
       "model": null,
       "question": "Candidate offer acceptance rate in Customer Success during Q4 2024",
       "score": {
@@ -1590,7 +1590,7 @@
         "start_month": "2025-01"
       },
       "id": "q59",
-      "latency_ms": 3.0,
+      "latency_ms": 6.7,
       "model": null,
       "question": "Offer acceptance rate for the Data department since January 2025",
       "score": {
@@ -1617,7 +1617,7 @@
         "start_month": "2023-12"
       },
       "id": "q60",
-      "latency_ms": 3.3,
+      "latency_ms": 4.2,
       "model": null,
       "question": "How did offer acceptance look in Product in December 2023?",
       "score": {
@@ -1664,9 +1664,9 @@
     },
     "invalid_answers": 0,
     "latency_ms": {
-      "max": 50.0,
-      "p50": 2.9,
-      "p95": 3.9
+      "max": 74.8,
+      "p50": 5.0,
+      "p95": 7.9
     },
     "questions": 60
   },

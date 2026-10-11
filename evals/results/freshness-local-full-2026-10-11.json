@@ -5,55 +5,55 @@
       "events": 100000,
       "max_s": 72,
       "p50_s": 37,
-      "p90_s": 61,
+      "p90_s": 62,
       "p95_s": 65,
       "p99_s": 69,
       "share_within_15m": 1.0
     },
     "run_start_to_commit": {
       "events": 100000,
-      "max_s": 24,
-      "p50_s": 8,
-      "p90_s": 21,
-      "p95_s": 22,
-      "p99_s": 24,
+      "max_s": 11,
+      "p50_s": 3,
+      "p90_s": 9,
+      "p95_s": 10,
+      "p99_s": 11,
       "share_within_15m": 1.0
     },
     "stages_per_run": {
       "commit_s": {
-        "events": 121,
-        "max_s": 0.113,
-        "p50_s": 0.02,
-        "p90_s": 0.061,
-        "p95_s": 0.071,
-        "p99_s": 0.097,
+        "events": 60,
+        "max_s": 0.069,
+        "p50_s": 0.007,
+        "p90_s": 0.027,
+        "p95_s": 0.044,
+        "p99_s": 0.069,
         "share_within_15m": 1.0
       },
       "dispatch_s": {
-        "events": 121,
-        "max_s": 3.274,
-        "p50_s": 0.26,
-        "p90_s": 0.47,
-        "p95_s": 0.495,
-        "p99_s": 0.502,
+        "events": 60,
+        "max_s": 0.507,
+        "p50_s": 0.234,
+        "p90_s": 0.451,
+        "p95_s": 0.473,
+        "p99_s": 0.507,
         "share_within_15m": 1.0
       },
       "load_s": {
-        "events": 121,
-        "max_s": 5.537,
-        "p50_s": 0.124,
-        "p90_s": 0.421,
-        "p95_s": 0.587,
-        "p99_s": 1.261,
+        "events": 60,
+        "max_s": 1.121,
+        "p50_s": 0.078,
+        "p90_s": 0.246,
+        "p95_s": 0.316,
+        "p99_s": 1.121,
         "share_within_15m": 1.0
       },
       "transform_s": {
         "events": 60,
-        "max_s": 23.557,
-        "p50_s": 7.41,
-        "p90_s": 19.604,
-        "p95_s": 20.144,
-        "p99_s": 23.557,
+        "max_s": 9.856,
+        "p50_s": 2.228,
+        "p90_s": 8.356,
+        "p95_s": 9.131,
+        "p99_s": 9.856,
         "share_within_15m": 1.0
       }
     }
@@ -67,19 +67,20 @@
   "date": "2026-10-11",
   "delivery": {
     "delivered": 100000,
-    "requests": 9277,
-    "seconds": 3601.8
+    "requests": 9723,
+    "seconds": 3599.0,
+    "tick_seconds": 1.0
   },
   "duration_minutes": 60.0,
   "engine": "duckdb",
   "events": 100000,
   "excluding_first_5_minutes": {
-    "events": 91606,
-    "max_s": 91,
-    "p50_s": 48,
-    "p90_s": 74,
-    "p95_s": 78,
-    "p99_s": 86,
+    "events": 91639,
+    "max_s": 79,
+    "p50_s": 42,
+    "p90_s": 66,
+    "p95_s": 70,
+    "p99_s": 74,
     "share_within_15m": 1.0
   },
   "kind": "freshness",
@@ -87,25 +88,25 @@
   "method": "ledger histograms of first receipt (10 s buckets) against the publishing run's commit time",
   "overall": {
     "events": 100000,
-    "max_s": 93,
-    "p50_s": 48,
-    "p90_s": 74,
-    "p95_s": 78,
-    "p99_s": 86,
+    "max_s": 79,
+    "p50_s": 42,
+    "p90_s": 66,
+    "p95_s": 69,
+    "p99_s": 74,
     "share_within_15m": 1.0
   },
   "ports_busy_after_stack_down": [],
   "profile": "full",
   "rate_events_per_s": 27.778,
   "run_duration_s": {
-    "p50": 3.463,
-    "p95": 20.809
+    "p50": 2.681,
+    "p95": 9.623
   },
-  "runs": 121,
-  "runs_committed": 121,
-  "stand_ins": "SinkRoller roll files (60 s), pyiceberg SqlCatalog, local runner process, ticker for cron",
-  "started_at": "2026-10-11T03:46:12Z",
+  "runs": 60,
+  "runs_committed": 60,
+  "stand_ins": "pyiceberg SqlCatalog, local runner process, ticker for cron (the LandingRoller landing with 60 s rolls is the production code)",
+  "started_at": "2026-10-11T08:36:09Z",
   "target": "local",
   "target_15_minutes_p95_met": true,
-  "transforms_skipped": 61
+  "transforms_skipped": 0
 }

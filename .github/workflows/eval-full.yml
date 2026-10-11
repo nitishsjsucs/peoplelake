@@ -58,8 +58,9 @@ jobs:
           name: reference-digests-full
       - run: uv run --project pipeline peoplelake auth dev-keys
       - name: Scenario ${{ matrix.scenario }} on the full profile
-        # Twice the slowest full-profile scenario measured in the build session (see README Results).
-        timeout-minutes: 16
+        # Twice the slowest full-profile scenario measured locally (S4, 147 s) times the small profile's
+        # measured slowdown on this runner (1.5); eval-full has not run on GitHub yet (see README CI).
+        timeout-minutes: 8
         run: >
           uv run --project pipeline peoplelake eval scenarios --profile full --chunks 20
           --scenarios ${{ matrix.scenario }} --reference reference-digests-full.json

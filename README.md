@@ -20,8 +20,8 @@ v1 is built and verified end to end on the local stack (every item of the build 
 | Worker: auth, ingest, landing | done locally: fail-closed config, Access JWT verification (RS256, iss, aud, exp) with locally generated dev keys, role gates, `POST /v1/ingest/:source` for three envelopes (zod, all-or-nothing, at most 50 events per request so a request stays well inside the Workers Free plan's 10 ms of CPU, the ingest path prewarmed at isolate startup), RawRecord normalization shared with Python through a golden, and the LandingRoller Durable Object (one SQLite row per request, planned immutable roll files in R2 every 60 s, one Queue message per roll, backpressure), the same code locally and in production; no Basin Pipelines (Workers Paid only) |
 | Orchestration: Coordinator, Workflow, dispatchers | done locally (Miniflare Workflows): Coordinator ledger with single-flight runs, attempt-scoped jobs and leases, `WarehouseRunWorkflow` (load, transform or skip, verify, commit, release; a committed run uses 8 steps and records them), poll and Cloud Run dispatchers, lake-events queue consumer (one message per landing roll), the Workers Free plan guards (a 5-minute cron backstop that requests a run only while a landed roll is past the committed landing cursor, heartbeat off, a 240 s minimum interval between automatic runs, failure backoff of 5 minutes doubling to 6 hours, 30 automatic runs a UTC day, a 275 GB monthly BigQuery guard that commits the load and skips the transform), indexed ledger queries with per-day Durable Object row counters and `GET /api/ops/budget`, eval faults; production Workflows not exercised yet |
 | Runner and local stack | done locally: `peoplelake runner poll` (in-process dbt, heartbeats, eval fault hooks) and `peoplelake stack up/down` (wrangler dev, runner, ticker in their own process groups, ports checked free) |
-| Scenario and freshness evals | done on the local stack (see Results): scenario equivalence on DuckDB, and the 60-minute local freshness measurement of the full profile; production freshness is measured once by `npm run prod:e2e` |
-| CI | workflows written (`ci.yml` on every push, `eval-full.yml` weekly and on demand); the owner's loop publishes `main`, so they run on GitHub from then on |
+| Scenario and freshness evals | done on the local stack and re-recorded on the Free plan design (see Results): scenario equivalence on DuckDB for all six scenarios on both profiles, and the 60-minute local freshness measurement of the full profile; production freshness is measured once by `npm run prod:e2e` |
+| CI | `ci.yml` runs on GitHub on every push of `main` and has passed every run so far, the small-profile scenario matrix included; `eval-full.yml` (weekly and on demand) has not run yet |
 | Workers AI and `/api/ask` | done: `AiProvider` with a deterministic stub (CI), llama-server (local) and Workers AI through AI Gateway (production, mocked in tests), `POST /api/ask` answering only from the committed metrics snapshot, `/api/ops/ai` gateway check; the 60-question ask eval (`peoplelake eval ask`) scores each provider through the Worker: stub and llama-server results recorded (see Results), Workers AI runs after the production setup |
 | Workers Free plan budget | done: `npm run budget` computes every peak-day estimate from the repo's constants and production config against the Free allowances and this repo's planning shares (table below), `--check` runs in CI, `predeploy-check` and the doctor refuse anything that needs Workers Paid |
 | Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | built for the Workers Free plan and tested offline (dry run against fake runners, fake Google clients, rendered config bundles with `wrangler deploy --dry-run`); not run against real accounts yet, see Production setup |
@@ -150,7 +150,7 @@ Computed by `npm run budget` from the repo's constants and `wrangler.jsonc` `env
 | BigQuery queries | 1 TiB (a month, billing account) | 275 GB | 275 GB | 25.0% | yes | go-live month: 94 transforms x 3 GB (prod:e2e 20, drill 6 x 12), capped by the 275 GB monthly guard |
 | BigQuery storage | 10 GiB (a month, billing account) | 2.7 GB | 500 MB | 4.7% | yes | raw table and models of one full delivery |
 | Cloud Build minutes | 2,500 build-minutes (a month, billing account) | 625 | 24 | 0.96% | yes | 3 builds of about 8 minutes |
-| CPU per ingest request (50 events) | 10 ms per request | 10 ms | warm p99 1.03 ms, first after prewarm 2.76 ms | 27.6% | yes | measured: `evals/results/ingest-cpu-2026-10-11.json` (2026-10-11), the worst of the three sources |
+| CPU per ingest request (50 events) | 10 ms per request | 10 ms | warm p99 1.33 ms, first after prewarm 3.86 ms | 38.6% | yes | measured: `evals/results/ingest-cpu-2026-10-11.json` (2026-10-11), the worst of the three sources |
 
 Configuration rules (no `pipelines`, no `limits`, one `*/5 * * * *` cron, SQLite Durable Objects only, the production guard values, a Free plan model): all hold.
 <!-- budget:end -->
@@ -294,7 +294,7 @@ uv run --project pipeline peoplelake eval ask --provider workers-ai   # producti
 
 ### Freshness
 
-`peoplelake eval freshness --target local --duration 60m` delivers the full profile at a constant rate (100,000 events over 60 minutes, 27.8 per second) in live mode: the sources post every second (`--tick-seconds`; production sources post every 10 s), at most 50 events per request, 60 s landing rolls, the cron ticker, single-flight runs. Per unique event, freshness is the commit time of the run that published it minus the Worker's first receipt, read from the Coordinator ledger (10 s buckets, so conservative by up to 10 s) and cross-checked against the `ops_event_freshness` histograms the runner returns. The 15-minute p95 is a target that is reported, never asserted. Local numbers describe the local stack on the machine named in the result; the production number comes from the single live delivery of `npm run prod:e2e`. Results recorded before builder 3's Free plan migration (dated 2026-10-11 and produced with 500-event requests, the SinkRoller stand-in and a 1-minute cron) describe that earlier code; each result names its command and code, and the ones recorded on the Free plan design say so in their lake and stand-in fields.
+`peoplelake eval freshness --target local --duration 60m` delivers the full profile at a constant rate (100,000 events over 60 minutes, 27.8 per second) in live mode: the sources post every second (`--tick-seconds`; production sources post every 10 s), at most 50 events per request, 60 s landing rolls, the cron ticker, single-flight runs. Per unique event, freshness is the commit time of the run that published it minus the Worker's first receipt, read from the Coordinator ledger (10 s buckets, so conservative by up to 10 s) and cross-checked against the `ops_event_freshness` histograms the runner returns. The 15-minute p95 is a target that is reported, never asserted. Local numbers describe the local stack on the machine named in the result; the production number comes from the single live delivery of `npm run prod:e2e`. Every committed local result was recorded on the Free plan design (50-event requests, the LandingRoller landing, the 5-minute cron) and names its command, machine and stand-ins.
 
 ## CI
 
@@ -302,7 +302,7 @@ GitHub Actions run CI only and hold no cloud credentials (`permissions: contents
 
 | Workflow | Job | What it proves |
 |---|---|---|
-| `ci.yml` | node | generated Worker types current, typecheck (Worker, scripts, dashboard), vitest (Worker tests in workerd, node tests, dashboard tests in happy-dom), dashboard build, contracts current, prose check, the production config rendered from a fixture state bundles (`npm run deploy:dry-run`) |
+| `ci.yml` | node | generated Worker types current, typecheck (Worker, scripts, dashboard), vitest (Worker tests in workerd, node tests, dashboard tests in happy-dom), dashboard build, contracts current, prose check, the production config rendered from a fixture state bundles (`npm run deploy:dry-run`), the Workers Free plan rules and budget (`npm run budget -- --check`) |
 | `ci.yml` | python | ruff, pytest without the dbt and end-to-end markers |
 | `ci.yml` | dbt | small profile generated with its pinned sha256, reference digests (straight load, `dbt run --empty`, build with unit tests, full refresh, equal digests), dbt-level tests, offline BigQuery compiles with sqlglot parse and ORDER BY lint; uploads the reference digests |
 | `ci.yml` | clean-clone | clones the commit to a temp directory: `uv sync --locked`, `dbt parse`, smoke tests (nothing gitignored is relied on) |
@@ -310,7 +310,7 @@ GitHub Actions run CI only and hold no cloud credentials (`permissions: contents
 | `ci.yml` | e2e (B, S1 to S5) | one scenario per VM on the small profile through the local stack, compared with the reference digests |
 | `eval-full.yml` | scenarios | the same matrix on the full profile (100,000 events), weekly and on demand; reports only |
 
-Scenario step timeouts are twice the slowest leg measured in the build session (small profile: S5, 342.2 s; full profile: B, 465.6 s, with S1, S3 and S5 at 165.0 s, 164.9 s and 169.5 s in a later, less loaded run): 12 minutes for the small profile and 16 minutes for the full profile.
+Scenario step timeouts come from measured runs of the Free plan design. Small profile: 5 minutes, twice the slowest scenario step on GitHub's `ubuntu-latest` runner (S4, 148 s; the same scenario takes 99 s on this machine, see Results). Full profile: 8 minutes, twice the slowest full-profile scenario on this machine (S4, 147 s) times the 1.5 slowdown the small profile showed on the runner, because `eval-full.yml` has not run on GitHub yet.
 
 ## Production setup
 
@@ -400,7 +400,7 @@ Command: `peoplelake eval ask --provider llama`. Provider: llama-server on 127.0
 
 | Questions | Exact match | Metric | Department | Start month | End month | Invalid answers | Latency p50 | Latency p95 |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 60 | 44 (73.3%) | 96.7% | 83.3% | 85.0% | 96.7% | 0 | 1005 ms | 1168 ms |
+| 60 | 44 (73.3%) | 96.7% | 83.3% | 85.0% | 96.7% | 0 | 897 ms | 1164 ms |
 
 #### Ask accuracy, stub (2026-10-11)
 
@@ -408,33 +408,33 @@ Command: `peoplelake eval ask --provider stub`. Provider: deterministic rule par
 
 | Questions | Exact match | Metric | Department | Start month | End month | Invalid answers | Latency p50 | Latency p95 |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 60 | 45 (75.0%) | 93.3% | 100.0% | 91.7% | 88.3% | 0 | 3 ms | 4 ms |
+| 60 | 45 (75.0%) | 93.3% | 100.0% | 91.7% | 88.3% | 0 | 5 ms | 8 ms |
 
 #### Freshness, local, full profile (2026-10-11)
 
-Command: `peoplelake eval freshness --target local --duration 60m`. Method: ledger histograms of first receipt (10 s buckets) against the publishing run's commit time. Engine: duckdb. Stand-ins: SinkRoller roll files (60 s), pyiceberg SqlCatalog, local runner process, ticker for cron. Machine: Darwin arm64. Rate: 27.778 events per second. Source: `evals/results/freshness-local-full-2026-10-11.json`.
+Command: `peoplelake eval freshness --target local --duration 60m`. Method: ledger histograms of first receipt (10 s buckets) against the publishing run's commit time. Engine: duckdb. Stand-ins: pyiceberg SqlCatalog, local runner process, ticker for cron (the LandingRoller landing with 60 s rolls is the production code). Machine: Darwin arm64. Rate: 27.778 events per second. Source: `evals/results/freshness-local-full-2026-10-11.json`.
 
 | Events | Duration | Runs | p50 | p90 | p95 | p99 | max | Within 15 min | p95 excluding first 5 min |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 100000 | 60 min | 121 | 48 s | 74 s | 78 s | 86 s | 93 s | 100.00% | 78 s |
+| 100000 | 60 min | 60 | 42 s | 66 s | 69 s | 74 s | 79 s | 100.00% | 70 s |
 
-p95 split: first receipt to run start 65 s, run start to commit 22 s. Runs committed: 121 of 121, transforms skipped (the load inserted nothing new): 61. Cross-check against the runner's `ops_event_freshness` histograms: 100000 ledger events, 100000 ops events, 0 mismatched 10 s buckets (agrees). 15-minute p95 target (reported, not asserted): met.
+p95 split: first receipt to run start 65 s, run start to commit 10 s. Runs committed: 60 of 60, transforms skipped (the load inserted nothing new): 0. Cross-check against the runner's `ops_event_freshness` histograms: 100000 ledger events, 100000 ops events, 0 mismatched 10 s buckets (agrees). 15-minute p95 target (reported, not asserted): met.
 
 #### Ingest CPU per request (2026-10-11)
 
-Command: `npm run bench:ingest`. Method: Worker code path in Node (JSON parse, zod batch parse, normalization with SHA-256, RawRecord parse, NDJSON) on full-profile envelopes, zod jitless, process.cpuUsage() per request, Node's WebCrypto module (globalThis.crypto) loaded before timing in fresh processes (workerd's is built in); a proxy for workerd CPU time. Runtime: node v25.9.0. Machine: darwin arm64 Apple M5 (load average 6.1). 300 warm requests and 9 fresh processes per size and source; ranges are across the three sources. The Workers Free plan allows 10 ms of CPU per request; the Worker accepts at most 50 events. Source: `evals/results/ingest-cpu-2026-10-11.json`.
+Command: `npm run bench:ingest`. Method: Worker code path in Node (JSON parse, zod batch parse, normalization with SHA-256, RawRecord parse, NDJSON) on full-profile envelopes, zod jitless, process.cpuUsage() per request, Node's WebCrypto module (globalThis.crypto) loaded before timing in fresh processes (workerd's is built in); a proxy for workerd CPU time. Runtime: node v25.9.0. Machine: darwin arm64 Apple M5 (load average 10.69). 300 warm requests and 9 fresh processes per size and source; ranges are across the three sources. The Workers Free plan allows 10 ms of CPU per request; the Worker accepts at most 50 events. Source: `evals/results/ingest-cpu-2026-10-11.json`.
 
 | Events per request | Warm p50 (ms) | Warm p99 (ms) | First request, fresh process (ms) | First request after prewarm (ms) | NDJSON per request |
 |---:|---|---|---|---|---|
-| 25 | 0.21 to 0.3 | 0.48 to 1.9 | 3.97 to 8.67 | 0.75 to 2.39 | 14 to 15 KB |
-| 50 (the limit) | 0.47 to 0.55 | 0.85 to 1.03 | 5.53 to 9.59 | 1.48 to 2.76 | 29 to 32 KB |
-| 100 | 0.91 to 1.49 | 1.32 to 2.52 | 7.78 to 15.84 | 4.57 to 7.05 | 57 to 64 KB |
-| 200 | 2.31 to 3.24 | 3.07 to 5.04 | 11.78 to 23.06 | 6.93 to 12.44 | 114 to 127 KB |
-| 500 | 5.69 to 6.78 | 7.87 to 10.03 | 19.71 to 27.25 | 14.72 to 23.8 | 286 to 301 KB |
+| 25 | 0.23 to 0.25 | 0.77 to 1.74 | 4.74 to 7.99 | 0.71 to 2.33 | 14 to 15 KB |
+| 50 (the limit) | 0.47 to 0.83 | 1.13 to 1.33 | 6.26 to 10.9 | 1.43 to 3.86 | 29 to 32 KB |
+| 100 | 0.96 to 0.99 | 1.97 to 2.25 | 9.18 to 18.83 | 3.96 to 6.74 | 57 to 64 KB |
+| 200 | 2.04 to 2.22 | 3.8 to 4.39 | 11.18 to 17.77 | 6.15 to 10.29 | 114 to 127 KB |
+| 500 | 6.21 to 7.05 | 10.43 to 11.99 | 21.75 to 30.09 | 17.22 to 25.97 | 286 to 301 KB |
 
 #### MetricFlow parity, full profile, duckdb (2026-10-11)
 
-Command: `peoplelake dev metricflow-parity --profile full`. Semantic layer: MetricFlow (dbt-metricflow 0.15.0, metricflow 0.213.0) planning DuckDB SQL, compared with `pl_core.metrics_workforce_monthly` after a straight load of 100000 events. Machine: Darwin arm64. Source: `evals/results/metricflow-parity-full-2026-10-11.json`.
+Command: `peoplelake dev metricflow-parity --profile full`. Semantic layer: MetricFlow (dbt-metricflow 0.15.0, metricflow 0.213.0) planning DuckDB SQL, compared with `peoplelake_core.metrics_workforce_monthly` after a straight load of 100000 events. Machine: Darwin arm64. Source: `evals/results/metricflow-parity-full-2026-10-11.json`.
 
 | Metrics | Rows compared (months x departments and ALL) | Rows that differ | Identical |
 |---|---:|---:|---|
@@ -442,7 +442,7 @@ Command: `peoplelake dev metricflow-parity --profile full`. Semantic layer: Metr
 
 #### MetricFlow parity, small profile, duckdb (2026-10-11)
 
-Command: `peoplelake dev metricflow-parity --profile small`. Semantic layer: MetricFlow (dbt-metricflow 0.15.0, metricflow 0.213.0) planning DuckDB SQL, compared with `pl_core.metrics_workforce_monthly` after a straight load of 10000 events. Machine: Darwin arm64. Source: `evals/results/metricflow-parity-small-2026-10-11.json`.
+Command: `peoplelake dev metricflow-parity --profile small`. Semantic layer: MetricFlow (dbt-metricflow 0.15.0, metricflow 0.213.0) planning DuckDB SQL, compared with `peoplelake_core.metrics_workforce_monthly` after a straight load of 10000 events. Machine: Darwin arm64. Source: `evals/results/metricflow-parity-small-2026-10-11.json`.
 
 | Metrics | Rows compared (months x departments and ALL) | Rows that differ | Identical |
 |---|---:|---:|---|
@@ -450,40 +450,31 @@ Command: `peoplelake dev metricflow-parity --profile small`. Semantic layer: Met
 
 #### Scenario equivalence, full profile, duckdb (2026-10-11)
 
-Command: `peoplelake eval scenarios --profile full --chunks 20 --scenarios B,S2,S4 --reference .data/reference/reference-digests-full.json` (the reference digests come from `peoplelake dev reference-digests --profile full`). Orchestration: local (wrangler dev / Miniflare Workflows). Lake: local stand-in (SinkRoller + pyiceberg SqlCatalog). Machine: Darwin arm64. Source: `evals/results/scenarios-full-duckdb-2026-10-11-B-S2-S4.json`.
+Command: `peoplelake eval scenarios --profile full --chunks 20 --reference .data/reference/reference-digests-full.json` (the reference digests come from `peoplelake dev reference-digests --profile full`). Orchestration: local (wrangler dev / Miniflare Workflows). Lake: LandingRoller landing (same code as production) + pyiceberg SqlCatalog (local catalog stand-in). Machine: Darwin arm64. Source: `evals/results/scenarios-full-duckdb-2026-10-11.json`.
 
 | Scenario | Identical models (of 10) | Oracle rows mismatched | Warn checks at quiescence | Deliveries | Runs | Duration |
 |---|---:|---:|---:|---:|---:|---:|
-| B baseline | 10 | 0 | 0 | 100000 | 21 | 465.6 s |
-| S2 duplicate-lake-redelivery | 10 | 0 | 0 | 100000 | 21 | 265.8 s |
-| S4 recovery-step-failures | 10 | 0 | 0 | 100000 | 21 | 252.7 s |
-
-All scenarios identical to the reference digests: **yes**.
-
-#### Scenario equivalence, full profile, duckdb (2026-10-11)
-
-Command: `peoplelake eval scenarios --profile full --chunks 20 --scenarios S1,S3,S5 --reference .data/reference/reference-digests-full.json` (the reference digests come from `peoplelake dev reference-digests --profile full`). Orchestration: local (wrangler dev / Miniflare Workflows). Lake: local stand-in (SinkRoller + pyiceberg SqlCatalog). Machine: Darwin arm64. Source: `evals/results/scenarios-full-duckdb-2026-10-11-S1-S3-S5.json`.
-
-| Scenario | Identical models (of 10) | Oracle rows mismatched | Warn checks at quiescence | Deliveries | Runs | Duration |
-|---|---:|---:|---:|---:|---:|---:|
-| S1 duplicate-client-retries | 10 | 0 | 0 | 111000 | 21 | 165 s |
-| S3 late-arrival | 10 | 0 | 0 | 100000 | 22 | 164.9 s |
-| S5 recovery-warehouse-rebuild | 10 | 0 | 0 | 100000 | 23 | 169.5 s |
+| B baseline | 10 | 0 | 0 | 100000 | 21 | 129.8 s |
+| S1 duplicate-client-retries | 10 | 0 | 0 | 111000 | 21 | 139.7 s |
+| S2 duplicate-lake-redelivery | 10 | 0 | 0 | 100000 | 21 | 103 s |
+| S3 late-arrival | 10 | 0 | 0 | 100000 | 22 | 106.5 s |
+| S4 recovery-step-failures | 10 | 0 | 0 | 100000 | 21 | 145.4 s |
+| S5 recovery-warehouse-rebuild | 10 | 0 | 0 | 100000 | 23 | 113.7 s |
 
 All scenarios identical to the reference digests: **yes**.
 
 #### Scenario equivalence, small profile, duckdb (2026-10-11)
 
-Command: `peoplelake eval scenarios --profile small --chunks 10 --reference .data/reference/reference-digests-small.json` (the reference digests come from `peoplelake dev reference-digests --profile small`). Orchestration: local (wrangler dev / Miniflare Workflows). Lake: local stand-in (SinkRoller + pyiceberg SqlCatalog). Machine: Darwin arm64. Source: `evals/results/scenarios-small-duckdb-2026-10-11.json`.
+Command: `peoplelake eval scenarios --profile small --chunks 10 --reference .data/reference/reference-digests-small.json` (the reference digests come from `peoplelake dev reference-digests --profile small`). Orchestration: local (wrangler dev / Miniflare Workflows). Lake: LandingRoller landing (same code as production) + pyiceberg SqlCatalog (local catalog stand-in). Machine: Darwin arm64. Source: `evals/results/scenarios-small-duckdb-2026-10-11.json`.
 
 | Scenario | Identical models (of 10) | Oracle rows mismatched | Warn checks at quiescence | Deliveries | Runs | Duration |
 |---|---:|---:|---:|---:|---:|---:|
-| B baseline | 10 | 0 | 0 | 10000 | 11 | 75.5 s |
-| S1 duplicate-client-retries | 10 | 0 | 0 | 11100 | 11 | 72.7 s |
-| S2 duplicate-lake-redelivery | 10 | 0 | 0 | 10000 | 11 | 159.3 s |
-| S3 late-arrival | 10 | 0 | 0 | 10000 | 12 | 119 s |
-| S4 recovery-step-failures | 10 | 0 | 0 | 10000 | 11 | 162.9 s |
-| S5 recovery-warehouse-rebuild | 10 | 0 | 0 | 10000 | 13 | 342.2 s |
+| B baseline | 10 | 0 | 0 | 10000 | 11 | 62.2 s |
+| S1 duplicate-client-retries | 10 | 0 | 0 | 11100 | 11 | 78.6 s |
+| S2 duplicate-lake-redelivery | 10 | 0 | 0 | 10000 | 11 | 64.9 s |
+| S3 late-arrival | 10 | 0 | 0 | 10000 | 12 | 60.1 s |
+| S4 recovery-step-failures | 10 | 0 | 0 | 10000 | 11 | 98.8 s |
+| S5 recovery-warehouse-rebuild | 10 | 0 | 0 | 10000 | 13 | 57.3 s |
 
 All scenarios identical to the reference digests: **yes**.
 <!-- results:end -->

@@ -3,7 +3,7 @@
   "date": "2026-10-11",
   "engine": "duckdb",
   "kind": "scenario-equivalence",
-  "lake": "local stand-in (SinkRoller + pyiceberg SqlCatalog)",
+  "lake": "LandingRoller landing (same code as production) + pyiceberg SqlCatalog (local catalog stand-in)",
   "machine": "Darwin arm64",
   "orchestration": "local (wrangler dev / Miniflare Workflows)",
   "passed": true,
@@ -24,16 +24,16 @@
   "scenarios": [
     {
       "chunk_seconds": [
-        11.93,
-        6.22,
-        6.26,
-        5.67,
-        6.84,
-        6.62,
-        6.67,
-        6.66,
-        7.1,
-        6.84
+        12.42,
+        5.16,
+        5.13,
+        4.58,
+        4.84,
+        5.16,
+        5.47,
+        5.49,
+        4.6,
+        5.65
       ],
       "chunks": 10,
       "digests": {
@@ -48,7 +48,8 @@
         "fct_workforce_monthly": "be79a55a34dd180cc026efe17ed518ba6376db16fb1993b2ff3953d24fd8e21f",
         "metrics_workforce_monthly": "79996727b746de40dffeb8feb888759b45dd2e27dee545a3f220f9a7f6854ca0"
       },
-      "duration_s": 75.5,
+      "duration_s": 62.2,
+      "engine": "duckdb",
       "error_checks_at_quiescence": {
         "recon_headcount_roll_forward_company": 0,
         "recon_headcount_roll_forward_department": 0,
@@ -85,7 +86,7 @@
         "lease_expirations": 0,
         "load_attempts": 11,
         "raw_deliveries": 10000,
-        "requests_sent": 37,
+        "requests_sent": 215,
         "runs": 11,
         "runs_committed": 11,
         "runs_failed": 0,
@@ -102,7 +103,7 @@
       "ports_busy_after_stack_down": [],
       "profile": "small",
       "scenario": "B",
-      "started_at": "2026-10-11T03:05:43Z",
+      "started_at": "2026-10-11T08:11:29Z",
       "warn_checks_at_quiescence": {
         "recon_anomalies_open": 0,
         "recon_event_counts_vs_manifest": 0,
@@ -112,16 +113,16 @@
     },
     {
       "chunk_seconds": [
-        12.45,
-        6.58,
-        6.02,
-        6.29,
-        6.29,
-        6.3,
-        6.02,
-        6.58,
-        6.34,
-        6.62
+        16.71,
+        6.15,
+        7.37,
+        7.13,
+        7.15,
+        7.09,
+        7.34,
+        6.82,
+        4.99,
+        4.61
       ],
       "chunks": 10,
       "digests": {
@@ -136,7 +137,8 @@
         "fct_workforce_monthly": "be79a55a34dd180cc026efe17ed518ba6376db16fb1993b2ff3953d24fd8e21f",
         "metrics_workforce_monthly": "79996727b746de40dffeb8feb888759b45dd2e27dee545a3f220f9a7f6854ca0"
       },
-      "duration_s": 72.7,
+      "duration_s": 78.6,
+      "engine": "duckdb",
       "error_checks_at_quiescence": {
         "recon_headcount_roll_forward_company": 0,
         "recon_headcount_roll_forward_department": 0,
@@ -173,7 +175,7 @@
         "lease_expirations": 0,
         "load_attempts": 11,
         "raw_deliveries": 11100,
-        "requests_sent": 64,
+        "requests_sent": 253,
         "runs": 11,
         "runs_committed": 11,
         "runs_failed": 0,
@@ -196,7 +198,7 @@
       "ports_busy_after_stack_down": [],
       "profile": "small",
       "scenario": "S1",
-      "started_at": "2026-10-11T03:06:59Z",
+      "started_at": "2026-10-11T08:12:32Z",
       "warn_checks_at_quiescence": {
         "recon_anomalies_open": 0,
         "recon_event_counts_vs_manifest": 0,
@@ -206,16 +208,16 @@
     },
     {
       "chunk_seconds": [
-        35.26,
-        11.57,
-        10.39,
-        13.73,
-        12.68,
-        13.97,
-        13.21,
-        14.0,
-        13.14,
-        12.95
+        14.1,
+        5.52,
+        5.17,
+        5.4,
+        6.03,
+        5.8,
+        4.92,
+        5.4,
+        4.93,
+        4.85
       ],
       "chunks": 10,
       "digests": {
@@ -230,7 +232,8 @@
         "fct_workforce_monthly": "be79a55a34dd180cc026efe17ed518ba6376db16fb1993b2ff3953d24fd8e21f",
         "metrics_workforce_monthly": "79996727b746de40dffeb8feb888759b45dd2e27dee545a3f220f9a7f6854ca0"
       },
-      "duration_s": 159.3,
+      "duration_s": 64.9,
+      "engine": "duckdb",
       "error_checks_at_quiescence": {
         "recon_headcount_roll_forward_company": 0,
         "recon_headcount_roll_forward_department": 0,
@@ -288,7 +291,7 @@
         "lease_expirations": 0,
         "load_attempts": 11,
         "raw_deliveries": 10000,
-        "requests_sent": 37,
+        "requests_sent": 215,
         "runs": 11,
         "runs_committed": 11,
         "runs_failed": 0,
@@ -306,7 +309,7 @@
       "ports_busy_after_stack_down": [],
       "profile": "small",
       "scenario": "S2",
-      "started_at": "2026-10-11T03:08:12Z",
+      "started_at": "2026-10-11T08:13:51Z",
       "warn_checks_at_quiescence": {
         "recon_anomalies_open": 0,
         "recon_event_counts_vs_manifest": 0,
@@ -316,17 +319,17 @@
     },
     {
       "chunk_seconds": [
-        35.68,
-        10.06,
-        7.88,
-        7.16,
-        8.63,
-        7.22,
-        7.49,
-        6.58,
-        7.39,
-        7.26,
-        7.1
+        10.77,
+        4.59,
+        4.31,
+        4.31,
+        4.31,
+        4.57,
+        4.58,
+        4.86,
+        5.15,
+        5.15,
+        4.86
       ],
       "chunks": 10,
       "digests": {
@@ -341,7 +344,8 @@
         "fct_workforce_monthly": "be79a55a34dd180cc026efe17ed518ba6376db16fb1993b2ff3953d24fd8e21f",
         "metrics_workforce_monthly": "79996727b746de40dffeb8feb888759b45dd2e27dee545a3f220f9a7f6854ca0"
       },
-      "duration_s": 119.0,
+      "duration_s": 60.1,
+      "engine": "duckdb",
       "error_checks_at_quiescence": {
         "recon_headcount_roll_forward_company": 0,
         "recon_headcount_roll_forward_department": 0,
@@ -378,7 +382,7 @@
         "lease_expirations": 0,
         "load_attempts": 12,
         "raw_deliveries": 10000,
-        "requests_sent": 38,
+        "requests_sent": 215,
         "runs": 12,
         "runs_committed": 12,
         "runs_failed": 0,
@@ -411,7 +415,7 @@
       "ports_busy_after_stack_down": [],
       "profile": "small",
       "scenario": "S3",
-      "started_at": "2026-10-11T03:10:52Z",
+      "started_at": "2026-10-11T08:14:56Z",
       "warn_checks_at_quiescence": {
         "recon_anomalies_open": 0,
         "recon_event_counts_vs_manifest": 0,
@@ -421,16 +425,16 @@
     },
     {
       "chunk_seconds": [
-        21.31,
-        27.48,
-        7.78,
-        11.85,
-        7.29,
-        28.78,
-        7.5,
-        11.03,
-        15.17,
-        15.73
+        10.6,
+        26.01,
+        5.46,
+        6.48,
+        4.91,
+        25.34,
+        5.66,
+        3.8,
+        4.06,
+        3.79
       ],
       "chunks": 10,
       "digests": {
@@ -445,7 +449,8 @@
         "fct_workforce_monthly": "be79a55a34dd180cc026efe17ed518ba6376db16fb1993b2ff3953d24fd8e21f",
         "metrics_workforce_monthly": "79996727b746de40dffeb8feb888759b45dd2e27dee545a3f220f9a7f6854ca0"
       },
-      "duration_s": 162.9,
+      "duration_s": 98.8,
+      "engine": "duckdb",
       "error_checks_at_quiescence": {
         "recon_headcount_roll_forward_company": 0,
         "recon_headcount_roll_forward_department": 0,
@@ -505,7 +510,7 @@
         "lease_expirations": 2,
         "load_attempts": 13,
         "raw_deliveries": 10000,
-        "requests_sent": 37,
+        "requests_sent": 215,
         "runs": 11,
         "runs_committed": 11,
         "runs_failed": 0,
@@ -523,7 +528,7 @@
       "ports_busy_after_stack_down": [],
       "profile": "small",
       "scenario": "S4",
-      "started_at": "2026-10-11T03:12:52Z",
+      "started_at": "2026-10-11T08:15:56Z",
       "warn_checks_at_quiescence": {
         "recon_anomalies_open": 0,
         "recon_event_counts_vs_manifest": 0,
@@ -533,16 +538,16 @@
     },
     {
       "chunk_seconds": [
-        78.99,
-        18.76,
-        21.67,
-        18.43,
-        21.23,
-        21.63,
-        16.14,
-        18.62,
-        18.44,
-        18.61
+        7.22,
+        4.04,
+        3.79,
+        3.75,
+        3.79,
+        3.97,
+        3.77,
+        4.29,
+        5.8,
+        4.96
       ],
       "chunks": 10,
       "digests": {
@@ -557,7 +562,8 @@
         "fct_workforce_monthly": "be79a55a34dd180cc026efe17ed518ba6376db16fb1993b2ff3953d24fd8e21f",
         "metrics_workforce_monthly": "79996727b746de40dffeb8feb888759b45dd2e27dee545a3f220f9a7f6854ca0"
       },
-      "duration_s": 342.2,
+      "duration_s": 57.3,
+      "engine": "duckdb",
       "error_checks_at_quiescence": {
         "recon_headcount_roll_forward_company": 0,
         "recon_headcount_roll_forward_department": 0,
@@ -594,7 +600,7 @@
         "lease_expirations": 0,
         "load_attempts": 13,
         "raw_deliveries": 10000,
-        "requests_sent": 37,
+        "requests_sent": 215,
         "runs": 13,
         "runs_committed": 13,
         "runs_failed": 0,
@@ -613,14 +619,14 @@
       "rebuild": {
         "point_in_time_identical_to_recorded": true,
         "point_in_time_mismatched_models": [],
-        "point_in_time_of": "r-tmq3qb-000006",
-        "point_in_time_run": "r-tmq3qb-000013",
-        "point_in_time_snapshot": "6916110344688301044",
-        "rebuild_run": "r-tmq3qb-000012",
+        "point_in_time_of": "r-tmqhpc-000006",
+        "point_in_time_run": "r-tmqhpc-000013",
+        "point_in_time_snapshot": "8733386736671415287",
+        "rebuild_run": "r-tmqhpc-000012",
         "rebuild_status": "committed"
       },
       "scenario": "S5",
-      "started_at": "2026-10-11T03:15:37Z",
+      "started_at": "2026-10-11T08:17:35Z",
       "warn_checks_at_quiescence": {
         "recon_anomalies_open": 0,
         "recon_event_counts_vs_manifest": 0,
