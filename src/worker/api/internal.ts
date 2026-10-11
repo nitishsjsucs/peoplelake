@@ -4,7 +4,7 @@ import { LoadResult, TransformResult } from "../../shared/contracts.ts";
 import type { App } from "../app.ts";
 import { requireRole } from "../app.ts";
 import { sha256Hex } from "../ingest/canonical-json.ts";
-import { LANDING_PREFIX } from "../lake/landing-roller.ts";
+import { LANDING_PREFIX } from "../lake/landing-keys.ts";
 import { coordinatorStub } from "../orchestration/coordinator.ts";
 import { metricsKey } from "../reports.ts";
 

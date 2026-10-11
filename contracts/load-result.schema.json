@@ -48,6 +48,12 @@
             },
             "fallback_full_scan": {
               "type": "boolean"
+            },
+            "landing_through": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [

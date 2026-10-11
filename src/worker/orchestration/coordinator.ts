@@ -5,6 +5,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { FaultSpec, JobKind, JobSpec, RunMode } from "../../shared/contracts.ts";
 import { type AppConfig, parseConfig } from "../config.ts";
+import { landingPrefix } from "../lake/landing-keys.ts";
 import type { LandingRoll } from "../lake/landing-roller.ts";
 import { COORDINATOR_DDL, type JobRow, type RunRow } from "./coordinator-sql.ts";
 
@@ -30,6 +31,8 @@ export interface RunPlan {
   mode: RunMode;
   reason: string;
   from_snapshot: string | null;
+  /** Landing rolls of this Coordinator generation; the load job's committer lists only these. */
+  landing_prefix: string;
   transformed_through_seq: number | null;
   previous: { digests: Record<string, string> | null; metrics_key: string | null; to_snapshot: string | null };
   options: RunOptions;
@@ -270,6 +273,7 @@ export class Coordinator extends DurableObject<Env> {
       mode: run.mode,
       reason: run.reason,
       from_snapshot: from,
+      landing_prefix: landingPrefix(this.generation()),
       transformed_through_seq: transformed === null ? null : Number(transformed),
       previous: {
         digests: previous?.digests_json ? (JSON.parse(previous.digests_json) as Record<string, string>) : null,

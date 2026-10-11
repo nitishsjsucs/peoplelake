@@ -1,1 +1,1 @@
-"""Iceberg lake: schema, catalogs, local committer (stand-in) and incremental reader."""
+"""Iceberg lake: schema, catalogs, the landing committer and the incremental reader."""

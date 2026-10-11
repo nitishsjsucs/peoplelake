@@ -112,9 +112,11 @@ class Runner:
             with Heartbeat(self.client, job, self.worker_id), env_overrides(self._dbt_env(suffix)):
                 warehouse = self._warehouse(suffix)
                 if job["kind"] == "load":
+                    # Every target commits new landing rolls first: the lake catalog is SqlCatalog locally (and
+                    # for prod-drill, which keeps the local Worker and lake) and Basin Catalog in production.
                     table = open_lake(self.settings)
-                    sink = WorkerLandingSource(self.client) if self.settings.target == "local" else None
-                    outcome = run_load(job, table=table, warehouse=warehouse, sink=sink, recommit=faults.recommit)
+                    landing = WorkerLandingSource(self.client)
+                    outcome = run_load(job, table=table, warehouse=warehouse, landing=landing, recommit=faults.recommit)
                     result = outcome.result
                     log.info(
                         "load %s: read %s, inserted %s, duplicates %s, snapshots %s",

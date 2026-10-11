@@ -94,27 +94,31 @@ def test_pydantic_fields_match_json_schema(name, model, pick):
 
 
 @pytest.mark.smoke
-def test_stream_schema_matches_lake_schema_field_by_field():
+def test_raw_record_schema_matches_the_iceberg_schema_field_by_field():
+    """contracts/raw-record.schema.json is the schema of record; lake/schema.py creates the Iceberg table
+    (`peoplelake lake init`) and must agree on every column, its order, requiredness and type."""
     import pyarrow as pa
 
-    from peoplelake.lake.schema import RAW_FIELDS
+    from peoplelake.lake.schema import RAW_ARROW_SCHEMA, RAW_FIELDS
 
-    stream = json.loads((repo_root() / "infra" / "cloudflare" / "stream-schema.json").read_text())
-    types = {"string": pa.string(), "int64": pa.int64(), "int32": pa.int32()}
-    assert [f["name"] for f in stream["fields"]] == [name for name, _ in RAW_FIELDS] == list(c.RAW_RECORD_COLUMNS)
-    for field, (name, arrow_type) in zip(stream["fields"], RAW_FIELDS, strict=True):
-        assert field["required"] is True
-        if field["type"] == "timestamp":
-            assert pa.types.is_timestamp(arrow_type), name
+    schema = _schema("raw-record")
+    props = schema["properties"]
+    assert list(props) == [name for name, _ in RAW_FIELDS] == list(c.RAW_RECORD_COLUMNS)
+    assert set(schema["required"]) == set(props)
+    assert schema.get("additionalProperties") is False
+    assert all(not f.nullable for f in RAW_ARROW_SCHEMA)
+    timestamp_pattern = props["received_at"]["pattern"]
+    for name, arrow_type in RAW_FIELDS:
+        prop = props[name]
+        if pa.types.is_timestamp(arrow_type):
+            assert (prop["type"], prop["pattern"]) == ("string", timestamp_pattern), name
+            assert arrow_type == pa.timestamp("us", tz="UTC"), name
+        elif arrow_type == pa.int32():
+            assert prop["type"] == "integer" and prop["maximum"] <= 2**31 - 1, name
+        elif arrow_type == pa.int64():
+            assert prop["type"] == "integer" and prop["maximum"] > 2**31 - 1, name
         else:
-            assert types[field["type"]] == arrow_type, name
-
-
-def test_pipeline_sql_lists_every_column_explicitly():
-    sql = (repo_root() / "infra" / "cloudflare" / "pipeline.sql").read_text()
-    assert "SELECT *" not in sql.upper()
-    for col in c.RAW_RECORD_COLUMNS:
-        assert col in sql
+            assert arrow_type == pa.string() and prop["type"] == "string", name
 
 
 def test_raw_records_golden_is_current():

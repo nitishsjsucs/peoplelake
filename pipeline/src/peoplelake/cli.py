@@ -195,35 +195,48 @@ def _cmd_lint_sql(args: argparse.Namespace) -> int:
 
 
 def _cmd_lake(args: argparse.Namespace) -> int:
-    from .config import load_settings, open_lake
+    from .config import lake_catalog, load_settings, open_lake
     from .lake.reader import current_snapshot_id, read_appends
 
     settings = load_settings(args.target)
     if args.lake_command == "catalog-info":
-        from .lake.catalog import basin_catalog, catalog_info, local_catalog
+        from .lake.catalog import catalog_info
 
+        info = catalog_info(lake_catalog(settings))
         if settings.is_local:
-            info = catalog_info(local_catalog(settings.lake_dir))
             info["stand_in"] = "pyiceberg SqlCatalog (local)"
-        else:
-            info = catalog_info(
-                basin_catalog(
-                    settings.r2_catalog_uri or "", settings.r2_warehouse or "", settings.r2_catalog_token or ""
-                )
-            )
         print(json.dumps(info, indent=2))
         return 0
-    table = open_lake(settings)
     if args.lake_command == "init":
-        print(json.dumps({"table": "peoplelake.raw_events", "current_snapshot": current_snapshot_id(table)}))
+        # Creates namespace peoplelake and table raw_events with the canonical schema if absent (idempotent);
+        # in production this is setup step 5 against Basin Catalog.
+        from .lake.catalog import ensure_table
+        from .lake.committer import landing_cursor
+
+        table = ensure_table(lake_catalog(settings))
+        print(
+            json.dumps(
+                {
+                    "table": "peoplelake.raw_events",
+                    "catalog": "local SqlCatalog (stand-in)" if settings.is_local else "Basin Catalog",
+                    "current_snapshot": current_snapshot_id(table),
+                    "landing_cursor": landing_cursor(table),
+                }
+            )
+        )
         return 0
+    table = open_lake(settings)
     if args.lake_command == "commit":
-        from .lake.committer import DirectorySinkSource, commit_pending
+        from .lake.committer import DirectoryLandingSource, commit_pending
 
         if not settings.is_local:
-            print("lake commit is the local stand-in for the Basin sink and never runs in production", file=sys.stderr)
+            print(
+                "lake commit reads roll files from a local directory and writes only the local table", file=sys.stderr
+            )
             return 2
-        report = commit_pending(DirectorySinkSource(Path(args.sink_dir)), table, recommit=args.recommit)
+        _, report = commit_pending(
+            DirectoryLandingSource(Path(args.dir)), table, prefix=args.prefix, recommit=args.recommit
+        )
         print(json.dumps(report.__dict__))
         return 0
     batch = read_appends(
@@ -490,9 +503,12 @@ def _cmd_prod(args: argparse.Namespace) -> int:
         print(json.dumps({"image": image}))
         return 0
     if args.prod_command == "verify":
-        from .prod.verify import verify
+        from .config import load_settings, open_lake
+        from .evals.freshness import prod_operator
+        from .prod.verify import landing_committed, verify
 
-        result = verify(config, Path(args.reference) if args.reference else None)
+        landing = landing_committed(open_lake(load_settings("prod")), prod_operator().status().get("landed_through"))
+        result = verify(config, Path(args.reference) if args.reference else None, landing=landing)
     elif args.prod_command == "demo-masking":
         from .prod.demo_masking import demo
 
@@ -571,15 +587,19 @@ def build_parser() -> argparse.ArgumentParser:
     lake = sub.add_parser("lake", help="Iceberg lake: local stand-in or Basin Catalog")
     lake_sub = lake.add_subparsers(dest="lake_command", required=True)
     for name, help_text in (
-        ("init", "create the local raw_events table (local only)"),
-        ("commit", "commit sink roll files from a directory (local stand-in)"),
+        (
+            "init",
+            "create namespace peoplelake and table raw_events if absent (local, or Basin Catalog with --target prod)",
+        ),
+        ("commit", "commit landing roll files from a local directory into the local table (offline tooling)"),
         ("scan", "read appended data between snapshots and print counts"),
-        ("catalog-info", "print catalog URI, warehouse and REST prefix"),
+        ("catalog-info", "print the catalog URI and warehouse"),
     ):
         lp = lake_sub.add_parser(name, help=help_text)
         lp.add_argument("--target", choices=["local", "prod"], default=None)
         if name == "commit":
-            lp.add_argument("--sink-dir", required=True)
+            lp.add_argument("--dir", required=True, help="directory whose relative paths are the landing keys")
+            lp.add_argument("--prefix", default="landing/raw_events/")
             lp.add_argument("--recommit", type=int, default=0)
         if name == "scan":
             lp.add_argument("--from-snapshot")

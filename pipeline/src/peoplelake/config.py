@@ -55,12 +55,34 @@ def load_settings(target: Target | None = None) -> Settings:
     )
 
 
-def open_lake(settings: Settings):
-    """The raw events table: local stand-in (created if absent) or Basin Catalog (sink-created)."""
-    from .lake.catalog import basin_catalog, ensure_local_table, load_table, local_catalog
+def _operator_catalog_fallback(settings: Settings) -> None:
+    """On the operator's laptop (`prod verify`, `prod reset`, `lake init --target prod`) the catalog settings
+    come from .prod/state.json and .prod/secrets.env when the environment does not set them; the Cloud Run
+    job always sets them in its environment."""
+    import json
+
+    from .envfile import read_env_file
+    from .paths import repo_root
+
+    if settings.r2_catalog_uri and settings.r2_warehouse and settings.r2_catalog_token:
+        return
+    prod = repo_root() / ".prod"
+    state_file = prod / "state.json"
+    if not settings.r2_catalog_uri or not settings.r2_warehouse:
+        catalog = json.loads(state_file.read_text()).get("catalog", {}) if state_file.exists() else {}
+        settings.r2_catalog_uri = settings.r2_catalog_uri or catalog.get("uri") or None
+        settings.r2_warehouse = settings.r2_warehouse or catalog.get("warehouse") or None
+    if not settings.r2_catalog_token and (prod / "secrets.env").exists():
+        settings.r2_catalog_token = read_env_file(prod / "secrets.env").get("PL_R2_CATALOG_TOKEN") or None
+
+
+def lake_catalog(settings: Settings):
+    """The local SqlCatalog stand-in, or Basin Catalog through Iceberg REST with the R2 catalog token."""
+    from .lake.catalog import basin_catalog, local_catalog
 
     if settings.is_local:
-        return ensure_local_table(local_catalog(settings.lake_dir))
+        return local_catalog(settings.lake_dir)
+    _operator_catalog_fallback(settings)
     missing = [
         n
         for n, v in (
@@ -72,7 +94,20 @@ def open_lake(settings: Settings):
     ]
     if missing:
         raise RuntimeError(f"Basin Catalog settings missing: {', '.join(missing)}")
-    table = load_table(basin_catalog(settings.r2_catalog_uri, settings.r2_warehouse, settings.r2_catalog_token))  # type: ignore[arg-type]
+    return basin_catalog(settings.r2_catalog_uri, settings.r2_warehouse, settings.r2_catalog_token)  # type: ignore[arg-type]
+
+
+def open_lake(settings: Settings):
+    """The raw events table: the local stand-in (created if absent) or Basin Catalog (created once by
+    `peoplelake lake init --target prod`)."""
+    from .lake.catalog import ensure_table, load_table
+
+    catalog = lake_catalog(settings)
+    if settings.is_local:
+        return ensure_table(catalog)
+    table = load_table(catalog)
     if table is None:
-        raise RuntimeError("peoplelake.raw_events does not exist yet (the Basin sink creates it on its first roll)")
+        raise RuntimeError(
+            "peoplelake.raw_events does not exist yet: run `peoplelake lake init --target prod` (setup step 5)"
+        )
     return table

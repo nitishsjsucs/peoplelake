@@ -3,7 +3,7 @@
 // messages are only triggers (the cron backstop covers a lost one). Other keys are acked and ignored,
 // malformed messages are acked and counted, and a Coordinator failure retries the batch (then the DLQ).
 import { coordinatorStub } from "../orchestration/coordinator.ts";
-import { LANDING_PREFIX } from "./landing-roller.ts";
+import { LANDING_PREFIX } from "./landing-keys.ts";
 
 export function isLakeEventKey(key: string): boolean {
   return key.startsWith(LANDING_PREFIX) && key.endsWith(".ndjson");

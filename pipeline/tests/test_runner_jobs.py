@@ -9,7 +9,7 @@ from pydantic import TypeAdapter
 from dbt_helpers import make_env
 from peoplelake import contracts as c
 from peoplelake.config import load_settings
-from peoplelake.lake.committer import SinkFile
+from peoplelake.lake.committer import LandingRoll
 from peoplelake.runner.main import Runner
 from peoplelake.warehouse.direct import direct_table
 
@@ -38,7 +38,7 @@ class FakeWorker:
         keys = sorted(
             k for k in self.files if k.startswith(prefix or "landing/raw_events/") and (after is None or k > after)
         )
-        return [SinkFile(k, hashlib.md5(self.files[k]).hexdigest(), len(self.files[k])) for k in keys]
+        return [LandingRoll(k, hashlib.md5(self.files[k]).hexdigest(), len(self.files[k])) for k in keys]
 
     def lake_file(self, key):
         return self.files[key]
@@ -52,6 +52,9 @@ def roll_file(items) -> bytes:
     return "".join(json.dumps(r) + "\n" for r in rows).encode()
 
 
+PREFIX = "landing/raw_events/g1790000000/"
+
+
 def job(kind, attempt=1, faults=None, load_seq=1_790_000_000_000_001, from_snapshot=None):
     spec = {
         "job_id": f"r-test-000001-{kind}-a{attempt}",
@@ -63,6 +66,8 @@ def job(kind, attempt=1, faults=None, load_seq=1_790_000_000_000_001, from_snaps
         "input": {"from_snapshot": from_snapshot, "full_refresh": False},
         "lease_seconds": 60,
     }
+    if kind == "load":
+        spec["input"]["landing_prefix"] = PREFIX
     if faults:
         spec["faults"] = faults
     return spec
@@ -72,10 +77,7 @@ def job(kind, attempt=1, faults=None, load_seq=1_790_000_000_000_001, from_snaps
 def runner(tmp_path, monkeypatch, small):
     env = make_env(tmp_path, monkeypatch, small)  # seeds the warehouse at PL_DUCKDB_PATH
     monkeypatch.setenv("PL_LAKE_DIR", str(tmp_path / "lake"))
-    files = {
-        f"landing/raw_events/g1790000000/r{i:010d}.ndjson": roll_file(env.items[(i - 1) * 2500 : i * 2500])
-        for i in range(1, 5)
-    }
+    files = {f"{PREFIX}r{i:010d}.ndjson": roll_file(env.items[(i - 1) * 2500 : i * 2500]) for i in range(1, 5)}
     worker = FakeWorker(files)
     r = Runner(load_settings("local"), worker, worker_id="test")  # type: ignore[arg-type]
     return r, worker
@@ -88,6 +90,7 @@ def test_load_then_transform_results_match_the_contracts(runner):
     c.LoadResult.model_validate_json(json.dumps(load))
     assert (load["rows_read"], load["rows_inserted"], load["unique_new_events"]) == (10_000, 10_000, 10_000)
     assert load["lake"]["snapshots_read"] == 1 and not load["lake"]["fallback_full_scan"]  # first load: full read
+    assert load["lake"]["landing_through"] == f"{PREFIX}r0000000004.ndjson"  # the committer's cursor
     assert load["raw_max_load_seq"] == 1_790_000_000_000_001
 
     assert r.process(job("transform")) == "succeeded"

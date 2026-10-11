@@ -16,7 +16,7 @@ from ..evals.freshness import prod_freshness, prod_operator, write
 from ..paths import repo_root
 from ..sim.deliver import deliver
 from .bootstrap_gcp import GcpConfig
-from .verify import verify
+from .verify import landing_committed, verify
 
 
 def e2e(duration_minutes: float, *, quiesce_timeout_s: float = 3600.0) -> dict:
@@ -31,7 +31,10 @@ def e2e(duration_minutes: float, *, quiesce_timeout_s: float = 3600.0) -> dict:
         if fresh["events"] >= 100_000 and fresh["pending_events"] == 0 and op.status().get("active_run_id") is None:
             break
         time.sleep(30)
-    verified = verify(GcpConfig.load(repo_root() / ".prod"))
+    from ..config import load_settings, open_lake
+
+    landing = landing_committed(open_lake(load_settings("prod")), op.status().get("landed_through"))
+    verified = verify(GcpConfig.load(repo_root() / ".prod"), landing=landing)
     fresh = prod_freshness(record)
     date = datetime.now(UTC).strftime("%Y-%m-%d")
     write(

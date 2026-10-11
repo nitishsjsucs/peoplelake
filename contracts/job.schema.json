@@ -56,6 +56,10 @@
         "dataset_suffix": {
           "type": "string",
           "pattern": "^[a-z0-9_]+$"
+        },
+        "landing_prefix": {
+          "type": "string",
+          "pattern": "^landing\\/raw_events\\/g\\d+\\/$"
         }
       },
       "required": [

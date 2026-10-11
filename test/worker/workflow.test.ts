@@ -208,8 +208,9 @@ describe("WarehouseRunWorkflow", () => {
     await coordinator().requestRun("replay-scratch", "replay", Date.now(), { to_snapshot: "123", dataset_suffix: "pit" });
     await instance.waitForStatus("complete");
     await runner.stop();
+    const landing_prefix = `landing/raw_events/g${await coordinator().generation()}/`;
     expect(seen.slice(2)).toEqual([
-      { kind: "load", mode: "replay", input: { from_snapshot: null, full_refresh: false, to_snapshot: "123", dataset_suffix: "pit" } },
+      { kind: "load", mode: "replay", input: { from_snapshot: null, full_refresh: false, landing_prefix, to_snapshot: "123", dataset_suffix: "pit" } },
       { kind: "transform", mode: "replay", input: { from_snapshot: null, full_refresh: true, to_snapshot: "123", dataset_suffix: "pit" } },
     ]);
     expect((await coordinator().status())["watermark"]).toBe(watermark);

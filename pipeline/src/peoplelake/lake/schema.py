@@ -1,4 +1,5 @@
-"""Canonical Arrow schema of a raw record (SPEC 6.1), mirrored by infra/cloudflare/stream-schema.json."""
+"""Canonical Arrow schema of a raw record (SPEC 6.1); contracts/raw-record.schema.json is the schema of record
+and test_contracts.py compares the two field by field."""
 
 from __future__ import annotations
 

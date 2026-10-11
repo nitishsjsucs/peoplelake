@@ -415,7 +415,9 @@ class JobInput(Strict):
     to_snapshot: str | None = None  # nullable and optional in zod
     full_refresh: bool
     dataset_suffix: Annotated[str, StringConstraints(pattern=r"^[a-z0-9_]+$")] | None = None
-    _no_null = _omit_not_null("dataset_suffix")
+    # Load jobs: the landing rolls of the Coordinator generation the committer lists (SPEC 29.4.1).
+    landing_prefix: Annotated[str, StringConstraints(pattern=r"^landing/raw_events/g\d+/$")] | None = None
+    _no_null = _omit_not_null("dataset_suffix", "landing_prefix")
 
 
 class JobSpec(Strict):
@@ -437,6 +439,7 @@ class LakeRead(Strict):
     to_snapshot: str | None
     snapshots_read: NonNegInt
     fallback_full_scan: bool
+    landing_through: str | None = None  # nullable and optional in zod: the committer's cursor at to_snapshot
 
 
 Histogram = list[tuple[NonNegInt, NonNegInt]]

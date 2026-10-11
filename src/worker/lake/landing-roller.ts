@@ -13,21 +13,14 @@ import { DurableObject } from "cloudflare:workers";
 import { parseConfig } from "../config.ts";
 import { MeteredSql, type SqlUsage } from "../lib/metered-sql.ts";
 import { coordinatorStub } from "../orchestration/coordinator.ts";
+import { rollKey } from "./landing-keys.ts";
 
-export const LANDING_PREFIX = "landing/raw_events/";
+export { LANDING_PREFIX, landingPrefix, rollKey } from "./landing-keys.ts";
 export const LANDING_ROLLER_NAME = "landing";
 export const LAKE_BUCKET_NAMES = { local: "peoplelake-lake-local", production: "peoplelake-lake" } as const;
 
 const FAILURE_BACKOFF_MS = [5_000, 30_000, 120_000, 600_000] as const;
 const MAX_FLUSH_ROLLS = 20;
-
-export function landingPrefix(generation: number): string {
-  return `${LANDING_PREFIX}g${generation}/`;
-}
-
-export function rollKey(generation: number, rollSeq: number): string {
-  return `${landingPrefix(generation)}r${String(rollSeq).padStart(10, "0")}.ndjson`;
-}
 
 /** The queue message for one roll; it mirrors the fields of an R2 event notification. */
 export interface LakeEventMessage {

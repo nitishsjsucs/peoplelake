@@ -339,6 +339,8 @@ export const JobSpec = z
         to_snapshot: z.string().nullable().optional(),
         full_refresh: z.boolean(),
         dataset_suffix: z.string().regex(/^[a-z0-9_]+$/).optional(),
+        // Load jobs: the landing rolls of the Coordinator generation the committer lists (SPEC 29.4.1).
+        landing_prefix: z.string().regex(/^landing\/raw_events\/g\d+\/$/).optional(),
       })
       .strict(),
     lease_seconds: z.number().int().positive(),
@@ -372,6 +374,8 @@ export const LoadResultSucceeded = z
         to_snapshot: z.string().nullable(),
         snapshots_read: nonNegInt(),
         fallback_full_scan: z.boolean(),
+        // The committer's landing cursor at to_snapshot (the newest committed roll key), if any.
+        landing_through: z.string().nullable().optional(),
       })
       .strict(),
     rows_read: nonNegInt(),

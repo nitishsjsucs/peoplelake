@@ -7,7 +7,8 @@
   "mode": "incremental",
   "input": {
     "from_snapshot": "6917324011837466517",
-    "full_refresh": false
+    "full_refresh": false,
+    "landing_prefix": "landing/raw_events/g1760100000/"
   },
   "lease_seconds": 600,
   "faults": [

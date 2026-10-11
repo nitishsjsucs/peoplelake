@@ -10,7 +10,7 @@ from urllib.parse import quote
 import httpx
 
 from ..auth.dev_tokens import AccessHeaders
-from ..lake.committer import SinkFile
+from ..lake.committer import LandingRoll
 
 
 class WorkerError(RuntimeError):
@@ -66,14 +66,14 @@ class WorkerClient:
 
     # -- landing rolls (runner; mounted in every environment) --------------------------------------------
 
-    def lake_files(self, prefix: str | None = None, after: str | None = None) -> list[SinkFile]:
+    def lake_files(self, prefix: str | None = None, after: str | None = None) -> list[LandingRoll]:
         """Landing rolls in key order after `after`, following `truncated` pages."""
-        out: list[SinkFile] = []
+        out: list[LandingRoll] = []
         cursor = after
         while True:
             params = {k: v for k, v in (("prefix", prefix), ("after", cursor)) if v}
             body = self._json("GET", "/internal/lake/files", params=params)
-            out += [SinkFile(f["key"], f["etag"], int(f["size"])) for f in body["files"]]
+            out += [LandingRoll(f["key"], f["etag"], int(f["size"])) for f in body["files"]]
             if not body.get("truncated") or not body["files"]:
                 return out
             cursor = body["files"][-1]["key"]
@@ -131,8 +131,8 @@ class WorkerLandingSource:
     def __init__(self, client: WorkerClient) -> None:
         self.client = client
 
-    def list_files(self) -> list[SinkFile]:
-        return self.client.lake_files()
+    def list_rolls(self, prefix: str, after: str | None) -> list[LandingRoll]:
+        return self.client.lake_files(prefix, after)
 
     def get(self, key: str) -> bytes:
         return self.client.lake_file(key)

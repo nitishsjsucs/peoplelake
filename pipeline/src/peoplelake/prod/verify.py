@@ -1,6 +1,7 @@
 """`peoplelake prod verify` (SPEC 20.5): after `prod:e2e`, production must hold exactly 100,000 unique
-events in BigQuery, R7 must be 0 at error level (catching records Basin accepted and then dropped), and
-the BigQuery digests must equal the local full-profile reference digests."""
+events in BigQuery, R7 must be 0 at error level, every landing roll of the delivery must be committed (the
+newest snapshot cursor equals the Coordinator's last landed roll), and the BigQuery digests must equal the
+local full-profile reference digests."""
 
 from __future__ import annotations
 
@@ -13,7 +14,19 @@ from .bootstrap_gcp import GcpConfig
 EXPECTED_EVENTS = 100_000
 
 
-def verify(config: GcpConfig, reference_path: Path | None = None) -> dict:
+def landing_committed(table, landed_through: str | None) -> dict:
+    """The newest Iceberg landing cursor against the Coordinator's last landed roll."""
+    from ..lake.committer import landing_cursor
+
+    cursor = landing_cursor(table)
+    return {
+        "landed_through": landed_through,
+        "landing_cursor": cursor,
+        "ok": landed_through is not None and cursor == landed_through,
+    }
+
+
+def verify(config: GcpConfig, reference_path: Path | None = None, landing: dict | None = None) -> dict:
     from google.cloud import bigquery
 
     from ..warehouse.bigquery_wh import BigQueryWarehouse
@@ -37,12 +50,14 @@ def verify(config: GcpConfig, reference_path: Path | None = None) -> dict:
         "unique_events": int(unique),
         "unique_events_ok": int(unique) == EXPECTED_EVENTS,
         "r7_mismatched_rows": int(r7),
-        "basin_dropped_records": "could not check (the analytics dataset name is unverified)",
+        "landing": landing or {"ok": False, "detail": "not checked"},
         "digests": digests,
         "reference": str(reference_path)
         if reference
         else "missing: run `peoplelake dev reference-digests --profile full`",
         "digests_mismatched": mismatched,
     }
-    result["passed"] = result["unique_events_ok"] and int(r7) == 0 and mismatched == []
+    result["passed"] = (
+        result["unique_events_ok"] and int(r7) == 0 and mismatched == [] and result["landing"]["ok"] is True
+    )
     return result

@@ -65,7 +65,12 @@ export class WarehouseRunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
         ...(plan.options.to_snapshot !== undefined ? { to_snapshot: plan.options.to_snapshot } : {}),
         ...(plan.options.dataset_suffix !== undefined ? { dataset_suffix: plan.options.dataset_suffix } : {}),
       };
-      const loadRun = await this.#job(step, plan, "load", { from_snapshot: plan.from_snapshot, full_refresh: false, ...extra });
+      const loadRun = await this.#job(step, plan, "load", {
+        from_snapshot: plan.from_snapshot,
+        full_refresh: false,
+        landing_prefix: plan.landing_prefix,
+        ...extra,
+      });
       const load = loadRun.result as LoadOk;
 
       const skip = shouldSkipTransform(plan, load);
@@ -131,7 +136,7 @@ export class WarehouseRunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
     step: WorkflowStep,
     plan: RunPlan,
     kind: "load" | "transform",
-    input: { from_snapshot: string | null; full_refresh: boolean; to_snapshot?: string; dataset_suffix?: string },
+    input: { from_snapshot: string | null; full_refresh: boolean; landing_prefix?: string; to_snapshot?: string; dataset_suffix?: string },
   ): Promise<{ result: JobResult; attempts: number }> {
     const coordinator = coordinatorStub(this.env);
     for (let attempt = 1; attempt <= plan.max_attempts; attempt++) {

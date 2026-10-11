@@ -8,7 +8,8 @@
     "from_snapshot": "6917324011837466517",
     "to_snapshot": "1835624018375013310",
     "snapshots_read": 3,
-    "fallback_full_scan": false
+    "fallback_full_scan": false,
+    "landing_through": "landing/raw_events/g1760100000/r0000000003.ndjson"
   },
   "rows_read": 1500,
   "rows_inserted": 1500,
