@@ -210,8 +210,22 @@ def prod_operator():
     return WorkerClient(f"https://peoplelake.{state['workers_subdomain']}.workers.dev", headers)
 
 
+def ledger_coverage(published_events: int, pending_events: int, unique_events: int) -> dict:
+    """How much of the delivery the freshness ledger holds. Percentiles over fewer events than were
+    delivered are biased (the missing ones are the slow ones), so a result is complete only when every
+    delivered unique event was published."""
+    return {
+        "delivered_unique_events": unique_events,
+        "ledger_published_events": published_events,
+        "ledger_pending_events": pending_events,
+        "coverage": round(published_events / unique_events, 6) if unique_events else None,
+        "complete": published_events == unique_events and pending_events == 0,
+    }
+
+
 def prod_freshness(delivery: dict) -> dict:
-    """Production p50/p95 from the single live `prod:e2e` delivery; it delivers nothing itself."""
+    """Production p50/p95 from the single live `prod:e2e` delivery; it delivers nothing itself. Refuses to
+    report percentiles unless the ledger holds every delivered unique event (`ledger_coverage`)."""
     op = prod_operator()
     start = datetime.fromisoformat(delivery["started_at"].replace("Z", "+00:00")).timestamp()
     fresh = op.freshness("7d")
@@ -227,6 +241,13 @@ def prod_freshness(delivery: dict) -> dict:
         if b["bucket_start_s"] >= start + 300
     ]
     runs = op.all_runs("summary", since=int((start - 60) * 1000))
+    coverage = ledger_coverage(
+        sum(w for _, w in values),
+        sum(b["events"] for b in buckets if not b["published_at"]),
+        get_profile(delivery["profile"]).total_events,
+    )
+    if not coverage["complete"]:
+        raise EvalError(f"the freshness ledger does not hold the whole delivery; no percentiles reported: {coverage}")
     return {
         "kind": "freshness",
         "target": "prod",
@@ -239,7 +260,8 @@ def prod_freshness(delivery: dict) -> dict:
         "duration_minutes": delivery["duration_minutes"],
         "overall": summarize(values),
         "excluding_first_5_minutes": summarize(late),
-        "pending_events": sum(b["events"] for b in buckets if not b["published_at"]),
+        "pending_events": coverage["ledger_pending_events"],
+        "ledger_coverage": coverage,
         "runs": len(runs),
         "runs_committed": sum(r["status"] == "committed" for r in runs),
         "target_15_minutes_p95_met": (summarize(values)["p95_s"] or 0) <= 900,

@@ -79,6 +79,25 @@ def test_stats_histogram_and_min_effective_date(wh, items):
     assert stats.raw_max_load_seq == 7
 
 
+def test_a_retried_load_attempt_reports_the_same_events_as_the_attempt_that_merged(wh, items):
+    """SPEC 2.2 and fault S4: attempt 1 merges and never delivers its result; attempt 2 of the same run (same
+    load_seq) must report the same new events, or the freshness ledger loses them for good."""
+    table = direct_table(items[:500])
+    wh.ensure_raw()
+    first = wh.load_deliveries(table, run_id="r", job_id="r-load-a1", load_seq=7)
+    second = wh.load_deliveries(table, run_id="r", job_id="r-load-a2", load_seq=7)
+    assert (first.rows_inserted, second.rows_inserted) == (500, 0)
+    assert first.unique_new_events == second.unique_new_events == 500
+    assert first.received_histogram_10s == second.received_histogram_10s != []
+    assert first.min_effective_date_new == second.min_effective_date_new
+    # A later attempt that also reads newer rolls reports both the merged and the new events.
+    third = wh.load_deliveries(direct_table(items[:600]), run_id="r", job_id="r-load-a3", load_seq=7)
+    assert (third.rows_inserted, third.unique_new_events) == (100, 600)
+    # The next run's load reports only what it brought in first.
+    nxt = wh.load_deliveries(direct_table(items[:650]), run_id="r2", job_id="r2-load-a1", load_seq=8)
+    assert (nxt.rows_inserted, nxt.unique_new_events) == (50, 50)
+
+
 def test_reset_removes_the_file(wh, items):
     load_direct(wh, items[:3])
     wh.reset()

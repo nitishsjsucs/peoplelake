@@ -124,6 +124,16 @@ describe("results renderer", () => {
     expect(findProseViolations(text)).toEqual([]);
   });
 
+  it("renders the production ledger coverage", () => {
+    const text = renderResults([
+      {
+        file: "evals/results/p.json",
+        report: { ...freshness, target: "prod", ledger_coverage: { delivered_unique_events: 100000, ledger_published_events: 100000, complete: true } },
+      },
+    ]);
+    expect(text).toContain("Ledger coverage: 100000 of 100000 delivered unique events published (complete).");
+  });
+
   it("renders ask accuracy with the provider, model, questions hash and per-field accuracy", () => {
     const ask: AskReport = {
       kind: "ask",

@@ -77,6 +77,17 @@ def connection(path: Path | str) -> Iterator[duckdb.DuckDBPyConnection]:
         con.close()
 
 
+# Events first loaded by this load_seq (any attempt of the run's load), at their first receipt.
+LOAD_EVENTS_DUCKDB = f"""
+CREATE OR REPLACE TEMP TABLE pl_new_events AS
+SELECT r.event_id, min(r.received_at) AS first_received_at
+FROM {RAW_TABLE} r
+WHERE r.event_id IN (SELECT event_id FROM pl_batch)
+GROUP BY r.event_id
+HAVING min(r._pl_load_seq) = ?
+"""
+
+
 class DuckDBWarehouse:
     kind = "duckdb"
 
@@ -119,13 +130,15 @@ class DuckDBWarehouse:
                 inserted = con.execute("SELECT count(*) FROM pl_new").fetchone()[0]
                 con.execute(
                     f"""
-                    CREATE OR REPLACE TEMP TABLE pl_new_events AS
-                    SELECT event_id, min(received_at) AS first_received_at
-                    FROM pl_new n
-                    WHERE NOT EXISTS (SELECT 1 FROM {RAW_TABLE} r WHERE r.event_id = n.event_id)
-                    GROUP BY event_id
-                    """
+                    INSERT INTO {RAW_TABLE}
+                    SELECT {cols}, _pl_snapshot_id, ?, ?, now(), ? FROM pl_new
+                    """,
+                    [run_id, job_id, load_seq],
                 )
+                # Stats of the run's load, not of this attempt: an event is new when its first row in raw
+                # carries this load_seq, so a retried attempt (same load_seq) after one that merged and
+                # never delivered its result reports the same events and histogram (SPEC 2.2, fault S4).
+                con.execute(LOAD_EVENTS_DUCKDB, [load_seq])
                 unique_new = con.execute("SELECT count(*) FROM pl_new_events").fetchone()[0]
                 histogram = con.execute(
                     """
@@ -133,14 +146,9 @@ class DuckDBWarehouse:
                     FROM pl_new_events GROUP BY bucket ORDER BY bucket NULLS LAST
                     """
                 ).fetchall()
-                min_eff = con.execute("SELECT min(effective_date) FROM pl_new").fetchone()[0]
-                con.execute(
-                    f"""
-                    INSERT INTO {RAW_TABLE}
-                    SELECT {cols}, _pl_snapshot_id, ?, ?, now(), ? FROM pl_new
-                    """,
-                    [run_id, job_id, load_seq],
-                )
+                min_eff = con.execute(
+                    f"SELECT min(effective_date) FROM {RAW_TABLE} WHERE _pl_load_seq = ?", [load_seq]
+                ).fetchone()[0]
                 con.execute(
                     f"INSERT INTO {LOAD_LOG} VALUES (?, ?, ?, ?, ?, ?, ?, now())",
                     [run_id, job_id, load_seq, batch.num_rows, inserted, batch.num_rows - inserted, unique_new],

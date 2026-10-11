@@ -48,6 +48,8 @@ export interface FreshnessReport {
   transforms_skipped?: number;
   components?: { receive_to_run_start: { p95_s: number | null }; run_start_to_commit: { p95_s: number | null } };
   cross_check_ops_histogram?: { ledger_events: number; ops_events: number; mismatched_10s_buckets: number; agrees: boolean };
+  /** Production: the ledger must hold every delivered unique event, or no percentiles are reported. */
+  ledger_coverage?: { delivered_unique_events: number; ledger_published_events: number; complete: boolean };
   target_15_minutes_p95_met?: boolean;
 }
 
@@ -152,6 +154,10 @@ export function renderFreshnessReport(r: FreshnessReport, file: string): string 
   if (r.cross_check_ops_histogram) {
     const x = r.cross_check_ops_histogram;
     details.push(`Cross-check against the runner's \`ops_event_freshness\` histograms: ${x.ledger_events} ledger events, ${x.ops_events} ops events, ${x.mismatched_10s_buckets} mismatched 10 s buckets (${x.agrees ? "agrees" : "DISAGREES"}).`);
+  }
+  if (r.ledger_coverage) {
+    const c = r.ledger_coverage;
+    details.push(`Ledger coverage: ${c.ledger_published_events} of ${c.delivered_unique_events} delivered unique events published (${c.complete ? "complete" : "INCOMPLETE"}).`);
   }
   if (r.target_15_minutes_p95_met !== undefined) details.push(`15-minute p95 target (reported, not asserted): ${r.target_15_minutes_p95_met ? "met" : "not met"}.`);
   return [

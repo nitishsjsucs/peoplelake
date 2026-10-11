@@ -29,10 +29,16 @@ def e2e(duration_minutes: float, *, tick_seconds: float = 10.0, quiesce_timeout_
         target="prod", profile="full", mode="live", duration_minutes=duration_minutes, tick_seconds=tick_seconds
     )
     deadline = time.monotonic() + quiesce_timeout_s
-    while time.monotonic() < deadline:
+    while True:
         fresh = op.freshness("7d")["overall"]
         if fresh["events"] >= 100_000 and fresh["pending_events"] == 0 and op.status().get("active_run_id") is None:
             break
+        if time.monotonic() >= deadline:
+            # A partial ledger would give a biased p95 (the missing events are the slow ones): stop here.
+            raise SystemExit(
+                f"production was not quiescent after {quiesce_timeout_s:.0f} s (ledger {fresh}); "
+                "nothing was written to evals/results"
+            )
         time.sleep(30)
     from ..config import load_settings, open_lake
 

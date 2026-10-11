@@ -32,11 +32,10 @@ class FakeClient:
         params = {p.name: (p.type_, p.value) for p in (job_config.query_parameters if job_config else [])}
         self.calls.append(("query", sql, params, location))
         text = sql.strip().upper()
-        if text.startswith("WITH BATCH"):
+        if text.startswith("WITH BATCH_EVENTS"):
             return FakeJob(
                 [
                     {
-                        "rows_new": 3,
                         "unique_new_events": 2,
                         "min_effective_date_new": "2012-01-10",
                         "histogram": [{"bucket": 1790812800, "n": 2}],
@@ -99,13 +98,16 @@ def test_load_job_merge_and_log(batch):
     assert update[2] == ["expires"] and update[3] is not None
 
     queries = [c for c in client.calls if c[0] == "query"]
-    stats_sql, merge_sql, log_sql, max_sql = (q[1] for q in queries)
+    merge_sql, stats_sql, log_sql, max_sql = (q[1] for q in queries)
+    # Stats come after the MERGE and key on the run's load_seq, so a retried attempt reports the same events.
+    assert "HAVING MIN(r._pl_load_seq) = @load_seq" in stats_sql
+    assert queries[1][2]["load_seq"] == ("INT64", 42)
     merge = sqlglot.parse_one(merge_sql, read="bigquery")
     assert isinstance(merge, exp.Merge)
     assert "ON T.delivery_id = S.delivery_id" in merge_sql
     assert "WHEN NOT MATCHED THEN" in merge_sql
     assert "ORDER BY _ord ASC NULLS LAST" in merge_sql
-    assert queries[1][2] == {
+    assert queries[0][2] == {
         "run_id": ("STRING", "r-x-000001"),
         "job_id": ("STRING", "r-x-000001-load-a1"),
         "load_seq": ("INT64", 42),
