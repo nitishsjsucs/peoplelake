@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Builder 4 finished the production setup and doctor for the Workers Free plan; builder 3's Free plan migration (the nine commits of SPEC 23.0 plus the `eval-full` freshness job) was already done, with every local result re-recorded on it. Builder 4's commits: 1, bootstrap read the Basin Catalog URI and warehouse from keys `.prod/state.json` never has (fixed; ADC through google-auth); 2, the doctor runs read only before anything is provisioned, against the real logins, and ends with everything not passing grouped by fix in README step order; 3, setup parses the Basin Catalog URI and warehouse from wrangler's real output format; 4, setup stops at a failed create and looks queues up by name; 5, the Access application gets its `domain` and its AUD is read back when the create response has none; 6, bootstrap's gcloud calls never prompt, so `--plan` cannot enable an API; 7, README and PROGRESS record what the doctor reported on the real accounts; 8, the final check status (and `infra/gcp/README.md` on the plan's prompts and the runner settings). Next: the owner's steps and go-live (SPEC 20.2 and 20.5); nothing else in the plan is open. Everything runs and is verified on the local stack; nothing has been created or run in Cloudflare production or Google Cloud, and the only contact with them was the read-only doctor.
+The fixer resolved all 30 findings of the four-lens review of `f883f27` (correctness, security, honesty, Free plan fit; 2 blocking, 13 important, 15 minor): commits 1 to 16 in the first fixer session, and commits 17 to 19 plus this log in the second, which continued after the first was interrupted while re-running the scenario evals (its uncommitted small-profile result was checked complete and committed). The Fixer section below maps each finding to its commit and lists the parts not done with the reason. Committed local results on paths the fixes changed were recorded again: both scenario profiles at `d581069`, the production-cadence freshness run at `0fcda26`, the ingest CPU at `2280874`. Older and kept: the wide-guard freshness run (`6ef6509`, labeled with its pacing, before the loader and alarm fixes), the ask evals (they score only the translation route, unchanged) and the MetricFlow parity (it reads the metrics mart, unchanged). Earlier: builder 4 built the production setup and doctor for the Workers Free plan against the real logins, after builder 3's Free plan migration (SPEC 23.0). Next: the owner's steps and go-live (SPEC 20.2 and 20.5); nothing else in the plan is open. Everything runs and is verified on the local stack; nothing has been created or run in Cloudflare production or Google Cloud, and the only contact with them was the read-only doctor.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -97,7 +97,7 @@ Freshness result: `peoplelake eval freshness --target local --duration 60m` (ful
 8. `docs: progress with the final check status`. Every check below rerun after commit 7. Also rerun at `ae26d27` as evidence that the eval path still holds (it is unchanged since builder 3's commit 9, so the committed results stand and were not replaced): all six small-profile scenarios through the local stack, identical to the reference digests on all 10 models, 54.0 s (S2) to 108.7 s (S4), written to a scratch file only; ports free and no process of this repo left afterwards. `infra/gcp/README.md` now says that a plan never prompts and that bootstrap stops without the runner job's settings.
 
 ## Fixer (review of `f883f27`: correctness, security, honesty and Free plan fit)
-Each finding was checked against the code before fixing; rejected findings are listed at the end of this section with the reason.
+Each finding was checked against the code before fixing; the map of every finding to its commit, and the parts not done with the reason, are at the end of this section.
 
 1. `fix(prod): bootstrap plan reads no API the project has not enabled; the runner can read secrets created in the same run`. `bootstrap-gcp --plan` (and so `npm run setup:prod -- --dry-run`) called the Data Catalog client unconditionally, and on the shared project, where 8 of the 11 APIs are disabled, the real client raises `PermissionDenied ... SERVICE_DISABLED`, so the plan would have crashed with a traceback instead of printing. `services()` now records the enabled set, and every client read goes through `client_read(api, read)`: in plan mode a read behind an API that is not enabled is skipped (no resource can exist behind it) and a `SERVICE_DISABLED` error is treated the same way, so the plan records the taxonomy, both tags and both data policies as creates; outside plan mode errors propagate. `api_disabled` moved from `doctor_gcp.py` to `bootstrap_gcp.py` (the doctor imports it). Also fixed: a secret created in the run never got `roles/secretmanager.secretAccessor` for `peoplelake-runner` (the loop ended with `continue`), so the first job deploy would have referenced three secrets its identity could not read; the binding now runs for every secret, before the job deploy. Tests: the empty-project fakes raise `SERVICE_DISABLED` for the APIs the fake gcloud reports disabled (7 tests failed on the previous code), the plan never touches the Data Catalog client while the API is disabled, an API listed as enabled that still refuses, errors propagating outside plan mode, and one secretAccessor binding per secret before the job deploy.
 
@@ -139,34 +139,85 @@ Second fixer session (continuing the interrupted fixer; every check re-run first
 
 19. `feat(bench): time the Access JWT verification; re-record ingest CPU`. Finding 28 named the Access JWT verification (with the key import on a cold isolate) among the per-request costs nobody measured, and commit 14 left it out as needing workerd; it does not: `verifyAccessJwt` is jose and WebCrypto, which run in Node. `npm run bench:ingest` now times it on an RS256 token against a JWKS set (the dev key source; production's JWKS fetch is I/O and it imports the same RSA key), warm and on the first call of fresh processes, which includes the key import. Re-recorded `evals/results/ingest-cpu-2026-10-11.json` (load average 3.6): the JWT verification at warm p99 0.24 ms and 0.97 to 1.11 ms on a first call; 50-event requests at warm p99 0.65 to 0.7 ms and 1.3 to 1.92 ms on the first request after the prewarm; 500-event requests still past 10 ms on a first request (up to 14.76 ms, 11.48 ms after the prewarm). README Results, the budget's CPU row, ADR 0009 and the comment on `MAX_BATCH_EVENTS` cite the new file. Still not timed: Hono routing and the Durable Object RPC (they need the Worker's bindings, so workerd), and the whole `app.fetch` for the same reason; the production cpuTime per route comes from Workers Logs after go-live (Next). Tests: the renderer's sentence with and without the JWT row.
 
+Review findings of `f883f27` (2 blocking, 13 important, 15 minor) and where each was resolved. All 30 were verified against the code or history before fixing; none was rejected outright. The parts of findings that were not done, with the reason, are listed after the table.
+
+| # | Lens, severity | Finding | Resolved in |
+|---:|---|---|---|
+| 1 | honesty, blocking | the resume text names Basin Pipelines twice | `c033600` (SPEC 0 note, 0.1 and 0.2 wording) |
+| 2 | honesty, blocking | the resume states production results that have not run | `c033600` (SPEC 0.2, README "what is proven where") |
+| 3 | honesty, important | local freshness ran with wide run guards and 1 s ticks, unlabeled | `0fcda26` (guards, ticks and wall time recorded), `c033600` (docs), `d581069` (a run at the production cadence) |
+| 4 | honesty, important | the ask eval's providers were changed after the questions existed | `c033600` |
+| 5 | honesty, minor | the budget and CPU headroom called measured | `9cf5787`, `c033600` |
+| 6 | honesty, minor | ADR 0009 and a comment cite scratch CPU numbers | `c033600`; figures updated again in `2280874` |
+| 7 | honesty, minor | SPEC sections not marked superseded, a nonexistent test, a renamed dataset | `05010f2`, `c033600` |
+| 8 | honesty, minor | CI timeout figures not in any results file | `c033600`, `d581069` (`wall_time_s`); re-cited in `f717125` |
+| 9 | honesty, minor | stale deviations in PROGRESS | `c033600`; the budget deviation updated in `f0fb48a` |
+| 10 | security, important | the analyst reads the dataset dbt builds in (untagged temp tables) | `afd2ef5` |
+| 11 | security, important | small-cell suppression undone by subtraction | `259b66f` |
+| 12 | security, important | viewers get the unsuppressed snapshot | `259b66f` |
+| 13 | security, important | no cross-site request protection | `e85186a` |
+| 14 | security, minor | the operator role can download raw landing files | `e85186a` |
+| 15 | correctness, important | `bootstrap-gcp --plan` crashes on a disabled Data Catalog API | `c900a2d` |
+| 16 | correctness, important | a job enqueued after the runner's idle exit waits for the claim timeout | `aec0d89` |
+| 17 | correctness, important | the freshness ledger loses events of a retried load | `ba1eb59` |
+| 18 | correctness, minor | a refused AI Gateway create does not stop setup | `e5256d7` |
+| 19 | correctness, minor | setup's wrangler calls are not pinned to the account | `e5256d7` |
+| 20 | correctness, minor | `recon_history_as_of_matches_snapshot` has no tamper test | `05010f2` |
+| 21 | correctness, minor | nothing pins the metric catalog at five | `05010f2` |
+| 22 | free plan fit, important | the Coordinator alarm loops every second | `27eb511` |
+| 23 | free plan fit, important | two BigQuery month counters, the Coordinator's undercounting | `3ee4ec1` |
+| 24 | free plan fit, important | the doctor's live probes have side effects | `82ef21d` |
+| 25 | free plan fit, important | the runner cannot read secrets created in the same bootstrap | `c900a2d` |
+| 26 | free plan fit, minor | predeploy-check does not run the budget | `9cf5787` |
+| 27 | free plan fit, minor | the BigQuery budget row can never fail | `9cf5787` |
+| 28 | free plan fit, minor | the CPU evidence covers only part of the ingest request | `0fcda26`, `2280874` (the Access JWT verification) |
+| 29 | free plan fit, minor | Artifact Registry and Secret Manager past the share and unreported | `9cf5787`, `f0fb48a` (uv cache out of the image, measured size, doctor report) |
+| 30 | free plan fit, minor | the doctor checks the local render, not the deployed Worker | `ab284b5` |
+
+Parts not done, with the reason:
+- 1: the copies of the resume outside this repository, and the task text that still calls the Basin Pipelines wording current, cannot be changed from here; the owner must change them (SPEC 0 says so).
+- 2: the go-live evidence itself (`prod:e2e`, the BigQuery drill) needs the owner's setup and is forbidden in this session; until then SPEC 0.2 gives the wording that is true today.
+- 13: setup does not rewrite the cookie settings of an Access application that already exists, because the update call replaces the whole application configuration and has never been exercised; it prints the dashboard change, and the doctor fails until the settings are Lax and HttpOnly.
+- 17: a run whose every load attempt fails after merging still leaves those events out of the ledger; production freshness now refuses a partial ledger instead of reporting a biased p95.
+- 28: the whole `app.fetch` is not timed, because the ingest route needs the Worker's Durable Object, R2 and Queue bindings, which only workerd provides; the Node-runnable parts are timed one by one, and the production cpuTime per route is a go-live step (Next).
+- 29: no multi-stage image build; with uv's cache gone the only gain left is the 54.5 MB uv binary layer, against the risk of moving the virtualenv between stages.
+
 ## Next
 - The owner's steps in README Production setup, in the order the doctor's summary prints them: One-time PIN (step 1), the two Cloudflare tokens (steps 2 and 3), billing on the shared project (step 4), the `.prod` files (step 7), then `npm run setup:prod -- --dry-run`, `npm run setup:prod`, `npm run doctor` until it passes, and the go-live (step 10: `prod:e2e`, the BigQuery drill, the masking demo, the restore drill, the resumable Workers AI ask eval, `npm run results:readme`).
 - After the first `eval-full` run on GitHub (scheduled Mondays 06:17 UTC): set its scenario timeout to twice the runner's slowest full-profile step, and check the freshness job's duration. `ci.yml` runs on GitHub on every push the owner's loop makes.
+- After go-live: record the production CPU time per route (p99 of `cpuTime` in Workers Logs) into `evals/results`, the measurement the Node benchmark stands in for.
+- Outside this repository (owner): change every copy of the resume, and any task text that still calls the Basin Pipelines wording current, to SPEC 0.1 (or 0.2 until the go-live evidence is committed).
 - Not exercised against real services yet: Basin Catalog, production Workflows, the Cloud Run Job, BigQuery, Workers AI and Access (including the dashboard sign-in). The S5 BigQuery drill skips its point-in-time half (no scratch `_pit` datasets).
 
 ## Check status (last run at this commit)
+Run by the second fixer session on 2026-10-11 at `2280874` (this commit changes only PROGRESS and SPEC prose; the prose check ran again on it).
+
 | Check | Result |
 |---|---|
 | `npm run typecheck` | pass (worker, worker tests, node, web) |
 | `npm run typegen:check` | pass |
-| `npm test` (vitest) | pass: 21 files, 262 tests (worker 12 files in workerd, node 7, web 2) |
-| `npm run check:prose` | pass |
+| `npm test` (vitest) | pass: 23 files, 285 tests (worker 12 files and 180 tests in workerd, node 9 and 90, web 2 and 15) |
+| `npm run build:web` | pass |
+| `npm run check:prose` | pass (19 Markdown files) |
 | `npm run contracts:check` | pass |
 | `npm run results:check` | pass |
-| `npm run deploy:dry-run` | pass (predeploy-check applies the Free plan rules) |
-| `npm run budget -- --check` | pass: every estimate within its planning share, all config rules hold |
-| `npm run test:py` (pytest, all markers) | pass: 278 passed (267 at the start of builder 4, 3 new bootstrap tests, 8 in `test_doctor_gcp.py`) |
+| `npm run deploy:dry-run` | pass (predeploy-check applies the Free plan rules and the budget) |
+| `npm run budget -- --check` | pass: every gated estimate within its planning share, all config rules hold; Artifact Registry (340 MB measured) and Secret Manager reported past the share, not gated |
+| `npm run test:py` (pytest, all markers) | pass: 307 passed |
 | `ruff check`, `ruff format --check` | pass |
+| `peoplelake generate --profile small --check` | pass (sha256 pin) |
+| `peoplelake dev reference-digests` | pass on both profiles; both equal the stored references |
+| `peoplelake dev bq-compile` | pass: 30 models and 99 tests on both branches |
 | `npm run doctor -- --local-only` | pass: 13 checks, 12 pass, 1 info (the optional local LLM) |
-| `peoplelake dev clean-clone-check` | pass at `ae26d27` (uv sync, dbt parse, 27 smoke tests in a fresh clone) |
-| `peoplelake eval scenarios` | committed results: all six on both profiles at builder 3's commit 9 (eval path unchanged since); rerun at `ae26d27`: all six small-profile scenarios identical to the reference (scratch file, not committed) |
-| `peoplelake eval freshness --target local --duration 60m` | recorded: p95 69 s, 60 of 60 runs committed, cross-check agrees |
-| `npm run bench:ingest` | recorded: 50-event requests within the 10 ms Free limit (worst 3.86 ms, first after the prewarm) |
-| `eval-full.yml` freshness step command (2 minutes, locally) | pass; result not committed |
-| CI on GitHub (`gh run list`, read-only) | `ci.yml`: 12 runs, all passed; the latest on `ae26d27` (the owner's loop pushed commits 1 to 7 together), 5 min 39 s; `eval-full.yml` has not run yet (weekly on Mondays at 06:17 UTC, or on demand) |
+| `peoplelake dev clean-clone-check` | pass at `2280874` (uv sync, dbt parse, 27 smoke tests in a fresh clone) |
+| `docker build` of the runner image, `--help` | pass (341.8 MB of compressed content, linux/arm64) |
+| `peoplelake eval scenarios` | committed at `d581069`: all six scenarios identical on both profiles (small 43.6 s to 86.7 s, full 105.9 s to 161.0 s) |
+| `peoplelake eval freshness --target local --duration 60m` | committed: wide run guards p95 69 s (`6ef6509`), production cadence p95 260 s (`0fcda26`); 15-minute target met in both |
+| `npm run bench:ingest` | committed at `2280874`: 50-event requests at warm p99 0.65 to 0.7 ms, at most 1.92 ms on the first request after the prewarm |
+| CI on GitHub (`gh run list`, read-only) | `ci.yml`: 15 runs, all passed, the latest on `d581069` (5 min 2 s); this session's commits not yet pushed when checked; `eval-full.yml` has not run yet (weekly on Mondays at 06:17 UTC, or on demand) |
 | `npm run setup:prod -- --dry-run` | not run against the real accounts (the hard rule forbids running setup); its dry run is tested offline with fake runners |
-| `npm run doctor` (read only, real logins) | run at `7bf5054`: 55 checks, 22 pass, 1 fail (billing), 22 missing, 2 unknown, 1 warn, 7 info; exit 1 as expected before setup (see Builder 4, 7) |
-| Ports 8791, 9241, 8150 after the run | free; no wrangler, workerd, runner or ticker process of this repo left |
+| `npm run doctor` (read only, real logins) | last run at `7bf5054`: 55 checks, 22 pass, 1 fail (billing), 22 missing, 2 unknown, 1 warn, 7 info; exit 1 as expected before setup (see Builder 4, 7) |
+| Ports 8791, 9241, 8150 after the run | free; no wrangler, workerd, runner, ticker or llama-server process of this repo left, no `peoplelake` container |
 
 ## Deviations from SPEC.md
 - Doctor (SPEC 21.3 and 21.0, builder 4): it runs before setup too, so without `.prod/config.env` it checks the account `wrangler whoami` shows and the project `gcloud config` points at (and reports the file missing), and `PL_*` environment variables override the file. The go-live evidence is a WARN and a job without executions is INFO, not failures, because README step 9 asks for a passing doctor before the go-live that produces them. Confirming the One-time PIN login method needs a fourth, optional, read-only permission on `PL_CF_SETUP_TOKEN` (Access: Organizations, Identity Providers, and Groups Read); without it the check is a WARN. Before the setup token exists the One-time PIN, service token, AI Gateway and Access application checks are UNKNOWN (and fail the doctor), since wrangler's OAuth login cannot read them.

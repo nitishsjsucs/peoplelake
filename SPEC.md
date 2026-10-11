@@ -1226,7 +1226,7 @@ Python CLI (`peoplelake`): `generate`, `auth dev-keys`, `auth dev-token`, `lake 
 Revision 3 (2026-10-10). Production runs on the Cloudflare **Workers Free** plan and in the shared Google Cloud project `master-magnet-444903-u4`. Legend: **[done]** already true on 2026-10-10 (with how it was checked), **[todo]** still needed; [V] verified against official docs, the CLI or its source; [U] unverified, doctor checks the result and setup prints the dashboard path if it differs. Do not run any production step until builder 3's migration commits (section 23.0) are in and CI is green: the revision 2 `setup:prod` still tries to create Basin Pipelines resources, which fail on Free with code 1021.
 
 ### 20.1 Accounts, plans and costs
-The full table is section 29.7. In short: Cloudflare $0 (Workers Free, R2 inside its free tier with the card on file, Basin Catalog inside its included operations, Zero Trust Free); Google Cloud about $0 inside the free tiers (BigQuery about 281 GB of the 1 TiB monthly query allowance in the go-live month, then about 0), with a few cents a month possible for Artifact Registry storage and Secret Manager versions beyond the shared free allowance. No Workers Paid, no Basin Pipelines.
+The full table is section 29.7. In short: Cloudflare $0 (Workers Free, R2 inside its free tier with the card on file, Basin Catalog inside its included operations, Zero Trust Free); Google Cloud about $0 inside the free tiers (BigQuery about 281 GB of the 1 TiB monthly query allowance in the go-live month, then about 0; fixer: under the 274 GB guard the go-live month is about 246 GB and the next about 42 GB, section 29.5), with a few cents a month possible for Artifact Registry storage and Secret Manager versions beyond the shared free allowance. No Workers Paid, no Basin Pipelines.
 
 ### 20.2 The only steps that need a human (in order)
 Cloudflare (the account wrangler is logged in to; its id goes in `.prod/config.env` only):
@@ -1764,7 +1764,7 @@ Peak day = the go-live day: `prod:e2e` (100,000 events over 60 minutes, sources 
 | Path | Free allowance (scope) | Peak day | Peak share of allowance | Steady day | Basis |
 |---|---|---|---|---|---|
 | Worker requests | 100,000 a day (account) | about 4,300 | 4.3% | about 340 | ingest at most 3,080; runner about 400 (20 executions x about 20 calls); cron 288; queue consumer at most 62; Workflow steps counted as requests 160; operator, dashboard, doctor and eval about 300 |
-| CPU, ingest at 50 events | 10 ms per request | warm p99 2.8 to 3.7 ms; first after prewarm 2.8 to 3.3 ms (one 10.6 ms outlier) | at most 37% | n/a | measured proxy, 29.4.2 |
+| CPU, ingest at 50 events | 10 ms per request | warm p99 2.8 to 3.7 ms; first after prewarm 2.8 to 3.3 ms (one 10.6 ms outlier); fixer: these are the 2026-10-10 scratch figures, the committed benchmark (`evals/results/ingest-cpu-<date>.json`, `npm run bench:ingest`) is the evidence and `npm run budget` reads it | at most 37% | n/a | measured proxy, 29.4.2 |
 | CPU, Workflow step | 10 ms per step | 0.55 ms p50, 2.39 ms first use (dispatch); others I/O | at most 24% | n/a | measured proxy, 29.4.4 |
 | CPU, cron and queue consumer | 10 ms (cron), not stated (queue) | under 1 ms (two RPCs) | under 10% | same | estimate |
 | Subrequests | 50 external, 1,000 internal per invocation | ingest 1 internal (plus 1 external JWKS fetch on a cold isolate); roll 4 internal; Workflow instance at most 12 external and under 100 internal | at most 24% | same | counted from the code paths |
