@@ -22,11 +22,11 @@ v1 is under construction and this repository is published while it is built. Thi
 | Runner and local stack | done locally: `peoplelake runner poll` (in-process dbt, heartbeats, eval fault hooks) and `peoplelake stack up/down` (wrangler dev, runner, ticker in their own process groups, ports checked free) |
 | Scenario and freshness evals | done on the local stack (see Results): scenario equivalence on DuckDB, and the 60-minute local freshness measurement of the full profile (p95 78 s on the local stand-ins, ledger and ops histograms agree); production freshness is measured once by `npm run prod:e2e` |
 | CI | workflows written (`ci.yml` on every push, `eval-full.yml` weekly and on demand); they have not run on GitHub yet because the owner publishes the repo |
-| Workers AI and `/api/ask` | done: `AiProvider` with a deterministic stub (CI), llama-server (local) and Workers AI through AI Gateway (production, mocked in tests), `POST /api/ask` answering only from the committed metrics snapshot, `/api/ops/ai` gateway check; the 60-question ask eval (`peoplelake eval ask`) scores each provider through the Worker, local results pending, Workers AI needs production |
+| Workers AI and `/api/ask` | done: `AiProvider` with a deterministic stub (CI), llama-server (local) and Workers AI through AI Gateway (production, mocked in tests), `POST /api/ask` answering only from the committed metrics snapshot, `/api/ops/ai` gateway check; the 60-question ask eval (`peoplelake eval ask`) scores each provider through the Worker: stub and llama-server results recorded (see Results), Workers AI runs after the production setup |
 | Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | built and tested offline (dry run, fake clients, rendered config bundles with `wrangler deploy --dry-run`); not run against real accounts yet, see Production setup |
 | Front end | none in v1 (the dashboard is below the core cut line); `/api/*` is the read interface |
 
-Identical outputs across the five scenarios: proven on DuckDB with the local stack (all six legs on the small profile; B, S2 and S4 on the full 100,000-event profile); BigQuery pending (needs the production setup below and the BigQuery drill).
+Identical outputs across the five scenarios: proven on DuckDB with the local stack (all six legs, B and S1 to S5, on both the small profile and the full 100,000-event profile); BigQuery pending (needs the production setup below and the BigQuery drill).
 
 ## Architecture
 
@@ -209,7 +209,7 @@ GitHub Actions run CI only and hold no cloud credentials (`permissions: contents
 | `ci.yml` | e2e (B, S1 to S5) | one scenario per VM on the small profile through the local stack, compared with the reference digests |
 | `eval-full.yml` | scenarios | the same matrix on the full profile (100,000 events), weekly and on demand; reports only |
 
-Scenario step timeouts are twice the slowest leg measured in the build session (small profile: S5, 342.2 s; full profile: B, 465.6 s; S5 was not measured on the full profile): 12 minutes for the small profile and 16 minutes for the full profile.
+Scenario step timeouts are twice the slowest leg measured in the build session (small profile: S5, 342.2 s; full profile: B, 465.6 s, with S1, S3 and S5 at 165.0 s, 164.9 s and 169.5 s in a later, less loaded run): 12 minutes for the small profile and 16 minutes for the full profile.
 
 ## Production setup
 
@@ -302,6 +302,22 @@ Runbooks in [docs/runbooks](docs/runbooks): [replay from the lake](docs/runbooks
 <!-- results:start -->
 Rendered by `npm run results:readme` from `evals/results/*.json`. Every number below was produced by the command shown, on the date shown, with the engine and stand-ins named; nothing is estimated.
 
+#### Ask accuracy, llama (2026-10-11)
+
+Command: `peoplelake eval ask --provider llama`. Provider: llama-server on 127.0.0.1:8150 (local stand-in for Workers AI), model `Qwen3-1.7B-Q4_0-rtn.gguf`. Target: local, route `POST /api/ask/query`. Questions: `evals/ask/questions.jsonl` (sha256 `f6b4b0d5e154`). Machine: Darwin arm64. Source: `evals/results/ask-llama-2026-10-11.json`.
+
+| Questions | Exact match | Metric | Department | Start month | End month | Invalid answers | Latency p50 | Latency p95 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 60 | 44 (73.3%) | 96.7% | 83.3% | 85.0% | 96.7% | 0 | 1005 ms | 1168 ms |
+
+#### Ask accuracy, stub (2026-10-11)
+
+Command: `peoplelake eval ask --provider stub`. Provider: deterministic rule parser in the Worker (no model). Target: local, route `POST /api/ask/query`. Questions: `evals/ask/questions.jsonl` (sha256 `f6b4b0d5e154`). Machine: Darwin arm64. Source: `evals/results/ask-stub-2026-10-11.json`.
+
+| Questions | Exact match | Metric | Department | Start month | End month | Invalid answers | Latency p50 | Latency p95 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 60 | 45 (75.0%) | 93.3% | 100.0% | 91.7% | 88.3% | 0 | 3 ms | 4 ms |
+
 #### Freshness, local, full profile (2026-10-11)
 
 Command: `peoplelake eval freshness --target local --duration 60m`. Method: ledger histograms of first receipt (10 s buckets) against the publishing run's commit time. Engine: duckdb. Stand-ins: SinkRoller roll files (60 s), pyiceberg SqlCatalog, local runner process, ticker for cron. Machine: Darwin arm64. Rate: 27.778 events per second. Source: `evals/results/freshness-local-full-2026-10-11.json`.
@@ -321,6 +337,18 @@ Command: `peoplelake eval scenarios --profile full --chunks 20 --scenarios B,S2,
 | B baseline | 10 | 0 | 0 | 100000 | 21 | 465.6 s |
 | S2 duplicate-lake-redelivery | 10 | 0 | 0 | 100000 | 21 | 265.8 s |
 | S4 recovery-step-failures | 10 | 0 | 0 | 100000 | 21 | 252.7 s |
+
+All scenarios identical to the reference digests: **yes**.
+
+#### Scenario equivalence, full profile, duckdb (2026-10-11)
+
+Command: `peoplelake eval scenarios --profile full --chunks 20 --scenarios S1,S3,S5 --reference .data/reference/reference-digests-full.json` (the reference digests come from `peoplelake dev reference-digests --profile full`). Orchestration: local (wrangler dev / Miniflare Workflows). Lake: local stand-in (SinkRoller + pyiceberg SqlCatalog). Machine: Darwin arm64. Source: `evals/results/scenarios-full-duckdb-2026-10-11-S1-S3-S5.json`.
+
+| Scenario | Identical models (of 10) | Oracle rows mismatched | Warn checks at quiescence | Deliveries | Runs | Duration |
+|---|---:|---:|---:|---:|---:|---:|
+| S1 duplicate-client-retries | 10 | 0 | 0 | 111000 | 21 | 165 s |
+| S3 late-arrival | 10 | 0 | 0 | 100000 | 22 | 164.9 s |
+| S5 recovery-warehouse-rebuild | 10 | 0 | 0 | 100000 | 23 | 169.5 s |
 
 All scenarios identical to the reference digests: **yes**.
 
