@@ -38,7 +38,7 @@ const freshness: FreshnessReport = {
   overall: { p50_s: 80, p90_s: 120, p95_s: 130, p99_s: 150, max_s: 200, share_within_15m: 1 },
   excluding_first_5_minutes: { p95_s: 128 },
   runs: 70,
-  stand_ins: "SinkRoller, SqlCatalog",
+  stand_ins: "SqlCatalog, local runner",
 };
 
 const ingest: IngestCpuReport = {

@@ -3,7 +3,7 @@
 Status: accepted (2026-10-10)
 
 ## Context
-Sources retry requests, the lake can hand the loader the same data twice (a rewound watermark, a recommitted file, a full-scan fallback), and runner jobs can be retried after a crash. Basin sinks are exactly-once from stream to sink, which covers none of these.
+Sources retry requests, the lake can hand the loader the same data twice (a rewound watermark, a recommitted landing roll, a full-scan fallback), and runner jobs can be retried after a crash. The landing's planned, immutable rolls and the committer's snapshot-summary cursor (ADR 0009) prevent duplicate appends in the normal path, but none of the cases above.
 
 ## Decision
 Every record carries the source's deterministic `event_id` and a Worker-minted `delivery_id` (one per record per request). The Worker does no request-level deduplication, so duplicates stay visible and countable. The loader inserts a delivery only if its `delivery_id` is absent (`INSERT ... WHERE NOT EXISTS` on DuckDB, `MERGE ... WHEN NOT MATCHED` on BigQuery) and deduplicates within a batch first. dbt staging (`stg_events`) is insert-only on `event_id`: the earliest delivery wins and a later duplicate never overwrites it or marks an employee bucket dirty. R8 checks that every delivery of an event carries the same payload.

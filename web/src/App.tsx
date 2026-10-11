@@ -96,7 +96,7 @@ export function App() {
         {route.page === "checks" ? <ChecksPage /> : null}
       </main>
       <footer className="muted small">
-        Read-only view of the Worker's <span className="mono">/api/*</span>. Synthetic data. {local ? "Local stand-ins: wrangler dev, SinkRoller, pyiceberg SqlCatalog, DuckDB." : null}
+        Read-only view of the Worker's <span className="mono">/api/*</span>. Synthetic data. {local ? "Local stand-ins: wrangler dev, pyiceberg SqlCatalog, the local runner, DuckDB." : null}
       </footer>
     </div>
   );

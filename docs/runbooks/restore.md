@@ -11,7 +11,7 @@ A copy job (`bq cp table@<epoch_ms>`) does not copy partitioning information or 
 ```bash
 uv run --project pipeline peoplelake prod drill-restore --as-of-ms <epoch ms> --expected <file with the run's digests>
 ```
-For each published model it runs `CREATE OR REPLACE TABLE peoplelake_<x>_drill.<model> [PARTITION BY RANGE_BUCKET(employee_bucket, GENERATE_ARRAY(0, 2048, 1)) CLUSTER BY employee_id] AS SELECT * FROM pl_<x>.<model> FOR SYSTEM_TIME AS OF TIMESTAMP_MILLIS(<ms>)`, copies the source columns' policy tags onto the restored table before anything reads it, then compares the restored digests with the digests the ledger recorded for the run committed at that time (`GET /api/runs/<run_id>`). `peoplelake_restricted_drill` grants nothing to `pl-analyst`.
+For each published model it runs `CREATE OR REPLACE TABLE peoplelake_<x>_drill.<model> [PARTITION BY RANGE_BUCKET(employee_bucket, GENERATE_ARRAY(0, 2048, 1)) CLUSTER BY employee_id] AS SELECT * FROM peoplelake_<x>.<model> FOR SYSTEM_TIME AS OF TIMESTAMP_MILLIS(<ms>)`, copies the source columns' policy tags onto the restored table before anything reads it, then compares the restored digests with the digests the ledger recorded for the run committed at that time (`GET /api/runs/<run_id>`). `peoplelake_restricted_drill` grants nothing to `peoplelake-analyst`.
 
 ## Real restore
 Run the same statements with the production dataset as the target only after the drill passed for the same point in time, then run an incremental run (`POST /api/runs`) so later lake data is applied again.

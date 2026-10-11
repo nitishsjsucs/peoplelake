@@ -1,12 +1,12 @@
 # PeopleLake
 
-Replayable workforce ELT and historical analytics warehouse. Three simulated enterprise sources (`hris`, `ats`, `talent`) carrying HR, recruiting, compensation and performance data post events to a Cloudflare Worker. The Worker lands every accepted request in a LandingRoller Durable Object, which rolls the records into immutable files in R2 once a minute, and a Python runner commits those rolls to an Apache Iceberg table on R2 (Basin Catalog in production) and loads the lake incrementally into BigQuery and dbt builds a dimensional model with effective-dated employee history, five workforce metrics and reconciliation checks. Cloudflare Workflows orchestrate every warehouse run so any step can fail, retry or be re-delivered without changing the outputs.
+Replayable workforce ELT and historical analytics warehouse on the Cloudflare **Workers Free** plan and Google Cloud's free tiers. Three simulated enterprise sources (`hris`, `ats`, `talent`) carrying HR, recruiting, compensation and performance data post events to a Cloudflare Worker. The Worker lands every accepted request in a LandingRoller Durable Object, which writes the records to immutable roll files in R2 once a minute; a Python runner commits those rolls to an Apache Iceberg table on R2 (Basin Catalog in production), loads the lake incrementally into BigQuery, and dbt builds a dimensional model with effective-dated employee history, five workforce metrics and reconciliation checks. Cloudflare Workflows orchestrate every warehouse run so any step can fail, retry or be re-delivered without changing the outputs.
 
-All data is synthetic. The design is in [SPEC.md](SPEC.md); the domain glossary is in [CONTEXT.md](CONTEXT.md); build progress is in [PROGRESS.md](PROGRESS.md).
+All data is synthetic. The design is in [SPEC.md](SPEC.md) (section 29 for the Workers Free plan); the domain glossary is in [CONTEXT.md](CONTEXT.md); build progress is in [PROGRESS.md](PROGRESS.md).
 
 ## Status
 
-v1 is built and verified end to end on the local stack (every item of the build plan, including the ask eval, the dashboard and the MetricFlow layer). Nothing has run against Cloudflare production or Google Cloud yet: that needs the owner's accounts (see Production setup). This table is updated in every commit that changes what works.
+v1 is built and verified end to end on the local stack (every item of the build plan, including the ask eval, the dashboard and the MetricFlow layer), and the production path has been redesigned for the Workers Free plan: Basin Pipelines needs Workers Paid, so the LandingRoller lands data in R2 in both environments and the runner commits it to Basin Catalog, every Free allowance has a guard or a measured budget (see Workers Free plan below), and the shared Google Cloud project gets this repo's prefix on every name and resource-scoped grants only. Nothing has run against Cloudflare production or Google Cloud yet: that needs the owner's setup (see Production setup). This table is updated in every commit that changes what works.
 
 | Area | State |
 |---|---|
@@ -20,10 +20,11 @@ v1 is built and verified end to end on the local stack (every item of the build 
 | Worker: auth, ingest, landing | done locally: fail-closed config, Access JWT verification (RS256, iss, aud, exp) with locally generated dev keys, role gates, `POST /v1/ingest/:source` for three envelopes (zod, all-or-nothing, at most 50 events per request so a request stays well inside the Workers Free plan's 10 ms of CPU, the ingest path prewarmed at isolate startup), RawRecord normalization shared with Python through a golden, and the LandingRoller Durable Object (one SQLite row per request, planned immutable roll files in R2 every 60 s, one Queue message per roll, backpressure), the same code locally and in production; no Basin Pipelines (Workers Paid only) |
 | Orchestration: Coordinator, Workflow, dispatchers | done locally (Miniflare Workflows): Coordinator ledger with single-flight runs, attempt-scoped jobs and leases, `WarehouseRunWorkflow` (load, transform or skip, verify, commit, release; a committed run uses 8 steps and records them), poll and Cloud Run dispatchers, lake-events queue consumer (one message per landing roll), the Workers Free plan guards (a 5-minute cron backstop that requests a run only while a landed roll is past the committed landing cursor, heartbeat off, a 240 s minimum interval between automatic runs, failure backoff of 5 minutes doubling to 6 hours, 30 automatic runs a UTC day, a 275 GB monthly BigQuery guard that commits the load and skips the transform), indexed ledger queries with per-day Durable Object row counters and `GET /api/ops/budget`, eval faults; production Workflows not exercised yet |
 | Runner and local stack | done locally: `peoplelake runner poll` (in-process dbt, heartbeats, eval fault hooks) and `peoplelake stack up/down` (wrangler dev, runner, ticker in their own process groups, ports checked free) |
-| Scenario and freshness evals | done on the local stack (see Results): scenario equivalence on DuckDB, and the 60-minute local freshness measurement of the full profile (p95 78 s on the local stand-ins, ledger and ops histograms agree); production freshness is measured once by `npm run prod:e2e` |
-| CI | workflows written (`ci.yml` on every push, `eval-full.yml` weekly and on demand); they have not run on GitHub yet because the owner publishes the repo |
+| Scenario and freshness evals | done on the local stack (see Results): scenario equivalence on DuckDB, and the 60-minute local freshness measurement of the full profile; production freshness is measured once by `npm run prod:e2e` |
+| CI | workflows written (`ci.yml` on every push, `eval-full.yml` weekly and on demand); the owner's loop publishes `main`, so they run on GitHub from then on |
 | Workers AI and `/api/ask` | done: `AiProvider` with a deterministic stub (CI), llama-server (local) and Workers AI through AI Gateway (production, mocked in tests), `POST /api/ask` answering only from the committed metrics snapshot, `/api/ops/ai` gateway check; the 60-question ask eval (`peoplelake eval ask`) scores each provider through the Worker: stub and llama-server results recorded (see Results), Workers AI runs after the production setup |
-| Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | built and tested offline (dry run, fake clients, rendered config bundles with `wrangler deploy --dry-run`); not run against real accounts yet, see Production setup |
+| Workers Free plan budget | done: `npm run budget` computes every peak-day estimate from the repo's constants and production config against the Free allowances and this repo's planning shares (table below), `--check` runs in CI, `predeploy-check` and the doctor refuse anything that needs Workers Paid |
+| Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | built for the Workers Free plan and tested offline (dry run against fake runners, fake Google clients, rendered config bundles with `wrangler deploy --dry-run`); not run against real accounts yet, see Production setup |
 | MetricFlow semantic layer | done on DuckDB: semantic models over the three facts the mart reads, the five metrics (plus the two offer components), and a parity check that MetricFlow's answers equal `metrics_workforce_monthly` on all 468 rows (both profiles, see Results); the definitions parse for BigQuery too, but no MetricFlow service runs in production |
 | Dashboard | done: React 19 + Vite 8 in `web/`, built to `web/dist` and served by the Worker as static assets (Overview, Runs with jobs and attempts, Metrics with a 36-month SVG trend and the 468-row table, Checks); reads only `/api/*`; behind Cloudflare Access in production |
 
@@ -31,75 +32,128 @@ Identical outputs across the five scenarios: proven on DuckDB with the local sta
 
 ## Architecture
 
-Production path, with the local stand-ins in brackets.
+Production path on the Workers Free plan, with the local stand-ins in brackets.
 
 ```mermaid
 flowchart LR
-  subgraph Sources["Simulated sources"]
+  subgraph Sources["Simulated sources: peoplelake sim deliver (at most 50 events per request)"]
     H["hris"]
     A["ats"]
     T["talent"]
   end
   O["Owner's browser<br/>dashboard (React, static assets)"]
-  subgraph CF["Cloudflare"]
-    ACC["Zero Trust Access<br/>service tokens and JWT"]
+  subgraph CF["Cloudflare, Workers Free plan"]
+    ACC["Zero Trust Access (Free)<br/>service tokens, One-time PIN, JWT"]
     W["Worker peoplelake<br/>Hono: /v1/ingest, /api, /internal"]
-    S["LandingRoller DO<br/>one row per request, roll every 60 s"]
-    LB[("R2 peoplelake-lake<br/>landing/raw_events roll files")]
+    LR["LandingRoller Durable Object (SQLite)<br/>one row per request, planned roll every 60 s"]
+    LB[("R2 peoplelake-lake<br/>landing/raw_events/g&lt;gen&gt;/r&lt;seq&gt;.ndjson<br/>immutable roll files")]
     Q[["Queue peoplelake-lake-events<br/>one message per roll"]]
-    L[("R2 + Basin Catalog<br/>Iceberg table peoplelake.raw_events<br/>(local stand-in: pyiceberg SqlCatalog)")]
-    C["Coordinator DO<br/>ledger, jobs, single-flight"]
+    L[("Basin Catalog Iceberg table peoplelake.raw_events<br/>data on R2 peoplelake-lake<br/>(local stand-in: pyiceberg SqlCatalog)")]
+    C["Coordinator Durable Object (SQLite)<br/>ledger, jobs, single-flight, Free plan guards"]
     WF["Workflow peoplelake-warehouse-run"]
-    AI["Workers AI via AI Gateway<br/>(local: llama-server or stub)"]
+    R2R[("R2 peoplelake-reports<br/>run reports, metrics snapshot")]
+    AI["Workers AI llama-3.3-70b via AI Gateway<br/>daily neuron cap<br/>(local: llama-server or stub)"]
     CRON["Cron every 5 minutes: sweeps and backstop<br/>(local: ticker process)"]
   end
-  subgraph GCP["Google Cloud (local stand-in: DuckDB via dbt-duckdb)"]
-    CR["Cloud Run Job peoplelake-runner<br/>(local: peoplelake runner poll)"]
+  subgraph GCP["Google Cloud, shared project (local stand-in: DuckDB via dbt-duckdb)"]
+    CR["Cloud Run Job peoplelake-runner<br/>Python runner + dbt, SA peoplelake-runner<br/>(local: peoplelake runner poll)"]
     RAW[("BigQuery peoplelake_raw.raw_event_deliveries")]
-    DBT["dbt build: staging, core,<br/>restricted, reporting, ops"]
+    DBT["dbt build: peoplelake_staging, peoplelake_core,<br/>peoplelake_restricted, peoplelake_reporting, peoplelake_ops"]
   end
-  H --> ACC
-  A --> ACC
-  T --> ACC
+  H -->|"HTTPS + service token"| ACC
+  A -->|"HTTPS + service token"| ACC
+  T -->|"HTTPS + service token"| ACC
   O -->|"Access session"| ACC
   ACC --> W
-  W -->|append NDJSON, one RPC| S
-  S -->|put roll file| LB
-  S -->|lake event| Q
+  W -->|"append NDJSON, one RPC per request"| LR
+  LR -->|"put roll file"| LB
+  LR -->|"lake event"| Q
+  LR -->|"noteRoll"| C
   Q --> W
   CRON --> W
   W --> C
-  C -->|create instance| WF
-  WF -->|jobs.run| CR
-  CR -->|claim, heartbeat, result| W
-  CR -->|commit new rolls| L
-  CR -->|incremental append scan| L
-  CR -->|load + MERGE on delivery_id| RAW
+  C -->|"create instance"| WF
+  WF -->|"jobs.run via Cloud Run Admin API"| CR
+  CR -->|"claim, roll files, heartbeat, result"| W
+  CR -->|"commit new rolls with pyiceberg RestCatalog"| L
+  CR -->|"incremental append scan"| L
+  CR -->|"load job + MERGE on delivery_id"| RAW
   RAW --> DBT
+  CR -->|"dbt build in-process, digests, metrics artifact"| DBT
+  WF -->|"commit"| C
+  WF --> R2R
   W --> AI
 ```
+
+Exactly-once effects without Basin Pipelines: a roll is planned before it is written (a retried roll rewrites identical bytes under the same key), the runner's committer appends each new roll as one Iceberg snapshot whose summary carries the landing cursor (so Basin's free snapshot expiration can never cause a re-append), and the warehouse merges on `delivery_id` (ADR 0001), so even a double append changes no published row.
 
 ## What runs where
 
 | Concern | Local (offline, CI) | Production |
 |---|---|---|
-| Ingest API | wrangler dev 4.149.0 (workerd via Miniflare) on 127.0.0.1:8791, Worker name `peoplelake-local` | Worker `peoplelake` on workers.dev behind Cloudflare Access |
-| Landing | `LandingRoller` Durable Object writes immutable NDJSON roll files to local R2 and sends one Queue message per roll (the production code on Miniflare's Durable Object, R2 and Queue) | the same code: `LandingRoller` (SQLite Durable Object), R2 bucket `peoplelake-lake` under `landing/raw_events/`, Queue `peoplelake-lake-events` |
-| Lake catalog | **stand-in**: pyiceberg `SqlCatalog` (SQLite) on disk | Basin Catalog (Iceberg REST) on R2 bucket `peoplelake-lake`, table created by `peoplelake lake init --target prod` |
+| Plan and limits | Miniflare enforces no CPU or daily limits; `npm run budget -- --check` checks the configured values against the Free plan shares | Cloudflare Workers **Free** plan (10 ms CPU per invocation; daily allowances shared with the other Workers on the account) and Google Cloud free tiers in a project shared by four repos |
+| Ingest API | wrangler dev 4.149.0 (workerd via Miniflare) on 127.0.0.1:8791, Worker name `peoplelake-local`; at most 50 events per request | Worker `peoplelake` on workers.dev behind Cloudflare Access; at most 50 events per request |
+| Landing | `LandingRoller` Durable Object writes immutable NDJSON roll files to R2 and sends one Queue message per roll (the production code on Miniflare's Durable Object, R2 and Queue) | the same code: Durable Object (SQLite), R2 bucket `peoplelake-lake` under `landing/raw_events/`, Queue `peoplelake-lake-events` |
+| Lake catalog | **stand-in**: pyiceberg 0.12 `SqlCatalog` (SQLite) on disk | Basin Catalog (Iceberg REST) on R2 bucket `peoplelake-lake`, table created by `peoplelake lake init --target prod` |
 | Lake commits | runner load job (`lake/committer.py`), landing cursor in snapshot summaries | the same code against Basin Catalog through pyiceberg `RestCatalog` |
-| New-data trigger | one lake event per roll; backstop on the ticker | one lake event per roll; backstop on the Workers cron |
+| New-data trigger | one lake event per roll; backstop on the ticker | one lake event per roll; backstop on the Workers cron `*/5 * * * *` |
 | Orchestration | Workflows as implemented by Miniflare | Cloudflare Workflows (Free: 3,000 steps a day per account, 3-day instance retention) |
 | Run guards | set wide (`RUN_MIN_INTERVAL_SECONDS=0`, no failure backoff, 100,000 automatic runs a day) so evals stay fast | Free plan values: 240 s minimum interval, backoff from 5 minutes to 6 hours, 30 automatic runs a day, heartbeat off, 275 GB of BigQuery a month |
-| Runner | `peoplelake runner poll` process | Cloud Run Job `peoplelake-runner` (us-central1) |
-| Warehouse | **stand-in**: DuckDB 1.5.6 via dbt-duckdb 1.11.0, session UTC | BigQuery (US) via dbt-bigquery 1.12.1 |
-| Column security | none | policy tags, data masking, authorized views |
-| Auth | locally generated RS256 keys, same verifier code | Access JWT (RS256) against the team JWKS |
-| LLM | llama-server (Qwen3-1.7B) on 8150, or a deterministic stub in CI | Workers AI through AI Gateway `peoplelake` |
+| Runner | **stand-in**: `peoplelake runner poll` process | Cloud Run Job `peoplelake-runner` (us-central1), started by the Workflow through the Cloud Run Admin API |
+| Warehouse | **stand-in**: DuckDB 1.5.6 via dbt-duckdb 1.11.0, session UTC, schemas `peoplelake_*` | BigQuery (US) via dbt-bigquery 1.12.1, datasets `peoplelake_*`, every query capped at 1 GB billed and labeled `app=peoplelake` |
+| Load | `INSERT ... WHERE NOT EXISTS` on `delivery_id` | load job (Parquet, free) to a stage table + `MERGE` on `delivery_id` |
+| Column security | none (schemas only) | policy tags, data masking policies, authorized views |
+| Recovery | replay from the local Iceberg table; Iceberg snapshots | replay from Basin Catalog; BigQuery time travel (48 to 168 h) with SQL restore into `_drill`; 7-day fail-safe via support |
+| Auth | locally generated RS256 keys, the same verifier code | Access JWT (RS256) against the team JWKS; One-time PIN for people; service tokens for machines |
+| LLM | llama-server (Qwen3-1.7B) on 8150, or a deterministic stub in CI | Workers AI `@cf/meta/llama-3.3-70b-instruct-fp8-fast` through AI Gateway `peoplelake`, `max_tokens` 96, 1,800 neurons a day |
 | Cron | ticker process every 300 s | Workers cron `*/5 * * * *` (1 of the account's 5 Cron Triggers) |
 | Semantic layer | MetricFlow plans SQL for DuckDB in the parity check (`peoplelake dev metricflow-parity`) | the same definitions ship in the dbt project and parse for BigQuery; nothing serves MetricFlow queries in production, the published read path stays the metrics mart |
 | Dashboard | static assets from `web/dist` in `wrangler dev`; a pasted dev token (`peoplelake auth dev-token operator --ttl 3600`) stands in for the Access session | static assets of Worker `peoplelake` behind Cloudflare Access (the browser's Access session; Access adds the JWT header) |
-| Scenario equivalence | DuckDB with the local stack (every CI push, small profile) | BigQuery `_drill` datasets with the local Worker, Workflows and lake (`eval scenarios --target prod-drill`, a go-live step) |
-| Freshness | measured on the local stack | measured once from the `prod:e2e` live delivery |
+| Scenario equivalence | DuckDB with the local stack (every CI push, small profile) | BigQuery `_drill` datasets with the local Worker, Workflows and lake (`eval scenarios --target prod-drill`, a go-live step, under the 275 GB monthly guard) |
+| Freshness | measured on the local stack | measured once from the `prod:e2e` live delivery (sources post every 10 s) |
+
+## Workers Free plan
+
+Production must not depend on Workers Paid anywhere: there is no `pipelines` binding, no `limits` setting, no paid-billing Workers AI model and no Logpush, every Durable Object is a SQLite class, and there is one cron. The Free plan's daily allowances are per account and five other Workers projects may share this account, so this repo plans to use at most 20% of each account-wide Cloudflare allowance; the Google Cloud project is shared by four repos, so at most 25% of each free tier. What enforces it:
+
+- Ingest: at most 50 events per request (measured CPU, see Results), the ingest path prewarmed at isolate startup, production sources posting every 10 s (at most 3,080 requests for a 100,000-event delivery).
+- Landing: one SQLite row per request and one R2 object and one Queue message per minute of data; 503 `landing_backpressure` above 64 MiB buffered.
+- Coordinator: indexed queries, per-day row counters, a 5-minute cron backstop, a 240 s minimum interval between automatic runs, failure backoff up to 6 hours, 30 automatic runs a UTC day and a 275 GB monthly BigQuery guard; `GET /api/ops/budget` reports the state.
+- Workers AI: `max_tokens` 96 and 1,800 neurons a UTC day (429 `ai_budget` past it); the Workers AI ask eval resumes on a later day.
+- Google Cloud: every query capped at 1 GB billed and labeled, `peoplelake` names, resource-scoped grants, a dedicated build identity.
+- `npm run budget -- --check` (in CI) recomputes the table below from the repo's constants and fails on any estimate past its share or any setting that needs Workers Paid; `predeploy-check` and `npm run doctor` apply the same rules.
+
+<!-- budget:start -->
+Computed by `npm run budget` from the repo's constants and `wrangler.jsonc` `env.production` (estimates, not measurements, except the CPU row). The go-live day is the peak: one 60-minute delivery of 100,000 events from three sources posting every 10 s, the runs it triggers, the cron, the doctor and the 60-question Workers AI eval. Planning share: 20% of each account-wide Cloudflare allowance, 25% of each Google free tier.
+
+| Path | Free allowance | Planning share | Peak estimate | Share of the allowance | Within share | Basis |
+|---|---|---:|---:|---:|---|---|
+| Worker requests | 100,000 requests (a day, account) | 20,000 | 4,290 | 4.3% | yes | ingest 3080 (100000 events / 50 + 360 ticks x 3 sources), runner 400, cron 288, queue 62, Workflow 160, operator 300 |
+| Workflow steps | 3,000 steps (a day, account) | 600 | 500 | 16.7% | yes | 20 runs x 25 steps (worst case; a committed run uses 8) |
+| Queue operations | 10,000 operations (a day, account) | 2,000 | 744 | 7.4% | yes | 62 rolls x 3 operations x (1 + 3 retries) |
+| Durable Object requests | 100,000 requests (a day, account) | 20,000 | 4,958 | 5.0% | yes | ingest 3080, rolls and consumer 310, cron 288, runner and Workflow 880, alarms 100, operator 300 |
+| Durable Object rows written | 100,000 rows (a day, account) | 20,000 | 12,254 | 12.3% | yes | LandingRoller 2 x 3080 + 4 x 62, Coordinator 100 x 20 runs + 360 freshness + rolls, AI and flushes, x 1.3 for indexes |
+| Durable Object rows read | 5,000,000 rows (a day, account) | 1,000,000 | 29,760 | 0.60% | yes | indexed queries only |
+| Durable Object duration | 13,000 GB-s (a day, account) | 2,600 | 1,444 | 11.1% | yes | 2 objects active 70 min + 288 cron activations x 10 s, at 128 MB |
+| Workers AI neurons | 10,000 neurons (a day, account) | 2,000 | 1,800 | 18.0% | yes | the daily neuron cap (the ask eval stops there) |
+| Workers Logs events | 200,000 events (a day, account) | 40,000 | 9,248 | 4.6% | yes | one event per Worker and Durable Object invocation |
+| Cron Triggers | 5 triggers (account) | 1 | 1 | 20.0% | yes | cron expressions in the production config |
+| AI Gateway gateways | 10 gateways (account) | 2 | 1 | 10.0% | yes | gateway peoplelake |
+| Zero Trust seats | 50 users (account) | 10 | 2 | 4.0% | yes | the owner and the persona addresses |
+| Access service tokens | 50 tokens (account) | 10 | 5 | 10.0% | yes | three sources, the runner and the doctor |
+| Environment variables | 64 variables (per Worker) | 64 | 32 | 50.0% | yes | production vars and secrets |
+| Events per ingest request | 50 events (per request, set by the 10 ms CPU limit) | 50 | 50 | 100.0% | yes | MAX_BATCH_EVENTS (npm run bench:ingest measures the CPU) |
+| R2 storage | 10.0 GB (GB-month, account) | 2.0 GB | 85 MB | 0.85% | yes | 100000 records x 632 bytes of landing NDJSON + Iceberg data and reports |
+| R2 Class A operations | 1,000,000 operations (a month, account) | 200,000 | 392 | 0.04% | yes | roll puts, Iceberg writes, lists and reports on the peak day |
+| R2 Class B operations | 10,000,000 operations (a month, account) | 2,000,000 | 512 | 0.01% | yes | roll reads, Iceberg reads and report reads on the peak day |
+| Basin Catalog operations | 1,000,000 operations (a month, account) | 200,000 | 164 | 0.02% | yes | 2 per load and 2 per committed roll on the peak day |
+| BigQuery queries | 1 TiB (a month, billing account) | 275 GB | 275 GB | 25.0% | yes | go-live month: 94 transforms x 3 GB (prod:e2e 20, drill 6 x 12), capped by the 275 GB monthly guard |
+| BigQuery storage | 10 GiB (a month, billing account) | 2.7 GB | 500 MB | 4.7% | yes | raw table and models of one full delivery |
+| Cloud Build minutes | 2,500 build-minutes (a month, billing account) | 625 | 24 | 0.96% | yes | 3 builds of about 8 minutes |
+| CPU per ingest request (50 events) | 10 ms per request | 10 ms | warm p99 1.03 ms, first after prewarm 2.76 ms | 27.6% | yes | measured: `evals/results/ingest-cpu-2026-10-11.json` (2026-10-11), the worst of the three sources |
+
+Configuration rules (no `pipelines`, no `limits`, one `*/5 * * * *` cron, SQLite Durable Objects only, the production guard values, a Free plan model): all hold.
+<!-- budget:end -->
 
 ## Local setup
 
@@ -115,6 +169,8 @@ npm run typecheck
 npm test            # vitest (TZ=UTC)
 npm run test:py     # pytest (TZ=UTC)
 npm run check:prose
+npm run budget -- --check   # Workers Free plan rules and budget estimates (SPEC 29.5)
+npm run bench:ingest        # ingest CPU per request at 25 to 500 events (report only)
 
 # synthetic data: exact counts, byte-identical on every platform
 uv run --project pipeline peoplelake generate --profile small --out .data/generated/small --check
@@ -209,7 +265,7 @@ The generator (`pipeline/src/peoplelake/generator`) keeps the true world state a
 |---|---|---|
 | B | baseline | each event once, canonical order, batches of at most 50 per source (the Worker's limit) |
 | S1 | duplicate-client-retries | 10,000 events delivered twice and 1,000 of them three times (111,000 deliveries); 30% of duplicates in the same request, the rest in a later chunk |
-| S2 | duplicate-lake-redelivery | the watermark rewound by two snapshots on runs 3, 6 and 9; 3 committed sink files appended again as new snapshots on run 5 |
+| S2 | duplicate-lake-redelivery | the watermark rewound by two snapshots on runs 3, 6 and 9; the 3 latest committed landing rolls appended again as new snapshots on run 5 (without moving the landing cursor) |
 | S3 | late-arrival | 5,000 events withheld (300 corrections, 30 rescinds, 200 terminations, 100 hires, 50 accepted offers among them): 3,000 delivered 1 to 3 chunks late, 2,000 after everything else; every request shuffled |
 | S4 | recovery-step-failures | runner crash after load (run 2), a dbt model failure (run 4), a duplicate result (run 5), a claimed and dropped job (run 6), a commit step error (run 7) |
 | S5 | recovery-warehouse-rebuild | after a clean delivery: delete the warehouse and replay everything from the lake; replay up to the middle run's snapshot into a scratch warehouse and require that run's recorded digests |
@@ -238,7 +294,7 @@ uv run --project pipeline peoplelake eval ask --provider workers-ai   # producti
 
 ### Freshness
 
-`peoplelake eval freshness --target local --duration 60m` delivers the full profile at a constant rate (100,000 events over 60 minutes, 27.8 per second) in live mode: the sources post every second (`--tick-seconds`; production sources post every 10 s), at most 50 events per request, 60 s landing rolls, the cron ticker, single-flight runs. Per unique event, freshness is the commit time of the run that published it minus the Worker's first receipt, read from the Coordinator ledger (10 s buckets, so conservative by up to 10 s) and cross-checked against the `ops_event_freshness` histograms the runner returns. The 15-minute p95 is a target that is reported, never asserted. Local numbers describe the local stack on the machine named in the result; the production number comes from the single live delivery of `npm run prod:e2e`. The recorded local run (see Results) used the code at commit `685ba53`; later commits change no ingest, sink, orchestration or runner path it exercises.
+`peoplelake eval freshness --target local --duration 60m` delivers the full profile at a constant rate (100,000 events over 60 minutes, 27.8 per second) in live mode: the sources post every second (`--tick-seconds`; production sources post every 10 s), at most 50 events per request, 60 s landing rolls, the cron ticker, single-flight runs. Per unique event, freshness is the commit time of the run that published it minus the Worker's first receipt, read from the Coordinator ledger (10 s buckets, so conservative by up to 10 s) and cross-checked against the `ops_event_freshness` histograms the runner returns. The 15-minute p95 is a target that is reported, never asserted. Local numbers describe the local stack on the machine named in the result; the production number comes from the single live delivery of `npm run prod:e2e`. Results recorded before builder 3's Free plan migration (dated 2026-10-11 and produced with 500-event requests, the SinkRoller stand-in and a 1-minute cron) describe that earlier code; each result names its command and code, and the ones recorded on the Free plan design say so in their lake and stand-in fields.
 
 ## CI
 
@@ -258,91 +314,78 @@ Scenario step timeouts are twice the slowest leg measured in the build session (
 
 ## Production setup
 
-**Being migrated to the Workers Free plan** (SPEC section 29 and the commits in section 23.0): Basin Pipelines needs Workers Paid and is no longer used, so parts of this section still describe the earlier design. Do not run `setup:prod` until PROGRESS.md says the migration commits have landed.
-
-Production runs on Cloudflare (Workers, Workflows, Queues, Durable Objects, R2, Basin Pipelines, Basin Catalog, Workers AI, AI Gateway, Zero Trust Access) and Google Cloud (BigQuery and a Cloud Run Job runner). `npm run setup:prod` creates every resource from the CLIs and APIs once the accounts below exist, and `npm run doctor` checks every prerequisite and prints the exact fix for anything missing. Both are idempotent and safe to rerun. Nothing in production has been exercised from this repository yet: the commands below are what turns the offline-tested path on.
+Production runs on the Cloudflare Workers **Free** plan (Workers, Durable Objects, Queues, Workflows, R2, Basin Catalog, Workers AI, AI Gateway, Zero Trust Access) and in a Google Cloud project shared with three other repos (BigQuery and a Cloud Run Job runner). `npm run setup:prod` creates every resource from the CLIs and APIs once the steps below that need a person are done, and `npm run doctor` checks every prerequisite and prints the exact fix for anything missing. Both are idempotent and safe to rerun. Nothing in production has been exercised from this repository yet.
 
 ### Accounts and expected cost
 
 | Item | Plan | Expected cost |
 |---|---|---|
-| Cloudflare Workers | Workers Paid (required by Basin Pipelines) | $5/month minimum |
-| R2 and Basin Catalog | R2 with a payment card (Basin Catalog requires it) | inside the free tier at this volume |
-| Queues, Workflows, Durable Objects, Workers AI, AI Gateway | included with Workers Paid or free tiers | about $0 at this volume |
-| Zero Trust Access | Free plan (up to 50 users) | $0 |
-| BigQuery | billing account required (the sandbox has no DML, and dbt incremental models need MERGE) | first 1 TiB of queries per month free; every query capped at 1 GB billed and labeled `app=peoplelake` |
-| Cloud Run Job, Cloud Build, Artifact Registry, Secret Manager | pay as you go | cents per month |
+| Cloudflare Workers | **Free** (no Workers Paid; Basin Pipelines is not used because it needs Paid) | $0 |
+| R2 and Basin Catalog | R2 with a payment card on file (Basin Catalog requires it, not Workers Paid) | $0 inside 10 GB-month, 1 million Class A and 10 million Class B operations and 1 million catalog operations a month; compaction off, snapshot expiration (free) on |
+| Queues, Workflows, Durable Objects (SQLite), Workers AI, AI Gateway core features | Free | $0 inside the daily allowances (see Workers Free plan) |
+| Zero Trust Access | Free (50 seats) | $0 |
+| BigQuery | billing enabled on the project (the sandbox rejects DML and expires tables after 60 days), on-demand | $0 inside 1 TiB of queries and 10 GiB of storage a month; the go-live month is estimated near the 275 GB guard, a steady month near 1 GB |
+| Cloud Run Job, Cloud Build, Artifact Registry, Secret Manager | pay as you go, a dedicated build identity | about $0; a few cents a month possible for Artifact Registry storage and Secret Manager versions beyond the shared free allowance |
 
 ### Steps only a person can do (in order)
 
-Cloudflare dashboard:
-1. Workers & Pages, Plans: subscribe to **Workers Paid**.
-2. R2 Object Storage: enable R2 and add a payment card.
-3. Zero Trust (one.dash.cloudflare.com): create the organization on the **Free** plan and choose a team name; the team domain is `https://<team>.cloudflareaccess.com`.
-4. R2, Overview, Manage API tokens, Create API token, twice: `peoplelake-sink` with **Admin Read & Write**, and `peoplelake-catalog-read` with **Admin Read only**.
-5. My Profile, API Tokens, Create Custom Token `peoplelake-setup`, scoped to this account, with **Access: Apps and Policies** (edit), **Access: Service Tokens** (edit) and **AI Gateway** (edit). Do not name it `CLOUDFLARE_API_TOKEN` (wrangler would use it instead of your login).
+Done already: the account stays on the Workers Free plan; R2 is activated with a card; `npx wrangler login` (OAuth) is done and the workers.dev subdomain is registered (Workflows need one); the Zero Trust organization exists on the Free plan; gcloud and bq are installed and logged in with application default credentials; the Google Cloud project has no parent organization, so the dispatcher key can be created.
 
-Cloudflare CLI:
-
-6. `npx wrangler login`, then `npx wrangler whoami` for the Account ID.
+Cloudflare:
+1. Zero Trust, Integrations, Identity providers, Add new identity provider, **One-time PIN** (new organizations do not get it automatically). The owner and the persona addresses sign in with it; each person who signs in takes one of the 50 Free seats.
+2. R2, Overview, Manage API tokens, Create API token `peoplelake-catalog-rw` with **Admin Read & Write**. Save it as `PL_R2_CATALOG_TOKEN` in `.prod/secrets.env`. It is the only R2 token: the runner commits to Basin Catalog with it (from Secret Manager), and setup uses it for `lake init` and snapshot expiration. It can reach every bucket on the account, so it lives only in `.prod/secrets.env` and in a secret only `peoplelake-runner` can read.
+3. My Profile, API Tokens, Create Custom Token `peoplelake-setup`, scoped to this account, with **Access: Apps and Policies**, **Access: Service Tokens** and **AI Gateway**, each at the edit level. Save it as `PL_CF_SETUP_TOKEN`. Do not name it `CLOUDFLARE_API_TOKEN` (wrangler would use it instead of the OAuth login).
 
 Google Cloud:
 
-7. `brew install --cask gcloud-cli`, then `gcloud auth login`.
-8. Create a billing account in the console if you have none.
-9. In this order (the last command gives application default credentials a quota project; without it Data Catalog and Data Policy calls fail):
+4. Enable billing on the project by linking an open billing account (console, Billing, Account management, or `gcloud billing projects link <project> --billing-account=<OPEN_ACCOUNT_ID>`). Bootstrap refuses to run until this is true.
+5. (Recommended) A budget with e-mail alerts on that billing account, for example $5 with 50, 90 and 100% thresholds, because four repos share the free tiers.
+6. `gcloud auth application-default set-quota-project <project>` (Data Catalog and BigQuery Data Policy calls through application default credentials need a quota project); `npm run doctor` checks it.
+
+Local files (gitignored; setup keeps them mode 600 and refuses to continue if it cannot):
+
+7. `.prod/config.env`:
    ```bash
-   gcloud projects create peoplelake-<suffix> --name="PeopleLake"
-   gcloud billing projects link peoplelake-<suffix> --billing-account=<BILLING_ACCOUNT_ID>
-   gcloud config set project peoplelake-<suffix>
-   gcloud auth application-default login
-   gcloud auth application-default set-quota-project peoplelake-<suffix>
+   PL_CF_ACCOUNT_ID=<account id from npx wrangler whoami>
+   PL_WORKERS_SUBDOMAIN=<the account's workers.dev subdomain>
+   PL_ACCESS_TEAM_DOMAIN=https://<team>.cloudflareaccess.com
+   PL_OWNER_EMAIL=<owner address: viewer and operator>
+   PL_PERSONA_EMAILS=<owner>+hr@<domain>:viewer
+   PL_GCP_PROJECT=<shared project id>
+   PL_GCP_REGION=us-central1
+   PL_BQ_LOCATION=US
    ```
-   Use a project without a parent organization (a personal Gmail account has none). Organizations created on or after 2024-05-03 block service account key creation by default, and the Worker's Cloud Run dispatcher needs one key.
+   `.prod/secrets.env`:
+   ```bash
+   PL_R2_CATALOG_TOKEN=<peoplelake-catalog-rw from step 2>
+   PL_CF_SETUP_TOKEN=<peoplelake-setup from step 3>
+   ```
 
-Local files (both are gitignored; setup makes them mode 600 and refuses to continue if it cannot):
+Then (the owner's operator):
 
-10. `.prod/config.env`:
+8. `npm run setup:prod -- --dry-run` (prints every command and API call, secrets redacted), then `npm run setup:prod`.
+9. `npm run doctor` and `npm run budget -- --check` until every check passes.
+10. Go live:
     ```bash
-    PL_CF_ACCOUNT_ID=<account id from wrangler whoami>
-    PL_WORKERS_SUBDOMAIN=<only if the account has no workers.dev subdomain yet>
-    PL_ACCESS_TEAM_DOMAIN=https://<team>.cloudflareaccess.com
-    PL_OWNER_EMAIL=<your email, the only human allowed through Access>
-    PL_GCP_PROJECT=peoplelake-<suffix>
-    PL_GCP_REGION=us-central1
-    PL_BQ_LOCATION=US
-    ```
-    `.prod/secrets.env`:
-    ```bash
-    PL_CF_SETUP_TOKEN=<custom token from step 5>
-    PL_R2_SINK_TOKEN=<peoplelake-sink from step 4>
-    PL_R2_CATALOG_TOKEN=<peoplelake-catalog-read from step 4>
-    ```
-
-Then:
-
-11. `npm run setup:prod -- --dry-run` (prints every command and API call, secrets redacted), then `npm run setup:prod`.
-12. `npm run doctor` until every check passes.
-13. Go live:
-    ```bash
-    npm run prod:e2e    # one live 60-minute delivery of the full profile, prod verify, production freshness
-    uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10 --target prod-drill   # all five scenarios on BigQuery _drill datasets (about 1.5 to 3.5 hours; --scenarios B,S1 splits it)
+    npm run prod:e2e    # one live 60-minute delivery (sources post every 10 s, at most 50 events per request), prod verify, production freshness
+    uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10 --target prod-drill   # the five scenarios on BigQuery _drill datasets; stops before passing the 275 GB monthly guard, resume with --scenarios
     uv run --project pipeline peoplelake prod demo-masking
-    uv run --project pipeline peoplelake eval ask --provider workers-ai   # the 60 questions through Workers AI and AI Gateway
+    uv run --project pipeline peoplelake prod drill-restore --as-of-ms <epoch ms> --expected <run digests>   # docs/runbooks/restore.md
+    uv run --project pipeline peoplelake eval ask --provider workers-ai   # 1 to 3 UTC days under the 1,800-neuron cap: rerun with --resume after a 429 stop
     npm run results:readme
     ```
-    Then open `https://peoplelake.<subdomain>.workers.dev/` and sign in through Access with `PL_OWNER_EMAIL` to see the dashboard. Which login methods Access offers is set in Zero Trust under Settings, Authentication; the one-time PIN sent by email needs no identity provider (whether a new organization has it on by default is unverified).
-14. Push `main` so CI runs. CI needs no secrets and holds no cloud credentials.
+    `prod verify` requires exactly 100,000 unique events in `peoplelake_staging.stg_events`, R7 at 0, the newest landing cursor equal to the last landed roll, and digests equal to the local full-profile reference. Then open `https://peoplelake.<subdomain>.workers.dev/` and sign in through Access with a one-time PIN to see the dashboard.
+11. The owner's publishing loop pushes `main`, so CI runs; CI needs no secrets and holds no cloud credentials.
 
 ### What `setup:prod` does for you
 
-workers.dev subdomain registration, R2 buckets `peoplelake-lake` and `peoplelake-reports`, Basin Catalog on the lake bucket with snapshot expiration and compaction, Queues `peoplelake-lake-events` and its dead-letter queue, five Access service tokens (`peoplelake-source-hris`, `peoplelake-source-ats`, `peoplelake-source-talent`, `peoplelake-runner`, and `peoplelake-doctor` for the operator checks), AI Gateway `peoplelake`, a fail-closed first deploy (every request 401, no runs), the Access application with an owner policy and a service-auth policy, everything in Google Cloud through `peoplelake prod bootstrap-gcp` (APIs, twelve datasets with time travel, policy tags and masking policies, service accounts and roles, secrets, Artifact Registry, the runner image built by Cloud Build, the Cloud Run Job, the dispatcher key), and the final deploy with the real Access AUD, the role map and `RUNS_ENABLED=true` only if the Google Cloud bootstrap passed. Files it writes: `.prod/state.json`, `.prod/secrets.env` (service token secrets), `.prod/gcp.json`, `.prod/gcp-dispatcher-key.json`, all mode 600.
+Preflight (tools, `.prod` files, billing on the Google project, persona addresses), a check of the workers.dev subdomain, R2 buckets `peoplelake-lake` and `peoplelake-reports`, Basin Catalog on the lake bucket, the Iceberg namespace `peoplelake` and table `raw_events` (`peoplelake lake init --target prod`), snapshot expiration (7 days, keep 50; compaction off), Queues `peoplelake-lake-events` and its dead-letter queue, five Access service tokens (`peoplelake-source-hris`, `peoplelake-source-ats`, `peoplelake-source-talent`, `peoplelake-runner`, and `peoplelake-doctor` for the operator checks), AI Gateway `peoplelake` (core features, no Logpush), a fail-closed first deploy (every request 401, no runs, no secrets), the Access application on the workers.dev hostname with an Allow policy for the owner and the persona addresses and a Service Auth policy for the five tokens, everything in Google Cloud through `peoplelake prod bootstrap-gcp` (see [infra/gcp/README.md](infra/gcp/README.md)), and the final deploy with the real Access AUD, the role map (owner viewer and operator, personas from `PL_PERSONA_EMAILS`), the secret `GCP_DISPATCHER_KEY` and `RUNS_ENABLED=true` only if the Google Cloud bootstrap passed. Files it writes: `.prod/state.json`, `.prod/secrets.env` (service token secrets), `.prod/gcp.json`, `.prod/gcp-dispatcher-key.json`, all mode 600. Every name it creates starts with `peoplelake`.
 
-Deploy only with `npm run deploy` (render, safety check, `wrangler deploy --env production`): the top-level Worker in `wrangler.jsonc` is named `peoplelake-local` with `workers_dev: false`, so a plain `wrangler deploy` can never replace production. `npm run deploy:runner` rebuilds the runner image and updates the job.
+Deploy only with `npm run deploy` (render, safety check, `wrangler deploy --env production`): the top-level Worker in `wrangler.jsonc` is named `peoplelake-local` with `workers_dev: false`, so a plain `wrangler deploy` can never replace production, and the safety check refuses anything that needs Workers Paid or passes the Free plan budget. `npm run deploy:runner` rebuilds the runner image and updates the job.
 
 ## Decisions and runbooks
 
-Architecture decision records in [docs/adr](docs/adr): [warehouse-level idempotency](docs/adr/0001-warehouse-level-idempotency.md), [Workflows orchestrate, Cloud Run executes](docs/adr/0002-workflows-orchestrate-cloud-run-executes.md), [labeled local stand-ins](docs/adr/0003-local-stand-ins-are-labeled.md), [bucketed replace with per-model cursors](docs/adr/0004-bucketed-replace-with-per-model-cursors.md), [engine-independent digests](docs/adr/0005-engine-independent-output-digests.md), [Access JWT on every request](docs/adr/0006-verify-access-jwt-on-every-request.md), [metrics against an oracle](docs/adr/0007-metrics-checked-against-an-oracle.md), [one process owns the local warehouse](docs/adr/0008-one-process-owns-the-local-warehouse.md).
+Architecture decision records in [docs/adr](docs/adr): [warehouse-level idempotency](docs/adr/0001-warehouse-level-idempotency.md), [Workflows orchestrate, Cloud Run executes](docs/adr/0002-workflows-orchestrate-cloud-run-executes.md), [labeled local stand-ins](docs/adr/0003-local-stand-ins-are-labeled.md), [bucketed replace with per-model cursors](docs/adr/0004-bucketed-replace-with-per-model-cursors.md), [engine-independent digests](docs/adr/0005-engine-independent-output-digests.md), [Access JWT on every request](docs/adr/0006-verify-access-jwt-on-every-request.md), [metrics against an oracle](docs/adr/0007-metrics-checked-against-an-oracle.md), [one process owns the local warehouse](docs/adr/0008-one-process-owns-the-local-warehouse.md), [production on the Workers Free plan](docs/adr/0009-workers-free-plan-production.md).
 
 Runbooks in [docs/runbooks](docs/runbooks): [replay from the lake](docs/runbooks/replay.md), [restore with BigQuery time travel](docs/runbooks/restore.md), [rotate credentials](docs/runbooks/rotate-tokens.md), [full production reset](docs/runbooks/prod-reset.md). The production ones have not been exercised against real accounts.
 

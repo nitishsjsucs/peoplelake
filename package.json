@@ -2,7 +2,7 @@
   "name": "peoplelake",
   "version": "0.1.0",
   "private": true,
-  "description": "Replayable workforce ELT and historical analytics warehouse on Cloudflare Workers, Basin Pipelines, R2, Workflows, BigQuery and dbt",
+  "description": "Replayable workforce ELT and historical analytics warehouse on the Cloudflare Workers Free plan (Workers, Durable Objects, R2, Apache Iceberg in Basin Catalog, Workflows), BigQuery and dbt",
   "license": "MIT",
   "type": "module",
   "engines": {

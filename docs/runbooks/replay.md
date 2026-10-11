@@ -9,7 +9,7 @@ The Iceberg lake (Basin Catalog in production, the local SqlCatalog stand-in loc
 4. Check `GET /api/runs?format=full`: the replay run must be `committed` with every error-level check 0; compare its digests with the previous committed run.
 
 ## Point-in-time replay into a scratch dataset
-`POST /api/replay` with `{"to_snapshot": "<snapshot id>", "dataset_suffix": "pit"}` replays the lake only up to that snapshot into a scratch warehouse (a separate DuckDB file locally, `pl_*_pit` datasets in BigQuery, which must exist first). A scratch run records its digests but never moves the watermark or the published metrics. Scenario S5 uses this to prove that replaying up to run k's snapshot reproduces run k's recorded digests.
+`POST /api/replay` with `{"to_snapshot": "<snapshot id>", "dataset_suffix": "pit"}` replays the lake only up to that snapshot into a scratch warehouse (a separate DuckDB file locally, `peoplelake_*_pit` datasets in BigQuery, which must exist first). A scratch run records its digests but never moves the watermark or the published metrics. Scenario S5 uses this to prove that replaying up to run k's snapshot reproduces run k's recorded digests.
 
 ## When to replay
 After deleting or restoring the warehouse, after a dbt model change that alters history, or when snapshot expiration removed the watermark snapshot (incremental loads already fall back to a full scan on their own).
