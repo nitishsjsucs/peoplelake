@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Commit 7 of 18 (core) done: BigQuery configs and loader (offline).
+Commit 8 of 18 (core) done: lake.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -20,8 +20,10 @@ Commit 7 of 18 (core) done: BigQuery configs and loader (offline).
 
 7. BigQuery: policy tags with `persist_docs` on restricted columns, authorized reporting views (`grant_access_to` on `pl_core`), offline compile of both branches (`peoplelake dev bq-compile`: 27 models and 94 tests parse as BigQuery with sqlglot), token-based ORDER BY NULLS lint (`peoplelake dev lint-sql`), manifest assertions, `BigQueryWarehouse` (Parquet load job to a stage table, stats, MERGE on `delivery_id`, load log, stage dropped even on failure) tested against a fake client. Nothing has run against BigQuery (no credentials on this machine).
 
+8. Lake: `lake/catalog.py` (local `SqlCatalog` stand-in, Basin `RestCatalog`, `catalog_info` with the REST prefix), `lake/committer.py` (stand-in for Basin sink commits: one snapshot per `(key, etag)` sink file with `peoplelake.source-file/etag` properties, recommit fault), `lake/reader.py` (per-append-snapshot incremental reads keeping each row's snapshot id, replace and delete snapshots skipped, full-scan fallback for replays and expired watermarks), `infra/cloudflare/stream-schema.json`, `pipeline.sql`, `r2-notification.md`, `config.py` settings, CLI `peoplelake lake init|commit|scan|catalog-info`.
+
 ## Next
-8. Lake: local Iceberg committer (stand-in) and incremental reader with Basin catalog config.
+9. Worker: config (fail-closed rules), Access JWT verification with dev keys, roles.
 
 ## Check status (last run at this commit)
 | Check | Result |
@@ -30,7 +32,7 @@ Commit 7 of 18 (core) done: BigQuery configs and loader (offline).
 | `npm run typegen:check` | pass |
 | `npm test` | pass (4 files, 42 tests) |
 | `npm run check:prose` | pass |
-| `npm run test:py` (pytest) | pass (162 tests) |
+| `npm run test:py` (pytest) | pass (173 tests) |
 | `peoplelake dev bq-compile` | pass (both branches) |
 | dbt unit tests (`dbt test --select test_type:unit` after `dbt run --empty`) | pass (10) |
 | `ruff check` | pass |
@@ -52,4 +54,6 @@ Commit 7 of 18 (core) done: BigQuery configs and loader (offline).
 - R1 and R2 subtract inferred spell exits and R3 checks structure only, so error-level checks hold while late data is in flight (a rehire arriving before the prior termination); R11 reports those cases. A missing prior spell is an anomaly (warn), not an R3 error.
 - Extra error-level check `recon_history_as_of_matches_snapshot` exercises `pl_employee_as_of` against `fct_workforce_monthly` at seven month ends.
 - The BigQuery MERGE inserts an explicit column list instead of `INSERT ROW` (the stage carries `_pl_snapshot_id` and an ordering column, the target five `_pl_*` columns); `QUALIFY` is paired with `WHERE TRUE`.
+- `read_appends` with no watermark (replay) reads the full table as of the target snapshot rather than an incremental scan from the oldest ancestor, so compaction rewrites can never hide data from a replay; it reports `fallback_full_scan: true`.
+- The committer's `SinkSource` protocol has a directory implementation now; the Worker-backed source (`/internal/dev/sink/files`) lands with the runner.
 - Correction events carry `effectiveDate` = the corrected date for date corrections and the target's date for value corrections; rescinds carry the target's date. The one-event-per-day rule is asserted on business events (hire, rehire, termination, transfer, job and FTE change) for both original and corrected dates.

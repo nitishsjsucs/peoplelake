@@ -169,6 +169,47 @@ def _cmd_lint_sql(args: argparse.Namespace) -> int:
     return 1 if violations else 0
 
 
+def _cmd_lake(args: argparse.Namespace) -> int:
+    from .config import load_settings, open_lake
+    from .lake.reader import current_snapshot_id, read_appends
+
+    settings = load_settings(args.target)
+    if args.lake_command == "catalog-info":
+        from .lake.catalog import basin_catalog, catalog_info, local_catalog
+
+        if settings.is_local:
+            info = catalog_info(local_catalog(settings.lake_dir))
+            info["stand_in"] = "pyiceberg SqlCatalog (local)"
+        else:
+            info = catalog_info(
+                basin_catalog(
+                    settings.r2_catalog_uri or "", settings.r2_warehouse or "", settings.r2_catalog_token or ""
+                )
+            )
+        print(json.dumps(info, indent=2))
+        return 0
+    table = open_lake(settings)
+    if args.lake_command == "init":
+        print(json.dumps({"table": "peoplelake.raw_events", "current_snapshot": current_snapshot_id(table)}))
+        return 0
+    if args.lake_command == "commit":
+        from .lake.committer import DirectorySinkSource, commit_pending
+
+        if not settings.is_local:
+            print("lake commit is the local stand-in for the Basin sink and never runs in production", file=sys.stderr)
+            return 2
+        report = commit_pending(DirectorySinkSource(Path(args.sink_dir)), table, recommit=args.recommit)
+        print(json.dumps(report.__dict__))
+        return 0
+    batch = read_appends(
+        table,
+        int(args.from_snapshot) if args.from_snapshot else None,
+        int(args.to_snapshot) if args.to_snapshot else None,
+    )
+    print(json.dumps(batch.info.__dict__))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="peoplelake", description="PeopleLake pipelines")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -196,6 +237,24 @@ def build_parser() -> argparse.ArgumentParser:
     dbt = sub.add_parser("dbt", help="run dbt in process with the repo's project and profiles directories")
     dbt.add_argument("dbt_args", nargs=argparse.REMAINDER)
     dbt.set_defaults(func=_cmd_dbt)
+
+    lake = sub.add_parser("lake", help="Iceberg lake: local stand-in or Basin Catalog")
+    lake_sub = lake.add_subparsers(dest="lake_command", required=True)
+    for name, help_text in (
+        ("init", "create the local raw_events table (local only)"),
+        ("commit", "commit sink roll files from a directory (local stand-in)"),
+        ("scan", "read appended data between snapshots and print counts"),
+        ("catalog-info", "print catalog URI, warehouse and REST prefix"),
+    ):
+        lp = lake_sub.add_parser(name, help=help_text)
+        lp.add_argument("--target", choices=["local", "prod"], default=None)
+        if name == "commit":
+            lp.add_argument("--sink-dir", required=True)
+            lp.add_argument("--recommit", type=int, default=0)
+        if name == "scan":
+            lp.add_argument("--from-snapshot")
+            lp.add_argument("--to-snapshot")
+        lp.set_defaults(func=_cmd_lake)
 
     dev = sub.add_parser("dev", help="developer and CI tools")
     dev_sub = dev.add_subparsers(dest="dev_command", required=True)

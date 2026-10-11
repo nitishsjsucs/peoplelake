@@ -90,3 +90,26 @@ def test_pydantic_fields_match_json_schema(name, model, pick):
     assert props == set(schema["properties"])
     assert required == set(schema.get("required", []))
     assert tuple(_schema("raw-record")["properties"]) == c.RAW_RECORD_COLUMNS
+
+
+def test_stream_schema_matches_lake_schema_field_by_field():
+    import pyarrow as pa
+
+    from peoplelake.lake.schema import RAW_FIELDS
+
+    stream = json.loads((repo_root() / "infra" / "cloudflare" / "stream-schema.json").read_text())
+    types = {"string": pa.string(), "int64": pa.int64(), "int32": pa.int32()}
+    assert [f["name"] for f in stream["fields"]] == [name for name, _ in RAW_FIELDS] == list(c.RAW_RECORD_COLUMNS)
+    for field, (name, arrow_type) in zip(stream["fields"], RAW_FIELDS, strict=True):
+        assert field["required"] is True
+        if field["type"] == "timestamp":
+            assert pa.types.is_timestamp(arrow_type), name
+        else:
+            assert types[field["type"]] == arrow_type, name
+
+
+def test_pipeline_sql_lists_every_column_explicitly():
+    sql = (repo_root() / "infra" / "cloudflare" / "pipeline.sql").read_text()
+    assert "SELECT *" not in sql.upper()
+    for col in c.RAW_RECORD_COLUMNS:
+        assert col in sql

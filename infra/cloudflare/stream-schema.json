@@ -1,0 +1,74 @@
+{
+  "fields": [
+    {
+      "name": "event_id",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "source",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "event_type",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "entity_id",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "source_sequence",
+      "type": "int64",
+      "required": true
+    },
+    {
+      "name": "source_updated_at",
+      "type": "timestamp",
+      "required": true
+    },
+    {
+      "name": "effective_date",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "schema_version",
+      "type": "int32",
+      "required": true
+    },
+    {
+      "name": "payload",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "payload_sha256",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "received_at",
+      "type": "timestamp",
+      "required": true
+    },
+    {
+      "name": "delivery_id",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "ingest_request_id",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "producer",
+      "type": "string",
+      "required": true
+    }
+  ]
+}

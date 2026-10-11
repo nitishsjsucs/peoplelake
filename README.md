@@ -16,7 +16,7 @@ v1 is under construction and this repository is published while it is built. Thi
 | DuckDB loader and output digests | done: idempotent load on `delivery_id`, UTC sessions, engine-independent digests for the 10 published models |
 | dbt models, five metrics, reconciliation checks | done on DuckDB: staging, spells, SCD2 history with per-model bucket cursors, facts, metrics mart, reporting and ops models, 10 unit tests, reconciliation checks R1 to R11 |
 | BigQuery configs and offline compile | done offline: dbt-bigquery profiles, policy tags, authorized views, int64 range `insert_overwrite`, both compile branches parse as BigQuery, ORDER BY lint, BigQuery loader tested against a fake client; nothing has run on BigQuery yet |
-| Local Iceberg lake | not started |
+| Local Iceberg lake | done locally: pyiceberg SqlCatalog stand-in, committer for sink roll files (idempotent on key and etag), incremental reader with full-scan fallback; Basin Catalog configured through Iceberg REST but not exercised (needs production) |
 | Worker: auth, ingest, sinks | not started (only `GET /v1/health` exists) |
 | Orchestration: Coordinator, Workflow, dispatchers | not started |
 | Runner and local stack | not started |
