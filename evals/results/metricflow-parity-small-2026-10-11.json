@@ -1,0 +1,26 @@
+{
+  "command": "peoplelake dev metricflow-parity --profile small",
+  "date": "2026-10-11",
+  "duration_s": 11.1,
+  "engine": "duckdb",
+  "events_loaded": 10000,
+  "first_mismatches": [],
+  "kind": "metricflow-parity",
+  "machine": "Darwin arm64",
+  "mart": "pl_core.metrics_workforce_monthly",
+  "metricflow_sql_sample": "-- Combine Aggregated Outputs\n-- Write to DataTable\nWITH cm_13_cte AS (\n  -- Aggregate Inputs for Simple Metrics\n  -- Compute Metrics via Expressions\n  SELECT\n    metric_time__month\n    , department\n    , SUM(__offers_accepted) AS offers_accepted\n    , SUM(__offers_decided) AS offers_decided\n  FROM (\n    -- Read Elements From Semantic Model 'offers'\n    -- Metric Time Dimension 'decision_date'\n   ",
+  "metrics": [
+    "headcount",
+    "fte",
+    "hires",
+    "departures",
+    "offers_accepted",
+    "offers_decided",
+    "offer_acceptance_rate"
+  ],
+  "mismatched_rows": 0,
+  "passed": true,
+  "profile": "small",
+  "rows_compared": 468,
+  "semantic_layer": "MetricFlow (dbt-metricflow 0.15.0, metricflow 0.213.0) planning DuckDB SQL"
+}

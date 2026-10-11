@@ -1,0 +1,148 @@
+# MetricFlow semantic layer over the same facts the metrics mart reads (SPEC 23 item 21).
+# metrics_workforce_monthly stays the one published definition; these semantic models restate the five
+# metrics so they can be queried by any grain, and `peoplelake dev metricflow-parity` (plus a dbt-level
+# pytest) requires MetricFlow's answers to equal the mart on every month and department of the window.
+
+semantic_models:
+  - name: departments
+    description: The 12 departments; the shared entity that lets all five metrics group by department.
+    model: ref('dim_department')
+    entities:
+      - name: department
+        type: primary
+        expr: department_id
+    dimensions:
+      - name: department_name
+        type: categorical
+
+  - name: workforce_snapshot
+    description: Periodic snapshot, one row per employee counted in headcount at each month end.
+    model: ref('fct_workforce_monthly')
+    defaults:
+      agg_time_dimension: month_end
+    primary_entity: workforce_snapshot
+    entities:
+      - name: employee
+        type: foreign
+        expr: employee_id
+      - name: department
+        type: foreign
+        expr: department_id
+    dimensions:
+      - name: month_end
+        type: time
+        type_params:
+          time_granularity: day
+    measures:
+      - name: headcount_rows
+        description: Employees active at the month end.
+        agg: sum
+        expr: "1"
+        non_additive_dimension:
+          name: month_end
+          window_choice: max
+      - name: fte_total
+        description: Sum of FTE of those counted in headcount.
+        agg: sum
+        expr: fte
+        non_additive_dimension:
+          name: month_end
+          window_choice: max
+
+  - name: employment_events
+    description: Effective (corrected, not rescinded) hires, rehires, terminations, transfers and changes.
+    model: ref('fct_employment_events')
+    defaults:
+      agg_time_dimension: effective_date
+    entities:
+      - name: employment_event
+        type: primary
+        expr: event_id
+      - name: employee
+        type: foreign
+        expr: employee_id
+      - name: department
+        type: foreign
+        expr: department_id
+    dimensions:
+      - name: effective_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: event_kind
+        type: categorical
+    measures:
+      - name: hire_events
+        description: Hires and rehires (department at hire).
+        agg: sum
+        expr: "case when event_kind in ('hire', 'rehire') then 1 else 0 end"
+      - name: termination_events
+        description: Effective terminations (department on the last day).
+        agg: sum
+        expr: "case when event_kind = 'termination' then 1 else 0 end"
+
+  - name: offers
+    description: Accumulating snapshot of extended offers, by decision date and requisition department.
+    model: ref('fct_offers')
+    defaults:
+      agg_time_dimension: decision_date
+    entities:
+      - name: offer
+        type: primary
+        expr: offer_id
+      - name: department
+        type: foreign
+        expr: department_id
+    dimensions:
+      - name: decision_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: final_status
+        type: categorical
+    measures:
+      - name: accepted_offers
+        agg: sum
+        expr: "case when final_status = 'accepted' then 1 else 0 end"
+      - name: decided_offers
+        description: Accepted plus declined; rescinded and pending offers are excluded.
+        agg: sum
+        expr: "case when final_status in ('accepted', 'declined') then 1 else 0 end"
+
+metrics:
+  - name: headcount
+    label: Headcount at month end
+    type: simple
+    type_params:
+      measure: headcount_rows
+  - name: fte
+    label: Full-time equivalents at month end
+    type: simple
+    type_params:
+      measure: fte_total
+  - name: hires
+    label: Hires and rehires in the month
+    type: simple
+    type_params:
+      measure: hire_events
+  - name: departures
+    label: Effective terminations in the month
+    type: simple
+    type_params:
+      measure: termination_events
+  - name: offers_accepted
+    label: Offers accepted by decision month
+    type: simple
+    type_params:
+      measure: accepted_offers
+  - name: offers_decided
+    label: Offers accepted or declined by decision month
+    type: simple
+    type_params:
+      measure: decided_offers
+  - name: offer_acceptance_rate
+    label: Offer acceptance rate by decision month
+    type: ratio
+    type_params:
+      numerator: offers_accepted
+      denominator: offers_decided

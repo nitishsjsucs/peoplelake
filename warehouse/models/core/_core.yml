@@ -2,9 +2,12 @@ version: 2
 
 models:
   - name: dim_date
-    description: Calendar 2010-01-01 to 2026-12-31 (DuckDB range, BigQuery GENERATE_DATE_ARRAY).
+    description: Calendar 2010-01-01 to 2026-12-31 (DuckDB range, BigQuery GENERATE_DATE_ARRAY). Also the MetricFlow time spine.
+    time_spine:
+      standard_granularity_column: date_day
     columns:
       - name: date_day
+        granularity: day
         data_tests: [not_null, unique]
 
   - name: dim_department

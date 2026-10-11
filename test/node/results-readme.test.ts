@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type AskReport, END, type FreshnessReport, renderResults, replaceSection, type ScenarioReport, START } from "../../scripts/lib/results.ts";
+import { type AskReport, END, type ParityReport, type FreshnessReport, renderResults, replaceSection, type ScenarioReport, START } from "../../scripts/lib/results.ts";
 import { findProseViolations } from "../../scripts/lib/prose.ts";
 
 const scenario: ScenarioReport = {
@@ -102,6 +102,27 @@ describe("results renderer", () => {
     expect(text).toContain("model `Qwen3-1.7B-Q4_0-rtn.gguf`");
     expect(text).toContain("(sha256 `0123456789ab`)");
     expect(text).toContain("| 60 | 45 (75.0%) | 95.0% | 90.0% | 85.0% | 80.0% | 1 | 1234 ms | 2101 ms |");
+    expect(findProseViolations(text)).toEqual([]);
+  });
+
+  it("renders MetricFlow parity with the rows compared and the rows that differ", () => {
+    const parity: ParityReport = {
+      kind: "metricflow-parity",
+      command: "peoplelake dev metricflow-parity --profile small",
+      date: "2026-10-11",
+      profile: "small",
+      engine: "duckdb",
+      semantic_layer: "MetricFlow planning DuckDB SQL",
+      mart: "pl_core.metrics_workforce_monthly",
+      metrics: ["headcount", "fte"],
+      events_loaded: 10000,
+      rows_compared: 468,
+      mismatched_rows: 0,
+      passed: true,
+    };
+    const text = renderResults([{ file: "evals/results/metricflow-parity-small-2026-10-11.json", report: parity }]);
+    expect(text).toContain("#### MetricFlow parity, small profile, duckdb (2026-10-11)");
+    expect(text).toContain("| headcount, fte | 468 | 0 | yes |");
     expect(findProseViolations(text)).toEqual([]);
   });
 

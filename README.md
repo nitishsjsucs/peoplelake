@@ -24,6 +24,7 @@ v1 is under construction and this repository is published while it is built. Thi
 | CI | workflows written (`ci.yml` on every push, `eval-full.yml` weekly and on demand); they have not run on GitHub yet because the owner publishes the repo |
 | Workers AI and `/api/ask` | done: `AiProvider` with a deterministic stub (CI), llama-server (local) and Workers AI through AI Gateway (production, mocked in tests), `POST /api/ask` answering only from the committed metrics snapshot, `/api/ops/ai` gateway check; the 60-question ask eval (`peoplelake eval ask`) scores each provider through the Worker: stub and llama-server results recorded (see Results), Workers AI runs after the production setup |
 | Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | built and tested offline (dry run, fake clients, rendered config bundles with `wrangler deploy --dry-run`); not run against real accounts yet, see Production setup |
+| MetricFlow semantic layer | done on DuckDB: semantic models over the three facts the mart reads, the five metrics (plus the two offer components), and a parity check that MetricFlow's answers equal `metrics_workforce_monthly` on all 468 rows (both profiles, see Results); the definitions parse for BigQuery too, but no MetricFlow service runs in production |
 | Dashboard | done: React 19 + Vite 8 in `web/`, built to `web/dist` and served by the Worker as static assets (Overview, Runs with jobs and attempts, Metrics with a 36-month SVG trend and the 468-row table, Checks); reads only `/api/*`; behind Cloudflare Access in production |
 
 Identical outputs across the five scenarios: proven on DuckDB with the local stack (all six legs, B and S1 to S5, on both the small profile and the full 100,000-event profile); BigQuery pending (needs the production setup below and the BigQuery drill).
@@ -86,6 +87,7 @@ flowchart LR
 | Auth | locally generated RS256 keys, same verifier code | Access JWT (RS256) against the team JWKS |
 | LLM | llama-server (Qwen3-1.7B) on 8150, or a deterministic stub in CI | Workers AI through AI Gateway `peoplelake` |
 | Cron | ticker process | Workers cron `* * * * *` |
+| Semantic layer | MetricFlow plans SQL for DuckDB in the parity check (`peoplelake dev metricflow-parity`) | the same definitions ship in the dbt project and parse for BigQuery; nothing serves MetricFlow queries in production, the published read path stays the metrics mart |
 | Dashboard | static assets from `web/dist` in `wrangler dev`; a pasted dev token (`peoplelake auth dev-token operator --ttl 3600`) stands in for the Access session | static assets of Worker `peoplelake` behind Cloudflare Access (the browser's Access session; Access adds the JWT header) |
 | Scenario equivalence | DuckDB with the local stack (every CI push, small profile) | BigQuery `_drill` datasets with the local Worker, Workflows and lake (`eval scenarios --target prod-drill`, a go-live step) |
 | Freshness | measured on the local stack | measured once from the `prod:e2e` live delivery |
@@ -166,6 +168,16 @@ In production the whole hostname sits behind Cloudflare Access: the owner signs 
 | R11 | no open anomalies (orphan corrections, inferred spell ends, events outside spells) | warn |
 
 `pipeline/tests/test_reconciliation_checks.py` breaks each invariant on purpose and asserts that its check fires.
+
+### Semantic layer (MetricFlow)
+
+`warehouse/models/semantic/_semantic.yml` restates the five metrics for MetricFlow over the same facts the mart reads: `workforce_snapshot` (`fct_workforce_monthly`; headcount and FTE are semi-additive over `month_end`), `employment_events` (`fct_employment_events`; hires include rehires, departures are effective terminations), `offers` (`fct_offers` by decision date; the acceptance rate is a ratio of accepted to accepted plus declined) and `departments`, the shared entity that lets every metric group by department. `dim_date` is the time spine. The mart stays the one published definition; the semantic layer has to agree with it:
+
+```bash
+uv run --project pipeline peoplelake dev metricflow-parity --profile small   # straight load, dbt build, then MetricFlow against the mart
+```
+
+MetricFlow plans the queries (by month and department, and by month for the company) and the generated DuckDB SQL runs on the repo's own UTC connection; counts must be equal, FTE equal to 6 places and the rate equal after the mart's half-up rounding to 6 places, on every one of the 468 rows. `pipeline/tests/test_metricflow_parity.py` runs the same check in the CI dbt job.
 
 ### Synthetic data
 
@@ -345,6 +357,22 @@ Command: `peoplelake eval freshness --target local --duration 60m`. Method: ledg
 | 100000 | 60 min | 121 | 48 s | 74 s | 78 s | 86 s | 93 s | 100.00% | 78 s |
 
 p95 split: first receipt to run start 65 s, run start to commit 22 s. Runs committed: 121 of 121, transforms skipped (the load inserted nothing new): 61. Cross-check against the runner's `ops_event_freshness` histograms: 100000 ledger events, 100000 ops events, 0 mismatched 10 s buckets (agrees). 15-minute p95 target (reported, not asserted): met.
+
+#### MetricFlow parity, full profile, duckdb (2026-10-11)
+
+Command: `peoplelake dev metricflow-parity --profile full`. Semantic layer: MetricFlow (dbt-metricflow 0.15.0, metricflow 0.213.0) planning DuckDB SQL, compared with `pl_core.metrics_workforce_monthly` after a straight load of 100000 events. Machine: Darwin arm64. Source: `evals/results/metricflow-parity-full-2026-10-11.json`.
+
+| Metrics | Rows compared (months x departments and ALL) | Rows that differ | Identical |
+|---|---:|---:|---|
+| headcount, fte, hires, departures, offers_accepted, offers_decided, offer_acceptance_rate | 468 | 0 | yes |
+
+#### MetricFlow parity, small profile, duckdb (2026-10-11)
+
+Command: `peoplelake dev metricflow-parity --profile small`. Semantic layer: MetricFlow (dbt-metricflow 0.15.0, metricflow 0.213.0) planning DuckDB SQL, compared with `pl_core.metrics_workforce_monthly` after a straight load of 10000 events. Machine: Darwin arm64. Source: `evals/results/metricflow-parity-small-2026-10-11.json`.
+
+| Metrics | Rows compared (months x departments and ALL) | Rows that differ | Identical |
+|---|---:|---:|---|
+| headcount, fte, hires, departures, offers_accepted, offers_decided, offer_acceptance_rate | 468 | 0 | yes |
 
 #### Scenario equivalence, full profile, duckdb (2026-10-11)
 

@@ -24,6 +24,8 @@ peoplelake = "peoplelake.cli:main"
 
 [dependency-groups]
 dev = [
+  "dbt-metricflow==0.15.0",
+  "metricflow==0.213.0",
   "pytest==9.1.1",
   "ruff==0.17.0",
   "sqlglot==30.22.0",

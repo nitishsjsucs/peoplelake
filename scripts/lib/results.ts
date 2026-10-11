@@ -72,9 +72,25 @@ export interface AskReport {
   };
 }
 
-export type Report = ScenarioReport | FreshnessReport | AskReport;
+export interface ParityReport {
+  kind: "metricflow-parity";
+  command: string;
+  date: string;
+  profile: string;
+  engine: string;
+  semantic_layer: string;
+  mart: string;
+  metrics: string[];
+  events_loaded: number;
+  rows_compared: number;
+  mismatched_rows: number;
+  passed: boolean;
+  machine?: string;
+}
 
-export const REPORT_KINDS: readonly Report["kind"][] = ["scenario-equivalence", "freshness", "ask"];
+export type Report = ScenarioReport | FreshnessReport | AskReport | ParityReport;
+
+export const REPORT_KINDS: readonly Report["kind"][] = ["scenario-equivalence", "freshness", "ask", "metricflow-parity"];
 
 const fmtS = (s: number | null | undefined): string => (s === null || s === undefined ? "n/a" : `${s} s`);
 
@@ -141,8 +157,22 @@ export function renderAskReport(r: AskReport, file: string): string {
   ].join("\n");
 }
 
+export function renderParityReport(r: ParityReport, file: string): string {
+  return [
+    `#### MetricFlow parity, ${r.profile} profile, ${r.engine} (${r.date})`,
+    "",
+    `Command: \`${r.command}\`. Semantic layer: ${r.semantic_layer}, compared with \`${r.mart}\` after a straight load of ${r.events_loaded} events.${r.machine ? ` Machine: ${r.machine}.` : ""} Source: \`${file}\`.`,
+    "",
+    "| Metrics | Rows compared (months x departments and ALL) | Rows that differ | Identical |",
+    "|---|---:|---:|---|",
+    `| ${r.metrics.join(", ")} | ${r.rows_compared} | ${r.mismatched_rows} | ${r.passed ? "yes" : "no"} |`,
+  ].join("\n");
+}
+
 function renderReport(report: Report, file: string): string {
   switch (report.kind) {
+    case "metricflow-parity":
+      return renderParityReport(report, file);
     case "freshness":
       return renderFreshnessReport(report, file);
     case "ask":

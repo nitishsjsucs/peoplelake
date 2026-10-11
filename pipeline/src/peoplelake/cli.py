@@ -139,6 +139,30 @@ def _cmd_reference_digests(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_metricflow_parity(args: argparse.Namespace) -> int:
+    from datetime import UTC, datetime
+
+    from .paths import data_dir, repo_root
+    from .semantic.parity import parity_report, write
+
+    workdir = Path(args.workdir) if args.workdir else data_dir() / "metricflow" / args.profile
+    command = ("peoplelake dev metricflow-parity " + " ".join(sys.argv[3:])).strip()
+    report = parity_report(args.profile, workdir, command)
+    date = datetime.now(UTC).strftime("%Y-%m-%d")
+    out = (
+        Path(args.out)
+        if args.out
+        else repo_root() / "evals" / "results" / f"metricflow-parity-{args.profile}-{date}.json"
+    )
+    write(report, out)
+    print(
+        json.dumps(
+            {"rows_compared": report["rows_compared"], "mismatched_rows": report["mismatched_rows"], "out": str(out)}
+        )
+    )
+    return 0 if report["passed"] else 1
+
+
 def _cmd_bq_compile(args: argparse.Namespace) -> int:
     from .devtools.bq_offline import BRANCHES, compile_branch
     from .paths import data_dir
@@ -650,6 +674,13 @@ def build_parser() -> argparse.ArgumentParser:
         "clean-clone-check", help="clone HEAD to a temp dir: uv sync --locked, dbt parse, smoke tests"
     )
     cc.set_defaults(func=_cmd_clean_clone)
+    mfp = dev_sub.add_parser(
+        "metricflow-parity", help="MetricFlow answers for the five metrics must equal metrics_workforce_monthly"
+    )
+    mfp.add_argument("--profile", choices=["full", "small"], default="small")
+    mfp.add_argument("--workdir")
+    mfp.add_argument("--out")
+    mfp.set_defaults(func=_cmd_metricflow_parity)
     bqc = dev_sub.add_parser("bq-compile", help="offline BigQuery compile (both branches), sqlglot parse and SQL lint")
     bqc.add_argument("--workdir")
     bqc.set_defaults(func=_cmd_bq_compile)
