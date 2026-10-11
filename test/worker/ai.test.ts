@@ -295,12 +295,26 @@ describe("GET /api/ops/ai", () => {
     expect((await call("/api/ops/ai", "viewer")).status).toBe(403);
   });
 
-  it("makes one call through the gateway and reports the gateway log id", async () => {
+  it("by default checks the binding and configuration without calling the model or reserving neurons", async () => {
+    const { mountOpsApi } = await import("../../src/worker/api/ops.ts");
+    const ai = new MockAi("ok");
+    const app = createApp(mountOpsApi);
+    const before = await coordinatorStub(env).budget();
+    const res = await app.fetch(
+      new Request("http://127.0.0.1/api/ops/ai", { headers: { "Cf-Access-Jwt-Assertion": await devToken("operator") } }),
+      { ...env, AI_PROVIDER: "workers-ai", AI_MODEL: "@cf/test/model", AI_GATEWAY_ID: "peoplelake", AI: ai },
+    );
+    expect(await res.json()).toMatchObject({ ok: true, check: "binding", model: "@cf/test/model", gateway_id: "peoplelake", max_tokens: 96 });
+    expect(ai.calls).toHaveLength(0);
+    expect((await coordinatorStub(env).budget()).workers_ai.neurons_today).toBe(before.workers_ai.neurons_today);
+  });
+
+  it("with live=1 makes one call through the gateway and reports the gateway log id", async () => {
     const { mountOpsApi } = await import("../../src/worker/api/ops.ts");
     const ai = new MockAi("ok");
     const app = createApp(mountOpsApi);
     const res = await app.fetch(
-      new Request("http://127.0.0.1/api/ops/ai", { headers: { "Cf-Access-Jwt-Assertion": await devToken("operator") } }),
+      new Request("http://127.0.0.1/api/ops/ai?live=1", { headers: { "Cf-Access-Jwt-Assertion": await devToken("operator") } }),
       { ...env, AI_PROVIDER: "workers-ai", AI_MODEL: "@cf/test/model", AI_GATEWAY_ID: "peoplelake", AI: ai },
     );
     expect(await res.json()).toEqual({ ok: true, gateway_log_id_present: true });

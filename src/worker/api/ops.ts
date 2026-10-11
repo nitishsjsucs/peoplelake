@@ -1,4 +1,5 @@
-// Operator checks used by `npm run doctor` (SPEC 7.3).
+// Operator checks used by `npm run doctor` (SPEC 7.3). The doctor's default probes have no side effects:
+// `/api/ops/ai` and `/api/ops/dispatch` only check configuration unless asked for a live call.
 import { AI_MODEL, aiReservation } from "../../shared/free-budget.ts";
 import type { AiBinding } from "../ai/providers.ts";
 import type { App } from "../app.ts";
@@ -50,6 +51,8 @@ export function mountOpsApi(app: App): void {
     });
   });
 
+  // Default: the dispatcher key parses and names a service account (no side effects). `?token=1` also mints
+  // an access token (an OAuth exchange, cached in the Coordinator); `?execute=1` starts one runner execution.
   app.get("/api/ops/dispatch", requireRole("operator"), async (c) => {
     const config = c.get("config");
     if (config.runnerDispatch !== "cloudrun") return c.json({ ok: false, mode: "poll", reason: "RUNNER_DISPATCH=poll (local runner)" });
@@ -57,7 +60,11 @@ export function mountOpsApi(app: App): void {
     const tokens: TokenCache = { get: () => coordinator.getGcpToken(), set: (t) => coordinator.setGcpToken(t) };
     try {
       const raw = (c.env as unknown as Record<string, unknown>)["GCP_DISPATCHER_KEY"];
-      const token = await accessToken(parseServiceAccountKey(String(raw ?? "")), tokens);
+      const key = parseServiceAccountKey(String(raw ?? ""));
+      if (c.req.query("token") !== "1" && c.req.query("execute") !== "1") {
+        return c.json({ ok: true, check: "key", client_email: key.client_email, job: config.gcp?.job ?? null });
+      }
+      const token = await accessToken(key, tokens);
       const out: Record<string, unknown> = { ok: true, expires_in: Math.round((token.expires_at - Date.now()) / 1000), cached: token.cached };
       if (c.req.query("execute") === "1") out["execution"] = await makeDispatcher(config, c.env, tokens).dispatch();
       return c.json(out);
@@ -66,7 +73,9 @@ export function mountOpsApi(app: App): void {
     }
   });
 
-  // One tiny Workers AI call through AI Gateway; the gateway log id proves the call went through the gateway.
+  // Default: the binding, model, gateway and limits are configured (no model call). `?live=1` makes one tiny
+  // Workers AI call through AI Gateway (about 3 neurons of the shared daily allowance, one gateway log
+  // entry); the gateway log id proves the call went through the gateway.
   app.get("/api/ops/ai", requireRole("operator"), async (c) => {
     const config = c.get("config");
     const ai = (c.env as unknown as { AI?: AiBinding }).AI;
@@ -74,6 +83,16 @@ export function mountOpsApi(app: App): void {
       return c.json({ ok: false, provider: config.ai.provider, reason: "no Workers AI binding here (local: llama-server or the stub)" });
     }
     const model = config.ai.model ?? AI_MODEL;
+    if (c.req.query("live") !== "1") {
+      return c.json({
+        ok: typeof ai.run === "function" && Boolean(config.ai.gatewayId),
+        check: "binding",
+        model,
+        gateway_id: config.ai.gatewayId,
+        max_tokens: config.ai.maxTokens,
+        daily_neuron_cap: config.ai.dailyNeuronCap,
+      });
+    }
     const content = "Reply with the word ok.";
     const reserved = await coordinatorStub(c.env).reserveNeurons(aiReservation(model, content.length, 4));
     if (!reserved.ok) return c.json({ ok: false, error: "ai_budget", used: reserved.used, cap: reserved.cap }, 429);

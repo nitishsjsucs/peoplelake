@@ -68,6 +68,19 @@ describe("API role gates", () => {
     expect(body.durable_objects.rows_read_today).toBeGreaterThan(0);
   });
 
+  it("checks the dispatcher key without a token exchange unless asked", async () => {
+    const { createApp } = await import("../../src/worker/app.ts");
+    const { mountOpsApi } = await import("../../src/worker/api/ops.ts");
+    const { devToken } = await import("../helpers/tokens.ts");
+    const key = JSON.stringify({ client_email: "peoplelake-dispatcher@p.iam.gserviceaccount.com", private_key: "-----BEGIN PRIVATE KEY-----", private_key_id: "k1" });
+    const res = await createApp(mountOpsApi).fetch(
+      new Request("http://127.0.0.1/api/ops/dispatch", { headers: { "Cf-Access-Jwt-Assertion": await devToken("operator") } }),
+      { ...env, RUNNER_DISPATCH: "cloudrun", GCP_DISPATCHER_KEY: key },
+    );
+    expect(await res.json()).toMatchObject({ ok: true, check: "key", client_email: "peoplelake-dispatcher@p.iam.gserviceaccount.com" });
+    expect(await coordinatorStub(env).getGcpToken()).toBeNull(); // nothing cached, nothing written
+  });
+
   it("takes the measured BigQuery month total from operators only", async () => {
     const month = new Date().toISOString().slice(0, 7);
     expect((await call("/api/ops/bq-month", "runner", json({ month, bytes_billed: 1 }))).status).toBe(403);

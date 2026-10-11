@@ -1,4 +1,4 @@
-// npm run doctor [-- --local-only | --quick | --with-dispatch]
+// npm run doctor [-- --local-only | --quick | --with-dispatch | --with-ai]
 //
 // Checks every prerequisite (SPEC 21.3 and 21.0) and prints PASS, FAIL, MISSING, UNKNOWN, WARN or INFO per
 // check, with the exact command, console step or README production setup step for every non-pass, then a
@@ -7,8 +7,9 @@
 // Read only. It works before anything is provisioned: the account comes from `wrangler whoami`, and each
 // resource that is not there yet is reported MISSING with the step that creates it. Every command goes
 // through an allowlist of read commands (whoami, auth token, list, get) and every Cloudflare API call is
-// a GET; the only exception is `--with-dispatch`, which asks the deployed Worker to start one runner
-// execution. Settings come from `.prod/config.env`, `.prod/secrets.env` and `.prod/state.json`; PL_*
+// a GET, and the live Worker probes have no side effects (the AI and dispatch checks read configuration
+// only). The exceptions are opt-in: `--with-dispatch` asks the deployed Worker to start one runner
+// execution, `--with-ai` makes one live Workers AI call through the gateway. Settings come from `.prod/config.env`, `.prod/secrets.env` and `.prod/state.json`; PL_*
 // environment variables override `.prod/config.env`.
 //
 // Workers Free plan: the config must need nothing from Workers Paid (no pipelines, no limits, one cron,
@@ -321,7 +322,21 @@ export function listsName(text: string, name: string): boolean {
 
 // --- Cloudflare -----------------------------------------------------------------------------------------
 
-export async function cloudflareChecks(root: string, deps: DoctorDeps, opts: { withDispatch?: boolean; env?: Record<string, string | undefined> } = {}): Promise<Check[]> {
+export interface DoctorOptions {
+  /** One runner execution through the deployed Worker (a token exchange, a Cloud Run execution). */
+  withDispatch?: boolean;
+  /** One live Workers AI call (about 3 neurons of the account's daily allowance, one gateway log entry). */
+  withAi?: boolean;
+  env?: Record<string, string | undefined>;
+}
+
+/** The live Worker paths the doctor probes; without the opt-in flags none of them changes anything. */
+export function opsProbePath(kind: "ai" | "dispatch", opts: DoctorOptions): string {
+  if (kind === "ai") return `/api/ops/ai${opts.withAi ? "?live=1" : ""}`;
+  return `/api/ops/dispatch${opts.withDispatch ? "?execute=1" : ""}`;
+}
+
+export async function cloudflareChecks(root: string, deps: DoctorDeps, opts: DoctorOptions = {}): Promise<Check[]> {
   const out: Check[] = [];
   const config = doctorConfig(root, opts.env ?? {});
   const secrets = readEnvFile(join(root, ".prod", "secrets.env"));
@@ -516,10 +531,17 @@ export async function cloudflareChecks(root: string, deps: DoctorDeps, opts: { w
   const budget = await deps.probe(`${url}/api/ops/budget`, op);
   if (budget.status === 200 && budget.json) out.push(...opsBudgetChecks(budget.json as OpsBudget));
   else out.push({ name: "GET /api/ops/budget", status: "FAIL", detail: `HTTP ${budget.status || "none"}`, fix: "npm run deploy" });
-  const ai = await deps.probe(`${url}/api/ops/ai`, op);
-  out.push((ai.json as { gateway_log_id_present?: boolean } | null)?.gateway_log_id_present ? { name: "Workers AI through AI Gateway", status: "PASS" } : { name: "Workers AI through AI Gateway", status: "FAIL", detail: `HTTP ${ai.status || "none"}`, fix: "npm run setup:prod (AI Gateway peoplelake)" });
-  const dispatch = await deps.probe(`${url}/api/ops/dispatch${opts.withDispatch ? "?execute=1" : ""}`, op);
-  out.push((dispatch.json as { ok?: boolean } | null)?.ok ? { name: `Cloud Run dispatch token${opts.withDispatch ? " and one execution" : ""}`, status: "PASS" } : { name: "Cloud Run dispatch token", status: "FAIL", detail: `HTTP ${dispatch.status || "none"}`, fix: "check GCP_DISPATCHER_KEY (npm run setup:prod -- --only worker)" });
+  // Side-effect free unless asked: the default AI check reads the binding and settings (no model call, no
+  // neurons, no gateway log), the default dispatch check parses the key (no token exchange, no write).
+  const ai = await deps.probe(`${url}${opsProbePath("ai", opts)}`, op);
+  const aiJson = ai.json as { ok?: boolean; gateway_log_id_present?: boolean } | null;
+  out.push(
+    (opts.withAi ? aiJson?.gateway_log_id_present : aiJson?.ok)
+      ? { name: opts.withAi ? "Workers AI through AI Gateway (one live call)" : "Workers AI binding, model and gateway configured", status: "PASS", ...(opts.withAi ? {} : { detail: "--with-ai makes one live call" }) }
+      : { name: "Workers AI through AI Gateway", status: "FAIL", detail: `HTTP ${ai.status || "none"}`, fix: "npm run setup:prod (AI Gateway peoplelake)" },
+  );
+  const dispatch = await deps.probe(`${url}${opsProbePath("dispatch", opts)}`, op);
+  out.push((dispatch.json as { ok?: boolean } | null)?.ok ? { name: opts.withDispatch ? "Cloud Run dispatch token and one execution" : "Cloud Run dispatcher key", status: "PASS" } : { name: "Cloud Run dispatch", status: "FAIL", detail: `HTTP ${dispatch.status || "none"}`, fix: "check GCP_DISPATCHER_KEY (npm run setup:prod -- --only worker)" });
   return out;
 }
 
@@ -542,7 +564,7 @@ async function main(): Promise<number> {
   const sections: [string, Check[]][] = [["Local", await localChecks(root, deps)]];
   if (!localOnly) {
     sections.push([".prod files", prodFileChecks(root)]);
-    sections.push(["Cloudflare", await cloudflareChecks(root, deps, { withDispatch: process.argv.includes("--with-dispatch"), env: process.env })]);
+    sections.push(["Cloudflare", await cloudflareChecks(root, deps, { withDispatch: process.argv.includes("--with-dispatch"), withAi: process.argv.includes("--with-ai"), env: process.env })]);
     if (!quick) sections.push(["Google Cloud (peoplelake prod doctor-gcp)", gcpChecks(deps)]);
   }
   for (const [title, checks] of sections) {

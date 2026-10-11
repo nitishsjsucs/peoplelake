@@ -336,7 +336,8 @@ describe("doctor: read only, before and after setup", () => {
         }
         if (url.endsWith("/api/ops/lake")) return { status: 200, json: { landing: { landed_through: null } } };
         if (url.endsWith("/api/ops/budget")) return { status: 200, json: {} };
-        if (url.endsWith("/api/ops/ai")) return { status: 200, json: { gateway_log_id_present: true } };
+        if (url.endsWith("/api/ops/ai")) return { status: 200, json: { ok: true, check: "binding" } };
+        if (url.endsWith("/api/ops/ai?live=1")) return { status: 200, json: { gateway_log_id_present: true } };
         if (url.includes("/api/ops/dispatch")) return { status: 200, json: { ok: true } };
         return { status: 0, json: null };
       },
@@ -449,6 +450,15 @@ describe("doctor: read only, before and after setup", () => {
     expect(checks.filter((c) => c.status !== "PASS").map((c) => `${c.name}: ${c.status}`)).toEqual([]);
     expect(fake.probes).toContain("https://peoplelake.example-sub.workers.dev/api/ops/dispatch");
     expect(failed([...checks, ...prodFileChecks(dir).filter((c) => c.status !== "INFO")])).toBe(false);
+    // Read only by default: every live path the doctor probes is one with no side effects (no model call,
+    // no neurons, no token exchange, no execution); the live AI call and the execution are opt-in.
+    const SIDE_EFFECT_FREE = ["/cdn-cgi/access/certs", "/v1/health", "/v1/health/auth", "/api/ops/lake", "/api/ops/budget", "/api/ops/ai", "/api/ops/dispatch"];
+    for (const url of fake.probes) expect(SIDE_EFFECT_FREE).toContain(new URL(url).pathname + new URL(url).search);
+    const live = fakeDeps({ buckets: ["peoplelake-lake", "peoplelake-reports"], catalog: true, queues: ["peoplelake-lake-events", "peoplelake-lake-events-dlq"], deployed: true, idps: ["onetimepin"], tokens: Object.keys(SERVICE_TOKENS), gateway: true, app: true });
+    const liveChecks = await cloudflareChecks(dir, readOnly(live.deps), { env: {}, withAi: true, withDispatch: true });
+    expect(live.probes).toContain("https://peoplelake.example-sub.workers.dev/api/ops/ai?live=1");
+    expect(live.probes).toContain("https://peoplelake.example-sub.workers.dev/api/ops/dispatch?execute=1");
+    expect(byName(liveChecks)["Workers AI through AI Gateway (one live call)"]?.status).toBe("PASS");
   });
 
   it("matches whole names only and summarizes by fix", () => {

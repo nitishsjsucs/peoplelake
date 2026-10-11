@@ -626,8 +626,8 @@ Facts behind this shape (all verified in this session with wrangler 4.149.0 in a
 | GET `/api/freshness?window=24h` | viewer | per-run freshness from ledger histograms |
 | POST `/api/ask` | viewer | minimal: question to validated `MetricQuery`, answer from the committed snapshot (section 13) |
 | GET `/api/ops/lake` | operator | catalog current snapshot, newest append snapshot, committed watermark, last lake event, last poll error |
-| GET `/api/ops/dispatch` | operator | mints a GCP access token (never returned) and reports `{ok, expires_in}`; `?execute=1` also starts one runner execution |
-| GET `/api/ops/ai` | operator | one tiny Workers AI call through the gateway; returns `{ok, gateway_log_id_present}` |
+| GET `/api/ops/dispatch` | operator | fixer: by default parses the dispatcher key only; `?token=1` mints a GCP access token (never returned, cached in the Coordinator) and reports `{ok, expires_in}`; `?execute=1` also starts one runner execution (the doctor's `--with-dispatch`) |
+| GET `/api/ops/ai` | operator | fixer: by default checks the binding, model, gateway and limits without a model call; `?live=1` makes one tiny Workers AI call through the gateway and returns `{ok, gateway_log_id_present}` (the doctor's `--with-ai`) |
 | POST `/internal/jobs/claim` `{worker_id}` | runner | 200 JobSpec (oldest queued job) or 204; records `runner_last_seen_at` |
 | POST `/internal/runner/idle` `{worker_id}` | runner | asked by a runner at its `--until-idle` exit: `{exit: false}` while a job is queued (it keeps polling), else `{exit: true}` and `runner_last_seen_at` is cleared (fixer, section 8.1) |
 | POST `/internal/jobs/:job_id/heartbeat` | runner | extends lease, 409 if not the holder |
