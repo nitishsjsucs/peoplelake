@@ -326,10 +326,65 @@ def _cmd_eval_scenarios(args: argparse.Namespace) -> int:
     return 0 if report["passed"] else 1
 
 
+def _cmd_eval_freshness(args: argparse.Namespace) -> int:
+    import logging
+    from datetime import UTC, datetime
+
+    from .evals.freshness import run_freshness, write
+    from .evals.scenarios import EvalError
+    from .paths import data_dir, repo_root
+
+    if args.target == "prod":
+        from .evals.freshness import prod_freshness, write
+        from .sim.deliver import latest_delivery_id, load_delivery
+
+        delivery_id = args.from_delivery or latest_delivery_id("prod")
+        if not delivery_id:
+            print("eval freshness --target prod needs --from-delivery (the prod:e2e delivery id)", file=sys.stderr)
+            return 2
+        report = prod_freshness(load_delivery(delivery_id))
+        date = datetime.now(UTC).strftime("%Y-%m-%d")
+        out = Path(args.out) if args.out else repo_root() / "evals" / "results" / f"freshness-prod-full-{date}.json"
+        write(report, out, "peoplelake eval freshness " + " ".join(sys.argv[3:]))
+        print(json.dumps({"p95_s": report["overall"]["p95_s"], "out": str(out)}))
+        return 0
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    unit = args.duration[-1]
+    minutes = float(args.duration[:-1]) * (60 if unit == "h" else 1) if unit in "mh" else float(args.duration)
+    rate = None if args.rate == "auto" else float(args.rate)
+    try:
+        report = run_freshness(args.profile, minutes, workdir=data_dir() / "eval", rate=rate)
+    except EvalError as exc:
+        print(f"eval freshness: {exc}", file=sys.stderr)
+        return 1
+    date = datetime.now(UTC).strftime("%Y-%m-%d")
+    out = (
+        Path(args.out)
+        if args.out
+        else repo_root() / "evals" / "results" / f"freshness-local-{args.profile}-{date}.json"
+    )
+    write(report, out, "peoplelake eval freshness " + " ".join(sys.argv[3:]))
+    print(json.dumps({"p95_s": report["overall"]["p95_s"], "events": report["overall"]["events"], "out": str(out)}))
+    return 0
 
 
 
 
+def _cmd_sim_deliver(args: argparse.Namespace) -> int:
+    import logging
+
+    from .sim.deliver import deliver
+
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    if args.scenario != "baseline":
+        print("sim deliver sends the baseline; scenarios run through `peoplelake eval scenarios`", file=sys.stderr)
+        return 2
+    unit = args.duration[-1]
+    minutes = float(args.duration[:-1]) * (60 if unit == "h" else 1) if unit in "mh" else float(args.duration)
+    record = deliver(target=args.target, profile=args.profile, mode=args.mode, duration_minutes=minutes)
+    print(json.dumps(record))
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -389,6 +444,16 @@ def build_parser() -> argparse.ArgumentParser:
             lp.add_argument("--to-snapshot")
         lp.set_defaults(func=_cmd_lake)
 
+    sim = sub.add_parser("sim", help="simulated sources")
+    sim_sub = sim.add_subparsers(dest="sim_command", required=True)
+    dl = sim_sub.add_parser("deliver", help="post a profile to the Worker as hris, ats and talent")
+    dl.add_argument("--target", choices=["local", "prod"], default="local")
+    dl.add_argument("--profile", choices=["small", "full"], default="small")
+    dl.add_argument("--scenario", default="baseline")
+    dl.add_argument("--mode", choices=["chunk", "live"], default="chunk")
+    dl.add_argument("--duration", default="60m")
+    dl.set_defaults(func=_cmd_sim_deliver)
+
     runner = sub.add_parser("runner", help="claim and run warehouse jobs")
     runner_sub = runner.add_subparsers(dest="runner_command", required=True)
     poll = runner_sub.add_parser("poll", help="local loop against wrangler dev")
@@ -427,6 +492,15 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--reference", help="reference digests JSON (default: computed now)")
     sc.add_argument("--out")
     sc.set_defaults(func=_cmd_eval_scenarios)
+
+    fr = ev_sub.add_parser("freshness", help="deliver at a constant rate in live mode and measure p50/p95 freshness")
+    fr.add_argument("--target", choices=["local", "prod"], default="local")
+    fr.add_argument("--profile", choices=["small", "full"], default="full")
+    fr.add_argument("--duration", default="60m", help="for example 60m or 1h")
+    fr.add_argument("--rate", default="auto", help="events per second, or auto = events / duration")
+    fr.add_argument("--from-delivery", help="production: the prod:e2e delivery id (default: the latest)")
+    fr.add_argument("--out")
+    fr.set_defaults(func=_cmd_eval_freshness)
 
     dev = sub.add_parser("dev", help="developer and CI tools")
     dev_sub = dev.add_subparsers(dest="dev_command", required=True)

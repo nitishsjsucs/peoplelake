@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Commit 14 of 18 (core) done: CI workflows.
+Commit 15 of 18 (core) done: freshness eval (code); the 60-minute local measurement is running.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -34,8 +34,10 @@ Commit 14 of 18 (core) done: CI workflows.
 
 14. CI: `.github/workflows/ci.yml` (node, python, dbt, clean-clone, runner-image, e2e matrix B to S5 on the small profile) and `eval-full.yml` (full profile, weekly and on demand), runner `Dockerfile` and `.dockerignore`, `peoplelake dev clean-clone-check`, smoke markers. Scenario step timeouts are twice the slowest leg measured in this session: small S5 342.2 s gives 12 minutes; full B 465.6 s gives 16 minutes (`evals/results/scenarios-full-duckdb-2026-10-11-B-S2-S4.json`: B, S2 and S4 on 100,000 events all identical to the reference). The workflows have not run on GitHub yet (nothing is pushed; the owner publishes).
 
+15. Freshness: `evals/freshness.py` (paced live delivery through the local stack in live mode, quiescence on the ledger, p50/p90/p95/p99/max, share within 15 minutes, excluding the first 5 minutes, receive-to-run-start and run-to-commit components, per-stage durations, ledger against ops histogram cross-check; production mode reads the single `prod:e2e` delivery), `sim/deliver.py` (chunk or live delivery, local or production service tokens, delivery records), Worker and Python freshness math tests with the same cases. Validated in this session with a 3-minute small-profile run: 10,000 events, p95 85 s, ledger and ops histograms equal on every 10 s bucket, ports free afterwards. The 60-minute full-profile run is executing from a worktree under `.data/` so Worker edits in the main tree cannot reload its `wrangler dev`.
+
 ## Next
-15. Live freshness eval and record local results.
+16. Workers AI: AiProvider (stub, llama-server, Workers AI through AI Gateway), minimal `/api/ask`, ops check; then record the freshness result.
 
 ## Check status (last run at this commit)
 | Check | Result |

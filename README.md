@@ -20,7 +20,7 @@ v1 is under construction and this repository is published while it is built. Thi
 | Worker: auth, ingest, sinks | done locally: fail-closed config, Access JWT verification (RS256, iss, aud, exp) with locally generated dev keys, role gates, `POST /v1/ingest/:source` for three envelopes (zod, all-or-nothing), RawRecord normalization shared with Python through a golden, Basin stream sink (production) and the SinkRoller stand-in (local) |
 | Orchestration: Coordinator, Workflow, dispatchers | done locally (Miniflare Workflows): Coordinator ledger with single-flight runs, attempt-scoped jobs and leases, `WarehouseRunWorkflow` (load, transform or skip, verify, commit, release), poll and Cloud Run dispatchers, Basin Catalog poll, lake-events queue consumer, per-minute cron, eval faults; production Workflows not exercised yet |
 | Runner and local stack | done locally: `peoplelake runner poll` (in-process dbt, heartbeats, eval fault hooks) and `peoplelake stack up/down` (wrangler dev, runner, ticker in their own process groups, ports checked free) |
-| Scenario and freshness evals | scenario equivalence done on DuckDB (B and S1 to S5 identical to the reference digests on the small profile, see Results); freshness eval next |
+| Scenario and freshness evals | scenario equivalence done on DuckDB (see Results); live freshness eval built (), the 60-minute local measurement is running and lands in Results when it finishes |
 | CI | workflows written (`ci.yml` on every push, `eval-full.yml` weekly and on demand); they have not run on GitHub yet because the owner publishes the repo |
 | Workers AI and `/api/ask` | not started |
 | Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | not started |
@@ -175,6 +175,10 @@ uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10 
 uv run --project pipeline peoplelake eval scenarios --profile small --scenarios S4   # one scenario
 npm run results:readme                                                                 # renders evals/results into Results
 ```
+
+### Freshness
+
+`peoplelake eval freshness --target local --duration 60m` delivers the full profile at a constant rate (100,000 events over 60 minutes, 27.8 per second) in live mode: 60 s sink rolls (the Basin minimum), the cron ticker every 60 s, single-flight runs. Per unique event, freshness is the commit time of the run that published it minus the Worker's first receipt, read from the Coordinator ledger (10 s buckets, so conservative by up to 10 s) and cross-checked against the `ops_event_freshness` histograms the runner returns. The 15-minute p95 is a target that is reported, never asserted. Local numbers describe the local stack on the machine named in the result; the production number comes from the single live delivery of `npm run prod:e2e`.
 
 ## CI
 

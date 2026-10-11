@@ -19,7 +19,9 @@
     "contracts:gen": "TZ=UTC node scripts/gen-contracts.ts",
     "contracts:check": "TZ=UTC node scripts/gen-contracts.ts --check",
     "results:readme": "TZ=UTC node scripts/results-to-readme.ts",
-    "results:check": "TZ=UTC node scripts/results-to-readme.ts --check"
+    "results:check": "TZ=UTC node scripts/results-to-readme.ts --check",
+    "eval:scenarios": "TZ=UTC uv run --project pipeline peoplelake eval scenarios",
+    "eval:freshness": "TZ=UTC uv run --project pipeline peoplelake eval freshness"
   },
   "dependencies": {
     "hono": "4.13.13",
