@@ -1,0 +1,119 @@
+{
+  "command": "peoplelake eval freshness --target local --duration 60m --tick-seconds 10 --run-min-interval 240 --auto-runs-max-per-day 30",
+  "components": {
+    "receive_to_run_start": {
+      "events": 100000,
+      "max_s": 297,
+      "p50_s": 147,
+      "p90_s": 247,
+      "p95_s": 257,
+      "p99_s": 287,
+      "share_within_15m": 1.0
+    },
+    "run_start_to_commit": {
+      "events": 100000,
+      "max_s": 18,
+      "p50_s": 2,
+      "p90_s": 3,
+      "p95_s": 3,
+      "p99_s": 18,
+      "share_within_15m": 1.0
+    },
+    "stages_per_run": {
+      "commit_s": {
+        "events": 16,
+        "max_s": 0.038,
+        "p50_s": 0.006,
+        "p90_s": 0.008,
+        "p95_s": 0.038,
+        "p99_s": 0.038,
+        "share_within_15m": 1.0
+      },
+      "dispatch_s": {
+        "events": 16,
+        "max_s": 0.371,
+        "p50_s": 0.14,
+        "p90_s": 0.361,
+        "p95_s": 0.371,
+        "p99_s": 0.371,
+        "share_within_15m": 1.0
+      },
+      "load_s": {
+        "events": 16,
+        "max_s": 11.499,
+        "p50_s": 0.182,
+        "p90_s": 0.436,
+        "p95_s": 11.499,
+        "p99_s": 11.499,
+        "share_within_15m": 1.0
+      },
+      "transform_s": {
+        "events": 16,
+        "max_s": 6.003,
+        "p50_s": 2.148,
+        "p90_s": 2.583,
+        "p95_s": 6.003,
+        "p99_s": 6.003,
+        "share_within_15m": 1.0
+      }
+    }
+  },
+  "cross_check_ops_histogram": {
+    "agrees": true,
+    "ledger_events": 100000,
+    "mismatched_10s_buckets": 0,
+    "ops_events": 100000
+  },
+  "date": "2026-10-11",
+  "delivery": {
+    "delivered": 100000,
+    "requests": 2516,
+    "seconds": 3590.0,
+    "tick_seconds": 10.0
+  },
+  "duration_minutes": 60.0,
+  "engine": "duckdb",
+  "events": 100000,
+  "excluding_first_5_minutes": {
+    "events": 91389,
+    "max_s": 299,
+    "p50_s": 150,
+    "p90_s": 249,
+    "p95_s": 260,
+    "p99_s": 289,
+    "share_within_15m": 1.0
+  },
+  "kind": "freshness",
+  "machine": "Darwin arm64",
+  "method": "ledger histograms of first receipt (10 s buckets) against the publishing run's commit time",
+  "overall": {
+    "events": 100000,
+    "max_s": 299,
+    "p50_s": 150,
+    "p90_s": 249,
+    "p95_s": 260,
+    "p99_s": 289,
+    "share_within_15m": 1.0
+  },
+  "ports_busy_after_stack_down": [],
+  "profile": "full",
+  "rate_events_per_s": 27.778,
+  "run_duration_s": {
+    "p50": 2.495,
+    "p95": 17.881
+  },
+  "run_guards": {
+    "auto_runs_max_per_day": 30,
+    "production_values": true,
+    "run_min_interval_s": 240
+  },
+  "runs": 16,
+  "runs_committed": 16,
+  "stand_ins": "wrangler dev (Miniflare Workers, Durable Objects, R2, Queue and Workflows), pyiceberg SqlCatalog, local runner process polling every 0.5 s (production: a Cloud Run execution per dispatch), ticker for cron, DuckDB; the LandingRoller landing with 60 s rolls is the production code",
+  "started_at": "2026-10-11T21:51:23Z",
+  "target": "local",
+  "target_15_minutes_p95_met": true,
+  "tick_seconds": 10.0,
+  "transforms_skipped": 0,
+  "wall_time_s": 3667.1
+}

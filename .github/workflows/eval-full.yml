@@ -94,8 +94,8 @@ jobs:
       - run: uv sync --locked --project pipeline
       - run: uv run --project pipeline peoplelake auth dev-keys
       - name: Local freshness on the full profile
-        # About twice the wall time of a 60-minute local run (about 61 minutes, observed by hand; newer
-        # results record wall_time_s), the longest the input allows.
+        # Twice the wall time of a 60-minute local run (61 min 7 s, wall_time_s in
+        # evals/results/freshness-local-full-prod-guards-2026-10-11.json), the longest the input allows.
         timeout-minutes: 122
         env:
           FRESHNESS_MINUTES: ${{ inputs.freshness_minutes || '20' }}

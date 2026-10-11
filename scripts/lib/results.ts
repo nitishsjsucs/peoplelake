@@ -183,7 +183,7 @@ export function renderFreshnessReport(r: FreshnessReport, file: string): string 
   }
   if (r.target_15_minutes_p95_met !== undefined) details.push(`15-minute p95 target (reported, not asserted): ${r.target_15_minutes_p95_met ? "met" : "not met"}.`);
   return [
-    `#### Freshness, ${r.target}, ${r.profile} profile (${r.date})`,
+    `#### Freshness, ${r.target}, ${r.profile} profile${r.target === "local" ? (r.run_guards?.production_values ? ", production run guards" : ", wide run guards") : ""} (${r.date})`,
     "",
     `Command: \`${r.command}\`. Method: ${r.method}. Engine: ${r.engine}. Stand-ins: ${r.stand_ins}${r.target === "local" && !r.stand_ins.includes("Miniflare") ? "; and wrangler dev (Miniflare Workers, Durable Objects, R2, Queue and Workflows)" : ""}.${r.machine ? ` Machine: ${r.machine}.` : ""}${r.rate_events_per_s !== undefined ? ` Rate: ${r.rate_events_per_s} events per second.` : ""} Source: \`${file}\`.`,
     "",

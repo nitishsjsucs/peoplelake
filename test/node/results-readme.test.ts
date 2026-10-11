@@ -124,7 +124,7 @@ describe("results renderer", () => {
         },
       },
     ]);
-    expect(text).toContain("#### Freshness, local, full profile (2026-10-10)");
+    expect(text).toContain("#### Freshness, local, full profile, wide run guards (2026-10-10)");
     expect(text).toContain("p95 split: first receipt to run start 100 s, run start to commit 25 s.");
     expect(text).toContain("Runs committed: 70 of 70, transforms skipped (the load inserted nothing new): 30.");
     expect(text).toContain("100000 ledger events, 100000 ops events, 0 mismatched 10 s buckets (agrees)");
