@@ -406,7 +406,8 @@ class FaultSpec(Strict):
     snapshots: PosInt | None = None
     count: PosInt | None = None
     attempt: PosInt | None = None
-    _no_null = _omit_not_null("model", "snapshots", "count", "attempt")
+    job: Literal["load", "transform"] | None = None
+    _no_null = _omit_not_null("model", "snapshots", "count", "attempt", "job")
 
 
 class JobInput(Strict):

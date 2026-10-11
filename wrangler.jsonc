@@ -34,12 +34,26 @@
     { "binding": "REPORTS_BUCKET", "bucket_name": "peoplelake-reports-local" }
   ],
   "queues": {
-    "producers": [{ "binding": "LAKE_EVENTS", "queue": "peoplelake-lake-events" }]
+    "producers": [{ "binding": "LAKE_EVENTS", "queue": "peoplelake-lake-events" }],
+    "consumers": [
+      {
+        "queue": "peoplelake-lake-events",
+        "max_batch_size": 50,
+        "max_batch_timeout": 2,
+        "max_retries": 5,
+        "dead_letter_queue": "peoplelake-lake-events-dlq"
+      }
+    ]
   },
   "durable_objects": {
-    "bindings": [{ "name": "SINK_ROLLER", "class_name": "SinkRoller" }]
+    "bindings": [
+      { "name": "COORDINATOR", "class_name": "Coordinator" },
+      { "name": "SINK_ROLLER", "class_name": "SinkRoller" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SinkRoller"] }],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Coordinator", "SinkRoller"] }],
+  "workflows": [{ "name": "peoplelake-warehouse-run", "binding": "WAREHOUSE_RUN", "class_name": "WarehouseRunWorkflow" }],
+  "triggers": { "crons": ["* * * * *"] },
   // Miniflare runs a Pipeline binding offline and its send() discards data; locally the SinkRoller
   // Durable Object is the labeled stand-in for Basin Pipelines (ADR 0003).
   "pipelines": [{ "binding": "RAW_STREAM", "stream": "00000000000000000000000000000000" }],
@@ -75,10 +89,26 @@
         "AI_GATEWAY_ID": "peoplelake"
       },
       "r2_buckets": [{ "binding": "REPORTS_BUCKET", "bucket_name": "peoplelake-reports" }],
-      "durable_objects": {
-        "bindings": [{ "name": "SINK_ROLLER", "class_name": "SinkRoller" }]
+      "queues": {
+        "consumers": [
+          {
+            "queue": "peoplelake-lake-events",
+            "max_batch_size": 50,
+            "max_batch_timeout": 5,
+            "max_retries": 5,
+            "dead_letter_queue": "peoplelake-lake-events-dlq"
+          }
+        ]
       },
-      "pipelines": [{ "binding": "RAW_STREAM", "stream": "__PL_STREAM_ID__" }]
+      "durable_objects": {
+        "bindings": [
+          { "name": "COORDINATOR", "class_name": "Coordinator" },
+          { "name": "SINK_ROLLER", "class_name": "SinkRoller" }
+        ]
+      },
+      "workflows": [{ "name": "peoplelake-warehouse-run", "binding": "WAREHOUSE_RUN", "class_name": "WarehouseRunWorkflow" }],
+      "pipelines": [{ "binding": "RAW_STREAM", "stream": "__PL_STREAM_ID__" }],
+      "triggers": { "crons": ["* * * * *"] }
     }
   }
 }

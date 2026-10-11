@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Commit 10 of 18 (core) done: ingest and sinks.
+Commit 11 of 18 (core) done: orchestration.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -26,15 +26,17 @@ Commit 10 of 18 (core) done: ingest and sinks.
 
 10. Ingest: `POST /v1/ingest/:source` (own-source tokens only, 1 MiB and 500-event limits, 413/422/400, all-or-nothing with per-index reasons, RawRecord validated before send), `normalize.ts` (canonical payload, sha256, a delivery_id per record per request), `contracts/golden/raw-records.json` generated from Python normalization and asserted by vitest, `LakeSink` with `BasinStreamSink` and `LocalRollingSink`, `SinkRoller` Durable Object (alarm roll, max-records roll, crash between put and delete rewrites the same key with a superset, R2-notification-shaped lake events), local-only `/internal/dev/sink/*` routes (404 before auth outside local). Checked by hand: `wrangler dev` accepted an 8-event batch, flushed one roll file and listed it; stopped afterwards with ports free.
 
+11. Orchestration: `Coordinator` DO (runs, jobs, watermarks, freshness histograms, single-flight with pending replay winning, generation-prefixed run ids and load sequences, idempotent enqueue/complete/commit, leases, claim timeouts and run timeouts via alarm, `resolveWait`, dispatch window, faults incl. `rewind_watermark` and `commit_step_error`), `WarehouseRunWorkflow`, `PollDispatcher`, `CloudRunDispatcher` with the JWT bearer grant, Basin Catalog poll (64-bit snapshot ids kept exact), lake-events queue consumer, cron, APIs `/api/runs|replay|status|metrics/latest|freshness`, `/api/ops/lake|dispatch`, `/internal/jobs/*`, metrics artifact upload, `/internal/dev/faults`; tests drive the real Workflow with a simulated runner (happy path, queued-attempt timeout, lease expiry with a late duplicate, transform retry, three failures, verify rejection, commit step error by mock and by fault, transform skip and its guard). Checked by hand: a manual run in `wrangler dev` went request, claim, result event, transform skip, commit; processes stopped and ports free.
+
 ## Next
-11. Orchestration: Coordinator DO, WarehouseRunWorkflow, poll and Cloud Run dispatchers, catalog poll, lake events, cron.
+12. Runner: job runner with in-process dbt and the local stack manager with process cleanup.
 
 ## Check status (last run at this commit)
 | Check | Result |
 |---|---|
 | `npm run typecheck` | pass |
 | `npm run typegen:check` | pass |
-| `npm test` | pass (7 files, 101 tests) |
+| `npm test` | pass (13 files, 145 tests) |
 | `npm run check:prose` | pass |
 | `npm run test:py` (pytest) | pass (179 tests) |
 | `peoplelake dev bq-compile` | pass (both branches) |
@@ -62,4 +64,10 @@ Commit 10 of 18 (core) done: ingest and sinks.
 - The committer's `SinkSource` protocol has a directory implementation now; the Worker-backed source (`/internal/dev/sink/files`) lands with the runner.
 - The `/internal/dev/*` guard runs before authentication, so in production those paths are 404 for everyone rather than 401 then 404.
 - The migration tag `v1` currently lists only `SinkRoller`; the Coordinator joins it in commit 11 (nothing has been deployed, so the tag is still free to change).
+- Workflow control flow avoids `NonRetryableError`: Miniflare's engine aborts the whole instance on it before the catch path can record the failure and release the single-flight slot (reproduced in this session). Exhausted attempts throw a plain `RunFailure` outside steps and `verify` returns a verdict; the catch path runs `fail-run` and `release-after-failure`, then rethrows, so the instance still ends `errored`.
+- `requestRun` creates the instance first and calls `get` only when create fails (an already existing id), instead of `get` before `create`: same idempotency, and Miniflare logs four internal errors for every `get` of a missing instance. Covered by `requestRun reuses an existing instance with the same id`.
+- `run_freshness` has `published_by` and `published_at` so a load whose run failed is attributed to the next committed run (SPEC 16.2 definition).
+- When a Workflow wait times out it asks the Coordinator (`resolveWait`): a stored result is used, a live lease (heartbeats) waits again (up to 20 rounds), anything else is expired now.
+- `FaultSpec` gains `job` (load or transform) for `duplicate_result` and `skip_claim`; faults apply to attempt 1 unless `attempt` is set.
+- Extra route `GET /api/status` (viewer) exposes the Coordinator state the eval driver needs.
 - Correction events carry `effectiveDate` = the corrected date for date corrections and the target's date for value corrections; rescinds carry the target's date. The one-event-per-day rule is asserted on business events (hire, rehire, termination, transfer, job and FTE change) for both original and corrected dates.

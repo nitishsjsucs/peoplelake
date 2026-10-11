@@ -1,7 +1,10 @@
 // Local-only routes (mounted only when ENVIRONMENT=local; 404 otherwise). They expose the SinkRoller
 // stand-in's roll files to the Python committer and let the eval driver force a roll.
+import { z } from "zod";
+import { FaultSpec } from "../../shared/contracts.ts";
 import type { App } from "../app.ts";
 import { requireRole } from "../app.ts";
+import { coordinatorStub } from "../orchestration/coordinator.ts";
 import { SINK_ROLLER_NAME } from "../lake/sink.ts";
 import { SINK_PREFIX } from "../lake/sink-roller.ts";
 
@@ -40,5 +43,12 @@ export function mountDevRoutes(app: App): void {
     const roller = c.env.SINK_ROLLER.get(c.env.SINK_ROLLER.idFromName(SINK_ROLLER_NAME));
     const rolled = await roller.flush();
     return c.json({ rolled });
+  });
+
+  app.post("/internal/dev/faults", requireRole("operator"), async (c) => {
+    if (!c.get("config").evalFaultsEnabled) return c.json({ error: "faults_disabled" }, 403);
+    const parsed = z.object({ faults: z.array(FaultSpec) }).strict().safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_faults", issues: parsed.error.issues.slice(0, 20) }, 422);
+    return c.json(await coordinatorStub(c.env).installFaults(parsed.data.faults));
   });
 }

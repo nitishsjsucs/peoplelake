@@ -315,6 +315,7 @@ export const FaultSpec = z
     snapshots: z.number().int().positive().optional(),
     count: z.number().int().positive().optional(),
     attempt: z.number().int().positive().optional(),
+    job: z.enum(["load", "transform"]).optional(),
   })
   .strict();
 export type FaultSpec = z.infer<typeof FaultSpec>;
