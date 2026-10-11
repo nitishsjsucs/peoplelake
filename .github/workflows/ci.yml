@@ -22,7 +22,9 @@ jobs:
       - run: npm ci
       - run: npm run typegen:check
       - run: npm run typecheck
-      - run: npx vitest run --project worker --project node
+      - run: npx vitest run --project worker --project node --project web
+      - name: Dashboard builds (web/dist, served by the Worker as static assets)
+        run: npm run build:web
       - run: npm run contracts:check
       - name: Production config renders from fixture state, passes the safety check and bundles (no upload)
         run: npm run deploy:dry-run

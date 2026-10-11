@@ -24,7 +24,7 @@ v1 is under construction and this repository is published while it is built. Thi
 | CI | workflows written (`ci.yml` on every push, `eval-full.yml` weekly and on demand); they have not run on GitHub yet because the owner publishes the repo |
 | Workers AI and `/api/ask` | done: `AiProvider` with a deterministic stub (CI), llama-server (local) and Workers AI through AI Gateway (production, mocked in tests), `POST /api/ask` answering only from the committed metrics snapshot, `/api/ops/ai` gateway check; the 60-question ask eval (`peoplelake eval ask`) scores each provider through the Worker: stub and llama-server results recorded (see Results), Workers AI runs after the production setup |
 | Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | built and tested offline (dry run, fake clients, rendered config bundles with `wrangler deploy --dry-run`); not run against real accounts yet, see Production setup |
-| Front end | none in v1 (the dashboard is below the core cut line); `/api/*` is the read interface |
+| Dashboard | done: React 19 + Vite 8 in `web/`, built to `web/dist` and served by the Worker as static assets (Overview, Runs with jobs and attempts, Metrics with a 36-month SVG trend and the 468-row table, Checks); reads only `/api/*`; behind Cloudflare Access in production |
 
 Identical outputs across the five scenarios: proven on DuckDB with the local stack (all six legs, B and S1 to S5, on both the small profile and the full 100,000-event profile); BigQuery pending (needs the production setup below and the BigQuery drill).
 
@@ -86,6 +86,7 @@ flowchart LR
 | Auth | locally generated RS256 keys, same verifier code | Access JWT (RS256) against the team JWKS |
 | LLM | llama-server (Qwen3-1.7B) on 8150, or a deterministic stub in CI | Workers AI through AI Gateway `peoplelake` |
 | Cron | ticker process | Workers cron `* * * * *` |
+| Dashboard | static assets from `web/dist` in `wrangler dev`; a pasted dev token (`peoplelake auth dev-token operator --ttl 3600`) stands in for the Access session | static assets of Worker `peoplelake` behind Cloudflare Access (the browser's Access session; Access adds the JWT header) |
 | Scenario equivalence | DuckDB with the local stack (every CI push, small profile) | BigQuery `_drill` datasets with the local Worker, Workflows and lake (`eval scenarios --target prod-drill`, a go-live step) |
 | Freshness | measured on the local stack | measured once from the `prod:e2e` live delivery |
 
@@ -129,6 +130,23 @@ uv run --project pipeline peoplelake stack down        # always leaves 8791, 924
 ```
 
 While the stack is up, only the runner process opens the local DuckDB file (ADR 0008).
+
+### Dashboard
+
+`npm run build:web` builds the React dashboard in `web/` into `web/dist`, which the Worker serves as static assets (`assets` in `wrangler.jsonc`; `/v1/*`, `/api/*`, `/internal/*` and `/dev/*` always run the Worker first, other paths fall back to the single-page app). It reads only `/api/*`: Overview (freshness p50 and p95 over 24 hours, pipeline state, latest runs), Runs (each run's load and transform jobs with their attempts, claim waits and durations, output digests), Metrics (the committed snapshot of `metrics_workforce_monthly`: a 36-month SVG trend per metric and department and the full monthly table) and Checks (error and warn totals per run with the non-zero checks named).
+
+Locally there is no Access in front of `wrangler dev`, so the page asks for a dev token:
+
+```bash
+npm run build:web
+uv run --project pipeline peoplelake stack up --reset
+uv run --project pipeline peoplelake sim deliver --target local --profile small --mode chunk
+uv run --project pipeline peoplelake auth dev-token operator --ttl 3600   # paste into the page's Dev token field
+open http://127.0.0.1:8791/
+uv run --project pipeline peoplelake stack down
+```
+
+In production the whole hostname sits behind Cloudflare Access: the owner signs in with the email in `PL_OWNER_EMAIL`, Access adds the `Cf-Access-Jwt-Assertion` header to every request, and the Worker verifies it as for any other caller. `npm run deploy` and `setup:prod` build the dashboard before every deploy, and the predeploy check refuses a deploy without `web/dist/index.html`.
 
 ### Five metrics and reconciliation
 
@@ -201,7 +219,7 @@ GitHub Actions run CI only and hold no cloud credentials (`permissions: contents
 
 | Workflow | Job | What it proves |
 |---|---|---|
-| `ci.yml` | node | generated Worker types current, typecheck, vitest (Worker tests in workerd, node tests), contracts current, prose check, the production config rendered from a fixture state bundles (`npm run deploy:dry-run`) |
+| `ci.yml` | node | generated Worker types current, typecheck (Worker, scripts, dashboard), vitest (Worker tests in workerd, node tests, dashboard tests in happy-dom), dashboard build, contracts current, prose check, the production config rendered from a fixture state bundles (`npm run deploy:dry-run`) |
 | `ci.yml` | python | ruff, pytest without the dbt and end-to-end markers |
 | `ci.yml` | dbt | small profile generated with its pinned sha256, reference digests (straight load, `dbt run --empty`, build with unit tests, full refresh, equal digests), dbt-level tests, offline BigQuery compiles with sqlglot parse and ORDER BY lint; uploads the reference digests |
 | `ci.yml` | clean-clone | clones the commit to a temp directory: `uv sync --locked`, `dbt parse`, smoke tests (nothing gitignored is relied on) |

@@ -1,4 +1,5 @@
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
+import react from "@vitejs/plugin-react";
 import { exportJWK, generateKeyPair } from "jose";
 import { defineConfig } from "vitest/config";
 import { WORKER_TEST_VARS } from "./test/setup/worker-vars.ts";
@@ -39,6 +40,10 @@ export default defineConfig(async () => {
         },
         {
           test: { name: "node", include: ["test/node/**/*.test.ts"], environment: "node" },
+        },
+        {
+          plugins: [react()],
+          test: { name: "web", include: ["test/web/**/*.test.{ts,tsx}"], environment: "happy-dom" },
         },
       ],
     },

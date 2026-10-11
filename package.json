@@ -9,10 +9,11 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "dev": "TZ=UTC wrangler dev --port 8791 --inspector-port 9241 --ip 127.0.0.1",
+    "dev": "TZ=UTC vite build && TZ=UTC wrangler dev --port 8791 --inspector-port 9241 --ip 127.0.0.1",
+    "build:web": "TZ=UTC vite build",
     "typegen": "wrangler types worker-configuration.d.ts --strict-vars=false --env-file .dev.vars.example",
     "typegen:check": "wrangler types worker-configuration.d.ts --strict-vars=false --env-file .dev.vars.example --check",
-    "typecheck": "tsc -p tsconfig.worker.json && tsc -p tsconfig.worker-test.json && tsc -p tsconfig.node.json",
+    "typecheck": "tsc -p tsconfig.worker.json && tsc -p tsconfig.worker-test.json && tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "test": "TZ=UTC vitest run",
     "test:py": "TZ=UTC uv run --project pipeline pytest pipeline/tests",
     "check:prose": "TZ=UTC node scripts/check-prose.ts",
@@ -20,7 +21,7 @@
     "contracts:check": "TZ=UTC node scripts/gen-contracts.ts --check",
     "results:readme": "TZ=UTC node scripts/results-to-readme.ts",
     "results:check": "TZ=UTC node scripts/results-to-readme.ts --check",
-    "deploy:dry-run": "TZ=UTC node scripts/render-wrangler.ts --state scripts/fixtures/prod-state.example.json --out wrangler.production.jsonc && TZ=UTC node scripts/predeploy-check.ts --state scripts/fixtures/prod-state.example.json && wrangler deploy -c wrangler.production.jsonc --env production --dry-run --outdir .wrangler/dry-run",
+    "deploy:dry-run": "TZ=UTC vite build && TZ=UTC node scripts/render-wrangler.ts --state scripts/fixtures/prod-state.example.json --out wrangler.production.jsonc && TZ=UTC node scripts/predeploy-check.ts --state scripts/fixtures/prod-state.example.json && wrangler deploy -c wrangler.production.jsonc --env production --dry-run --outdir .wrangler/dry-run",
     "deploy": "TZ=UTC node scripts/setup-prod.ts --only worker",
     "deploy:runner": "TZ=UTC uv run --project pipeline peoplelake prod deploy-runner",
     "setup:prod": "TZ=UTC node scripts/setup-prod.ts",
@@ -37,9 +38,18 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.0",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/react": "16.3.3",
     "@types/node": "24.19.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "happy-dom": "20.14.5",
     "jsonc-parser": "3.3.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "typescript": "6.0.3",
+    "vite": "8.3.4",
     "vitest": "4.1.11",
     "wrangler": "4.149.0"
   }

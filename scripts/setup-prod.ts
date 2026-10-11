@@ -382,6 +382,9 @@ class Setup {
     const stateFile = join(dir, "state.json");
     try {
       writePrivate(stateFile, JSON.stringify(this.state));
+      // The dashboard ships with every deploy as static assets (built locally; nothing is uploaded here).
+      const build = this.run(["npm", "run", "build:web"], { mutating: false });
+      if (!build.ok) throw new Error(`dashboard build failed: ${build.stderr}`);
       const render = this.run(["node", "scripts/render-wrangler.ts", "--state", stateFile], { mutating: false });
       if (!render.ok) throw new Error(`render failed: ${render.stderr}`);
       const check = this.run(["node", "scripts/predeploy-check.ts", "--state", stateFile], { mutating: false });

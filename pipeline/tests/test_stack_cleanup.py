@@ -81,3 +81,12 @@ def test_real_stack_up_and_down_leaves_ports_free(tmp_path):
         busy = stack.down()
     assert busy == []
     assert st.ports_busy(st.PORTS) == []
+
+
+def test_stack_creates_the_assets_directory_wrangler_requires(tmp_path):
+    stack = st.LocalStack(state_dir=tmp_path / "stack")
+    stack.root = tmp_path / "repo"
+    dist = stack._ensure_assets_dir()
+    assert dist == tmp_path / "repo" / "web" / "dist"
+    assert dist.is_dir()
+    assert stack._ensure_assets_dir() == dist  # idempotent

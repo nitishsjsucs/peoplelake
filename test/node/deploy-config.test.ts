@@ -49,4 +49,18 @@ describe("production config", () => {
     const sameName = rendered.replace('"name": "peoplelake-local"', '"name": "peoplelake"');
     expect(predeployProblems(sameName, state)).toContain("the top-level Worker name must differ from the production name");
   });
+
+  it("serves the dashboard as assets with the API routes running the Worker first, and refuses an unbuilt dashboard", () => {
+    const config = parseJsonc<{ assets: { directory: string; not_found_handling: string; run_worker_first: string[] } }>(wrangler, "wrangler.jsonc");
+    expect(config.assets.directory).toBe("./web/dist");
+    expect(config.assets.not_found_handling).toBe("single-page-application");
+    expect(config.assets.run_worker_first).toEqual(["/v1/*", "/api/*", "/internal/*", "/dev/*"]);
+    const rendered = renderWrangler(wrangler, state);
+    expect(predeployProblems(rendered, state, { assetsIndexExists: true })).toEqual([]);
+    expect(predeployProblems(rendered, state, { assetsIndexExists: false })).toContain(
+      "the dashboard is not built (web/dist/index.html is missing): npm run build:web",
+    );
+    const apiToAssets = rendered.replace('"/api/*",', "");
+    expect(predeployProblems(apiToAssets, state)).toContain("assets.run_worker_first must route /api/* to the Worker");
+  });
 });

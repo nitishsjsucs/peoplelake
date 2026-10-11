@@ -171,11 +171,20 @@ class LocalStack:
 
             generate_dev_keys(self.root / ".dev" / "keys", dev_vars)
 
+    def _ensure_assets_dir(self) -> Path:
+        """wrangler refuses to start when the configured assets directory (the dashboard build, web/dist)
+        does not exist. The stack needs only the API, so an empty directory is enough; `npm run build:web`
+        fills it with the dashboard."""
+        dist = self.root / "web" / "dist"
+        dist.mkdir(parents=True, exist_ok=True)
+        return dist
+
     def up(self, timeout: float = 90.0) -> None:
         busy = ports_busy((WRANGLER_PORT, INSPECTOR_PORT))
         if busy:
             raise StackError(f"ports already in use: {busy} (run `peoplelake stack down`)")
         self._ensure_dev_keys()
+        self._ensure_assets_dir()
         self._register_cleanup()
         wrangler = [
             str(self.root / "node_modules" / ".bin" / "wrangler"),

@@ -8,6 +8,13 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
+  // The dashboard (web/, built by `npm run build:web` into web/dist) is served as static assets; the
+  // API, ingest and internal routes always run the Worker first. Inherited by env.production.
+  "assets": {
+    "directory": "./web/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/v1/*", "/api/*", "/internal/*", "/dev/*"]
+  },
   "vars": {
     "ENVIRONMENT": "local",
     "AUTH_MODE": "dev",
