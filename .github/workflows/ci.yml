@@ -28,6 +28,8 @@ jobs:
       - run: npm run contracts:check
       - name: Production config renders from fixture state, passes the safety check and bundles (no upload)
         run: npm run deploy:dry-run
+      - name: Workers Free plan rules and budget estimates within the planning shares (SPEC 29.5)
+        run: npm run budget -- --check
       - run: npm run check:prose
 
   python:

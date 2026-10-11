@@ -207,6 +207,23 @@ def _cmd_lake(args: argparse.Namespace) -> int:
             info["stand_in"] = "pyiceberg SqlCatalog (local)"
         print(json.dumps(info, indent=2))
         return 0
+    if args.lake_command == "status":
+        # Read only (the doctor): does the table exist, its current snapshot and the landing cursor.
+        from .lake.catalog import load_table
+        from .lake.committer import landing_cursor
+
+        table = load_table(lake_catalog(settings))
+        print(
+            json.dumps(
+                {
+                    "table": "peoplelake.raw_events",
+                    "exists": table is not None,
+                    "current_snapshot": None if table is None else current_snapshot_id(table),
+                    "landing_cursor": None if table is None else landing_cursor(table),
+                }
+            )
+        )
+        return 0 if table is not None else 1
     if args.lake_command == "init":
         # Creates namespace peoplelake and table raw_events with the canonical schema if absent (idempotent);
         # in production this is setup step 5 against Basin Catalog.
@@ -634,6 +651,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         ("commit", "commit landing roll files from a local directory into the local table (offline tooling)"),
         ("scan", "read appended data between snapshots and print counts"),
+        ("status", "read only: whether the table exists, its current snapshot and the landing cursor"),
         ("catalog-info", "print the catalog URI and warehouse"),
     ):
         lp = lake_sub.add_parser(name, help=help_text)

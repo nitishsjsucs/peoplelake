@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { freePlanConfigProblems } from "../../scripts/lib/free-plan.ts";
 import { PLACEHOLDERS, type ProdState } from "../../scripts/lib/prod-state.ts";
 import { CRON_EXPRESSION, PRODUCTION_GUARDS } from "../../src/shared/free-budget.ts";
 import { predeployProblems } from "../../scripts/predeploy-check.ts";
@@ -22,6 +23,14 @@ describe("Workers Free plan configuration", () => {
     expect(CRON_EXPRESSION).toBe("*/5 * * * *");
     expect(config.triggers?.crons).toEqual([CRON_EXPRESSION]);
     expect(config.env.production.triggers?.crons).toEqual([CRON_EXPRESSION]);
+  });
+
+  it("needs nothing from Workers Paid in either environment, rendered or not", () => {
+    expect(freePlanConfigProblems(wrangler)).toEqual([]);
+    const rendered = renderWrangler(wrangler, state);
+    expect(freePlanConfigProblems(rendered)).toEqual([]);
+    const paid = rendered.replace('"name": "peoplelake-local",', '"name": "peoplelake-local",\n  "limits": { "cpu_ms": 50 },');
+    expect(predeployProblems(paid, state).join(" ")).toContain("limits (cpu_ms) is a Workers Paid setting");
   });
 
   it("sets the production run guards to the Free plan values (heartbeat off)", () => {

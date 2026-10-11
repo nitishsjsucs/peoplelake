@@ -22,6 +22,7 @@
     "results:readme": "TZ=UTC node scripts/results-to-readme.ts",
     "results:check": "TZ=UTC node scripts/results-to-readme.ts --check",
     "bench:ingest": "TZ=UTC node scripts/bench-ingest.ts",
+    "budget": "TZ=UTC node scripts/budget.ts",
     "deploy:dry-run": "TZ=UTC vite build && TZ=UTC node scripts/render-wrangler.ts --state scripts/fixtures/prod-state.example.json --out wrangler.production.jsonc && TZ=UTC node scripts/predeploy-check.ts --state scripts/fixtures/prod-state.example.json && wrangler deploy -c wrangler.production.jsonc --env production --dry-run --outdir .wrangler/dry-run",
     "deploy": "TZ=UTC node scripts/setup-prod.ts --only worker",
     "deploy:runner": "TZ=UTC uv run --project pipeline peoplelake prod deploy-runner",

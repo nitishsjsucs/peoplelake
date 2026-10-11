@@ -193,7 +193,7 @@ def write(report: dict, out: Path, command: str) -> None:
 
 
 def prod_operator():
-    """Operator client for the production Worker (the pl-doctor service token)."""
+    """Operator client for the production Worker (the peoplelake-doctor service token)."""
     from ..auth.dev_tokens import AccessHeaders
     from ..envfile import read_env_file
     from ..paths import repo_root

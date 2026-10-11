@@ -1,16 +1,21 @@
 // npm run doctor [-- --local-only | --quick | --with-dispatch]
 //
-// Checks every prerequisite (SPEC 21.3) and prints PASS, FAIL, MISSING, UNKNOWN, WARN or INFO per check,
-// with the exact command or console step for every non-pass. Never prints secret values, only names.
-// After the Cloudflare checks it runs `peoplelake prod doctor-gcp` (unless --local-only).
+// Checks every prerequisite (SPEC 21.3 and 21.0) and prints PASS, FAIL, MISSING, UNKNOWN, WARN or INFO per
+// check, with the exact command or console step for every non-pass. Never prints secret values, only names.
+// Workers Free plan: the config must need nothing from Workers Paid (no pipelines, no limits, one cron,
+// SQLite Durable Objects), the budget estimates must stay within the planning shares, and production's
+// GET /api/ops/budget is printed against them. After the Cloudflare checks it runs
+// `peoplelake prod doctor-gcp` (unless --local-only).
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { budgetRows, CLOUDFLARE_PLANNING_SHARE, overBudget } from "../src/shared/free-budget.ts";
+import { budgetInputsFromConfig, freePlanConfigProblems } from "./lib/free-plan.ts";
 import type { ProdState } from "./lib/prod-state.ts";
-import { readEnvFile, SERVICE_TOKENS } from "./setup-prod.ts";
+import { LAKE_BUCKET, QUEUES, readEnvFile, REPORTS_BUCKET, SERVICE_TOKENS } from "./setup-prod.ts";
 
 export type Status = "PASS" | "FAIL" | "MISSING" | "UNKNOWN" | "WARN" | "INFO";
 export interface Check {
@@ -105,6 +110,7 @@ export async function localChecks(root: string): Promise<Check[]> {
       ? { name: "dev keys and .dev.vars", status: "PASS" }
       : { name: "dev keys and .dev.vars", status: "MISSING", fix: "uv run --project pipeline peoplelake auth dev-keys" },
   );
+  out.push(...freePlanChecks(readFileSync(join(root, "wrangler.jsonc"), "utf8")));
   const llama = sh("which", ["llama-server"], root);
   const gguf = join(homedir(), "Developer", "projects", "_models", "Qwen3-1.7B-Q4_0-rtn.gguf");
   out.push({
@@ -113,6 +119,50 @@ export async function localChecks(root: string): Promise<Check[]> {
     detail: `${llama.ok ? "llama-server found" : "llama-server not found"}, ${existsSync(gguf) ? "GGUF found" : "GGUF not found"}; the deterministic stub is used otherwise`,
   });
   return out;
+}
+
+/** The Workers Free plan rules and the budget estimates for a wrangler config (offline). */
+export function freePlanChecks(configText: string): Check[] {
+  const problems = freePlanConfigProblems(configText);
+  const over = overBudget(budgetRows(budgetInputsFromConfig(configText)));
+  return [
+    problems.length === 0
+      ? { name: "Workers Free plan rules (no pipelines or limits, one */5 cron, SQLite Durable Objects, guard values)", status: "PASS" }
+      : { name: "Workers Free plan rules", status: "FAIL", detail: problems.join("; "), fix: "fix wrangler.jsonc (SPEC 29.6)" },
+    over.length === 0
+      ? { name: "Free plan budget estimates within the planning shares", status: "PASS", detail: "npm run budget" }
+      : { name: "Free plan budget estimates within the planning shares", status: "FAIL", detail: over.map((r) => r.label).join(", "), fix: "npm run budget" },
+  ];
+}
+
+interface OpsBudget {
+  durable_objects?: { rows_read_today?: number; rows_written_today?: number };
+  runs?: { automatic_today?: number; automatic_max_per_day?: number; consecutive_failures?: number; failure_backoff_until?: number | null; workflow_steps_today?: number };
+  workers_ai?: { neurons_today?: number; cap?: number };
+  bigquery?: { bytes_billed?: number; cap_bytes?: number; month?: string };
+}
+
+/** Production's GET /api/ops/budget against this repo's planning shares (SPEC 29.5). */
+export function opsBudgetChecks(b: OpsBudget): Check[] {
+  const share = (allowance: number) => Math.floor(allowance * CLOUDFLARE_PLANNING_SHARE);
+  const within = (name: string, used: number, limit: number, unit: string): Check => ({
+    name,
+    status: used <= limit ? "PASS" : "WARN",
+    detail: `${used.toLocaleString("en-US")} of ${limit.toLocaleString("en-US")} ${unit}`,
+    fix: "GET /api/ops/budget; the Free plan allowances are shared with the other Workers on the account",
+  });
+  const runs = b.runs ?? {};
+  return [
+    within("Durable Object rows read today", b.durable_objects?.rows_read_today ?? 0, share(5_000_000), "rows (20% of 5,000,000)"),
+    within("Durable Object rows written today", b.durable_objects?.rows_written_today ?? 0, share(100_000), "rows (20% of 100,000)"),
+    within("Workflow steps today", runs.workflow_steps_today ?? 0, share(3_000), "steps (20% of 3,000)"),
+    within("automatic runs today", runs.automatic_today ?? 0, runs.automatic_max_per_day ?? 30, "(daily cap)"),
+    within("Workers AI neurons today", b.workers_ai?.neurons_today ?? 0, b.workers_ai?.cap ?? 1_800, "neurons (daily cap)"),
+    within(`BigQuery bytes billed this month (${b.bigquery?.month ?? "?"})`, b.bigquery?.bytes_billed ?? 0, b.bigquery?.cap_bytes ?? 275_000_000_000, "bytes (monthly guard)"),
+    (runs.consecutive_failures ?? 0) > 0
+      ? { name: "failure backoff", status: "WARN", detail: `${runs.consecutive_failures} consecutive failed runs; automatic runs wait until ${new Date(runs.failure_backoff_until ?? 0).toISOString()}`, fix: "GET /api/runs to see the error" }
+      : { name: "failure backoff", status: "PASS", detail: "no consecutive failures" },
+  ];
 }
 
 export function prodFileChecks(root: string): Check[] {
@@ -128,7 +178,7 @@ export function prodFileChecks(root: string): Check[] {
     out.push(loose ? { name: `.prod/${f} mode`, status: "WARN", detail: "group or world readable", fix: `chmod 600 .prod/${f}` } : { name: `.prod/${f} mode 600`, status: "PASS" });
   }
   const secrets = readEnvFile(join(prod, "secrets.env"));
-  const names = ["PL_CF_SETUP_TOKEN", "PL_R2_SINK_TOKEN", "PL_R2_CATALOG_TOKEN", ...Object.values(SERVICE_TOKENS).flatMap((t) => [`${t.env}_CLIENT_ID`, `${t.env}_CLIENT_SECRET`])];
+  const names = ["PL_CF_SETUP_TOKEN", "PL_R2_CATALOG_TOKEN", ...Object.values(SERVICE_TOKENS).flatMap((t) => [`${t.env}_CLIENT_ID`, `${t.env}_CLIENT_SECRET`])];
   const missing = names.filter((n) => !secrets[n]);
   out.push(missing.length === 0 ? { name: "secret names present", status: "PASS" } : { name: "secret names present", status: "MISSING", detail: missing.join(", "), fix: "README production setup steps 4 and 5, then npm run setup:prod" });
   return out;
@@ -148,14 +198,36 @@ async function cloudflareChecks(root: string, withDispatch: boolean): Promise<Ch
   const state = JSON.parse(readFileSync(statePath, "utf8")) as ProdState;
   const secrets = readEnvFile(join(root, ".prod", "secrets.env"));
   out.push(state.workers_subdomain ? { name: "workers.dev subdomain", status: "PASS", detail: state.workers_subdomain } : { name: "workers.dev subdomain", status: "MISSING", fix: "set PL_WORKERS_SUBDOMAIN and npm run setup:prod" });
+  const rendered = join(root, "wrangler.production.jsonc");
+  if (existsSync(rendered)) {
+    const problems = freePlanConfigProblems(readFileSync(rendered, "utf8"));
+    out.push(problems.length === 0 ? { name: "rendered production config needs nothing from Workers Paid", status: "PASS" } : { name: "rendered production config", status: "FAIL", detail: problems.join("; "), fix: "npm run deploy re-renders it from wrangler.jsonc" });
+  }
   const buckets = wrangler(["r2", "bucket", "list"]).out;
-  for (const b of ["peoplelake-lake", "peoplelake-reports"]) {
+  for (const b of [LAKE_BUCKET, REPORTS_BUCKET]) {
     out.push(buckets.includes(b) ? { name: `R2 bucket ${b}`, status: "PASS" } : { name: `R2 bucket ${b}`, status: "MISSING", fix: "enable R2 with a payment card (dash), then npm run setup:prod" });
   }
-  const catalog = wrangler(["basin", "catalog", "get", "peoplelake-lake"]);
+  const catalog = wrangler(["basin", "catalog", "get", LAKE_BUCKET]);
   out.push(catalog.ok && !/not enabled/i.test(catalog.out) ? { name: "Basin Catalog enabled", status: "PASS" } : { name: "Basin Catalog enabled", status: "MISSING", fix: "npm run setup:prod -- --only cloudflare" });
+  const lakeCli = sh("uv", ["run", "--project", "pipeline", "peoplelake", "lake", "status", "--target", "prod"], root, {
+    PL_R2_CATALOG_URI: state.catalog.uri,
+    PL_R2_WAREHOUSE: state.catalog.warehouse,
+    PL_R2_CATALOG_TOKEN: secrets["PL_R2_CATALOG_TOKEN"] ?? "",
+  });
+  const lakeStatus = (() => {
+    try {
+      return JSON.parse(lakeCli.out.split("\n").pop() ?? "{}") as { exists?: boolean; landing_cursor?: string | null };
+    } catch {
+      return {};
+    }
+  })();
+  out.push(
+    lakeStatus.exists
+      ? { name: "Iceberg table peoplelake.raw_events", status: "PASS", detail: `landing cursor ${lakeStatus.landing_cursor ?? "none yet"}` }
+      : { name: "Iceberg table peoplelake.raw_events", status: "MISSING", detail: lakeCli.out.slice(0, 200), fix: "npm run setup:prod -- --only cloudflare (peoplelake lake init --target prod)" },
+  );
   const queues = wrangler(["queues", "list"]).out;
-  for (const q of ["peoplelake-lake-events", "peoplelake-lake-events-dlq"]) {
+  for (const q of QUEUES) {
     out.push(queues.includes(q) ? { name: `queue ${q}`, status: "PASS" } : { name: `queue ${q}`, status: "MISSING", fix: "npm run setup:prod" });
   }
   const deployed = wrangler(["deployments", "list", "--name", "peoplelake"]);
@@ -186,6 +258,9 @@ async function cloudflareChecks(root: string, withDispatch: boolean): Promise<Ch
       ? { name: "landing (LandingRoller)", status: "PASS", detail: `landed through ${lakeBody.landing.landed_through ?? "nothing yet"}` }
       : { name: "landing (LandingRoller)", status: "FAIL", detail: `HTTP ${lake?.status ?? "none"}`, fix: "npm run deploy" },
   );
+  const budget = await fetch(`${url}/api/ops/budget`, { headers: op }).catch(() => null);
+  if (budget?.ok) out.push(...opsBudgetChecks((await budget.json()) as OpsBudget));
+  else out.push({ name: "GET /api/ops/budget", status: "FAIL", detail: `HTTP ${budget?.status ?? "none"}`, fix: "npm run deploy" });
   const ai = await fetch(`${url}/api/ops/ai`, { headers: op }).catch(() => null);
   const aiBody = ai?.ok ? ((await ai.json()) as { ok?: boolean; gateway_log_id_present?: boolean }) : null;
   out.push(aiBody?.gateway_log_id_present ? { name: "Workers AI through AI Gateway", status: "PASS" } : { name: "Workers AI through AI Gateway", status: "FAIL", detail: `HTTP ${ai?.status ?? "none"}`, fix: "npm run setup:prod (AI Gateway peoplelake)" });

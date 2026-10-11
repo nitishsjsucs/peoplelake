@@ -1,35 +1,38 @@
 // npm run setup:prod -- [--dry-run] [--only cloudflare|gcp|worker] [--runs-enabled false]
 //
-// Idempotent production provisioning (SPEC 21.1). Reads .prod/config.env and .prod/secrets.env, writes
-// .prod/state.json (all mode 600). Every step checks before it creates. `--dry-run` runs the read-only
-// checks and prints every mutating command and API call with secrets redacted. Secret values go to
-// files with mode 600 (deploy --secrets-file) or the environment of a child process; the wrangler flag
-// that only accepts a token on the command line (--token) is redacted in logs. There is no Basin
-// Pipelines step: it needs Workers Paid, and production runs on the Free plan (SPEC 29).
+// Idempotent production provisioning for the Workers Free plan (SPEC 21.0, 29). Reads .prod/config.env and
+// .prod/secrets.env, writes .prod/state.json (all mode 600). Every step checks before it creates; nothing
+// here needs Workers Paid (no Basin Pipelines, no compaction, no R2 notification rule, no Logpush).
+// `--dry-run` runs only the read-only checks and prints every mutating command and API call with secrets
+// redacted. Secret values go to files with mode 600 (deploy --secrets-file) or the environment of a child
+// process; the one wrangler flag that only accepts a token on the command line (--token) is redacted in
+// every printed line. Every Cloudflare name it creates starts with `peoplelake`.
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parsePersonaEmails } from "./lib/free-plan.ts";
 import type { ProdState } from "./lib/prod-state.ts";
 
 const API = "https://api.cloudflare.com/client/v4";
-const LAKE_BUCKET = "peoplelake-lake";
-const REPORTS_BUCKET = "peoplelake-reports";
-const QUEUES = ["peoplelake-lake-events", "peoplelake-lake-events-dlq"];
-const GATEWAY = "peoplelake";
-const WORKER = "peoplelake";
+export const LAKE_BUCKET = "peoplelake-lake";
+export const REPORTS_BUCKET = "peoplelake-reports";
+export const QUEUES = ["peoplelake-lake-events", "peoplelake-lake-events-dlq"] as const;
+export const GATEWAY = "peoplelake";
+export const WORKER = "peoplelake";
 export const SERVICE_TOKENS = {
-  "pl-source-hris": { env: "PL_CF_HRIS", role: "source:hris" },
-  "pl-source-ats": { env: "PL_CF_ATS", role: "source:ats" },
-  "pl-source-talent": { env: "PL_CF_TALENT", role: "source:talent" },
-  "pl-runner": { env: "PL_CF_RUNNER", role: "runner" },
+  "peoplelake-source-hris": { env: "PL_CF_HRIS", role: "source:hris" },
+  "peoplelake-source-ats": { env: "PL_CF_ATS", role: "source:ats" },
+  "peoplelake-source-talent": { env: "PL_CF_TALENT", role: "source:talent" },
+  "peoplelake-runner": { env: "PL_CF_RUNNER", role: "runner" },
   // Machine identity for `npm run doctor`, which calls the operator-only /api/ops/* checks.
-  "pl-doctor": { env: "PL_CF_DOCTOR", role: "operator" },
+  "peoplelake-doctor": { env: "PL_CF_DOCTOR", role: "operator" },
 } as const;
 
-export const REQUIRED_CONFIG = ["PL_CF_ACCOUNT_ID", "PL_ACCESS_TEAM_DOMAIN", "PL_OWNER_EMAIL", "PL_GCP_PROJECT"] as const;
-export const REQUIRED_SECRETS = ["PL_CF_SETUP_TOKEN", "PL_R2_SINK_TOKEN", "PL_R2_CATALOG_TOKEN"] as const;
+export const REQUIRED_CONFIG = ["PL_CF_ACCOUNT_ID", "PL_WORKERS_SUBDOMAIN", "PL_ACCESS_TEAM_DOMAIN", "PL_OWNER_EMAIL", "PL_GCP_PROJECT"] as const;
+/** One R2 token (Admin Read & Write, for the runner's Basin Catalog commits) and the Cloudflare setup token. */
+export const REQUIRED_SECRETS = ["PL_CF_SETUP_TOKEN", "PL_R2_CATALOG_TOKEN"] as const;
 
 export function readEnvFile(path: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -55,38 +58,75 @@ export function upsertEnv(path: string, values: Record<string, string>): void {
   writePrivate(path, `${[...kept, ...Object.entries(values).map(([k, v]) => `${k}=${v}`)].join("\n")}\n`);
 }
 
-/** Replace secret values in a command line for printing. */
 /** Runs are enabled only after a passing Google Cloud bootstrap, and `--runs-enabled false` keeps them off. */
 export function finalRunsEnabled(gcpBootstrapPassed: boolean, override: string | undefined): boolean {
   if (override !== undefined && override !== "true" && override !== "false") throw new Error("--runs-enabled must be true or false");
   return gcpBootstrapPassed && override !== "false";
 }
 
+/** Replace secret values in a command line for printing. */
 export function redact(argv: string[], secrets: string[]): string {
   return argv
     .map((a) => (secrets.some((s) => s.length > 0 && a.includes(s)) ? "<redacted>" : a))
     .join(" ");
 }
 
-interface RunResult {
+/** The Access role map: the owner (viewer, operator), each persona with its roles, each token's one role. */
+export function buildRoleMap(owner: string, personas: string, serviceTokenIds: Record<string, string>): ProdState["role_map"] {
+  const emails: Record<string, string[]> = {};
+  if (owner) emails[owner.toLowerCase()] = ["viewer", "operator"];
+  for (const [email, roles] of Object.entries(parsePersonaEmails(personas))) emails[email] = roles;
+  return {
+    emails,
+    service_tokens: Object.fromEntries(Object.entries(SERVICE_TOKENS).map(([name, meta]) => [serviceTokenIds[name] ?? name, meta.role])),
+  };
+}
+
+export interface RunResult {
   ok: boolean;
   stdout: string;
   stderr: string;
 }
 
-class Setup {
+export type Exec = (argv: string[], opts: { env?: Record<string, string>; input?: string }) => RunResult;
+export type Http = (method: string, url: string, token: string, body?: unknown) => Promise<{ ok: boolean; status: number; json: any }>;
+
+const realExec: Exec = (argv, opts) => {
+  const res = spawnSync(argv[0] ?? "", argv.slice(1), {
+    env: { ...process.env, ...opts.env },
+    input: opts.input,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return { ok: res.status === 0, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
+};
+
+const realHttp: Http = async (method, url, token, body) => {
+  const res = await fetch(url, {
+    method,
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  return { ok: res.ok, status: res.status, json: await res.json().catch(() => ({})) };
+};
+
+export class Setup {
   readonly root: string;
   readonly prod: string;
   readonly dryRun: boolean;
+  readonly exec: Exec;
+  readonly http: Http;
   config: Record<string, string>;
   secrets: Record<string, string>;
   state: ProdState;
   readonly log: string[] = [];
 
-  constructor(root: string, dryRun: boolean) {
+  constructor(root: string, dryRun: boolean, deps: { exec?: Exec; http?: Http } = {}) {
     this.root = root;
     this.prod = join(root, ".prod");
     this.dryRun = dryRun;
+    this.exec = deps.exec ?? realExec;
+    this.http = deps.http ?? realHttp;
     this.config = readEnvFile(join(this.prod, "config.env"));
     this.secrets = readEnvFile(join(this.prod, "secrets.env"));
     const statePath = join(this.prod, "state.json");
@@ -125,14 +165,7 @@ class Setup {
       return { ok: true, stdout: "", stderr: "" };
     }
     if (opts.mutating) this.say(`  run: ${shown}`);
-    const res = spawnSync(argv[0] ?? "", argv.slice(1), {
-      cwd: this.root,
-      env: { ...process.env, ...opts.env },
-      input: opts.input,
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    return { ok: res.status === 0, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
+    return this.exec(argv, { ...(opts.env ? { env: opts.env } : {}), ...(opts.input !== undefined ? { input: opts.input } : {}) });
   }
 
   wrangler(args: string[], mutating: boolean, env?: Record<string, string>): RunResult {
@@ -149,13 +182,7 @@ class Setup {
       return { ok: true, status: 0, json: { result: null } };
     }
     if (method !== "GET") this.say(`  call: ${method} ${API}${path}`);
-    const res = await fetch(`${API}${path}`, {
-      method,
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-    const json = await res.json().catch(() => ({}));
-    return { ok: res.ok, status: res.status, json };
+    return this.http(method, `${API}${path}`, token, body);
   }
 
   oauthToken(): string {
@@ -181,6 +208,11 @@ class Setup {
     if (!/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/.test(this.config["PL_ACCESS_TEAM_DOMAIN"] ?? "")) {
       problems.push("PL_ACCESS_TEAM_DOMAIN must look like https://<team>.cloudflareaccess.com");
     }
+    try {
+      parsePersonaEmails(this.config["PL_PERSONA_EMAILS"] ?? "");
+    } catch (err) {
+      problems.push(err instanceof Error ? err.message : String(err));
+    }
     const version = this.wrangler(["--version"], false).stdout.trim();
     if (!version.includes("4.149.0")) problems.push(`wrangler 4.149.0 expected from node_modules (got ${version || "none"})`);
     const who = this.wrangler(["whoami"], false);
@@ -188,36 +220,38 @@ class Setup {
       problems.push("wrangler is not logged in: run `npx wrangler login`");
     }
     if (!this.run(["gcloud", "--version"], { mutating: false }).ok) problems.push("gcloud is not installed: brew install --cask gcloud-cli");
+    const project = this.config["PL_GCP_PROJECT"] ?? "";
+    if (project) {
+      const billing = this.run(["gcloud", "billing", "projects", "describe", project, "--format=value(billingEnabled)"], { mutating: false });
+      if (billing.stdout.trim().toLowerCase() !== "true") {
+        problems.push(`billing is not enabled on ${project} (the BigQuery sandbox rejects the loader's MERGE): link an open billing account first`);
+      }
+    }
     if (problems.length > 0) {
       for (const p of problems) this.say(`  MISSING ${p}`);
       if (!this.dryRun) throw new Error("preflight failed; see README production setup");
     }
     this.state.account_id = this.config["PL_CF_ACCOUNT_ID"] ?? "";
-    this.state.gcp_project = this.config["PL_GCP_PROJECT"] ?? "";
+    this.state.gcp_project = project;
     this.state.access.team_domain = this.config["PL_ACCESS_TEAM_DOMAIN"] ?? "";
   }
 
   // 2 -------------------------------------------------------------------------------------------------
   async subdomain(): Promise<void> {
-    this.say("2. workers.dev subdomain");
+    this.say("2. workers.dev subdomain (check only)");
     const token = this.oauthToken();
     const got = await this.api("GET", `/accounts/${this.state.account_id}/workers/subdomain`, token);
     const current = got.json?.result?.subdomain as string | undefined;
+    const wanted = this.config["PL_WORKERS_SUBDOMAIN"] ?? "";
     if (current) {
       this.state.workers_subdomain = current;
       this.say(`  exists: ${current}.workers.dev`);
+      if (wanted && wanted !== current) this.say(`  WARN PL_WORKERS_SUBDOMAIN=${wanted} but the account's subdomain is ${current}; using ${current}`);
       return;
     }
-    const wanted = this.config["PL_WORKERS_SUBDOMAIN"];
-    if (!wanted) {
-      if (this.dryRun) {
-        this.say("  MISSING PL_WORKERS_SUBDOMAIN (needed if the account has no workers.dev subdomain)");
-        return;
-      }
-      throw new Error("no workers.dev subdomain yet: set PL_WORKERS_SUBDOMAIN in .prod/config.env");
-    }
-    await this.api("PUT", `/accounts/${this.state.account_id}/workers/subdomain`, token, { subdomain: wanted });
     this.state.workers_subdomain = wanted;
+    this.say(`  ${this.dryRun ? "cannot confirm" : "MISSING"} ${wanted}.workers.dev (register it in the dashboard: Workers & Pages, Overview, Subdomain)`);
+    if (!this.dryRun) throw new Error("no workers.dev subdomain on the account (Workflows need one)");
   }
 
   // 3 -------------------------------------------------------------------------------------------------
@@ -230,14 +264,14 @@ class Setup {
     }
   }
 
-  // 4, 5 ----------------------------------------------------------------------------------------------
+  // 4 -------------------------------------------------------------------------------------------------
   catalog(): void {
-    this.say("4. Basin Catalog");
+    this.say("4. Basin Catalog on the lake bucket");
     let info = this.wrangler(["basin", "catalog", "get", LAKE_BUCKET], false);
     if (!info.ok || /not enabled|disabled/i.test(info.stdout + info.stderr)) {
       this.wrangler(["basin", "catalog", "enable", LAKE_BUCKET], true);
       info = this.wrangler(["basin", "catalog", "get", LAKE_BUCKET], false);
-    }
+    } else this.say(`  exists: catalog on ${LAKE_BUCKET}`);
     const text = `${info.stdout}\n${info.stderr}`;
     const uri = this.config["PL_R2_CATALOG_URI"] || /Catalog URI:\s*(\S+)/i.exec(text)?.[1] || "";
     const warehouse = this.config["PL_R2_WAREHOUSE"] || /Warehouse(?: Name)?:\s*(\S+)/i.exec(text)?.[1] || "";
@@ -246,25 +280,40 @@ class Setup {
     }
     this.state.catalog.uri = uri;
     this.state.catalog.warehouse = warehouse;
-    this.say("5. Basin Catalog maintenance");
-    const sinkToken = this.secrets["PL_R2_SINK_TOKEN"] ?? "";
-    this.wrangler(["basin", "catalog", "snapshot-expiration", "enable", LAKE_BUCKET, "--token", sinkToken, "--older-than-days", "7", "--retain-last", "50"], true);
-    this.wrangler(["basin", "catalog", "compaction", "enable", LAKE_BUCKET, "--target-size", "128", "--token", sinkToken], true);
+  }
+
+  // 5 -------------------------------------------------------------------------------------------------
+  lakeTable(): void {
+    this.say("5. Iceberg namespace peoplelake and table raw_events (peoplelake lake init --target prod)");
+    const env = {
+      PL_R2_CATALOG_URI: this.state.catalog.uri,
+      PL_R2_WAREHOUSE: this.state.catalog.warehouse,
+      PL_R2_CATALOG_TOKEN: this.secrets["PL_R2_CATALOG_TOKEN"] ?? "",
+    };
+    const res = this.run(["uv", "run", "--project", "pipeline", "peoplelake", "lake", "init", "--target", "prod"], { mutating: true, env });
+    if (!this.dryRun && !res.ok) throw new Error(`lake init failed: ${res.stderr.slice(0, 500)}`);
   }
 
   // 6 -------------------------------------------------------------------------------------------------
+  maintenance(): void {
+    this.say("6. Basin Catalog snapshot expiration (free; compaction stays off)");
+    const token = this.secrets["PL_R2_CATALOG_TOKEN"] ?? "";
+    this.wrangler(["basin", "catalog", "snapshot-expiration", "enable", LAKE_BUCKET, "--token", token, "--older-than-days", "7", "--retain-last", "50"], true);
+  }
+
+  // 7 -------------------------------------------------------------------------------------------------
   queues(): void {
-    this.say("6. Queues");
+    this.say("7. Queues");
     const listed = this.wrangler(["queues", "list"], false).stdout;
     for (const q of QUEUES) {
-      if (listed.includes(q)) this.say(`  exists: ${q}`);
+      if (new RegExp(`\\b${q}\\b(?!-)`).test(listed)) this.say(`  exists: ${q}`);
       else this.wrangler(["queues", "create", q], true);
     }
   }
 
-  // 11 ------------------------------------------------------------------------------------------------
+  // 8 -------------------------------------------------------------------------------------------------
   async serviceTokens(): Promise<Record<string, string>> {
-    this.say("11. Access service tokens");
+    this.say("8. Access service tokens");
     const token = this.secrets["PL_CF_SETUP_TOKEN"] ?? "";
     const base = `/accounts/${this.state.account_id}/access/service_tokens`;
     const listed = await this.api("GET", base, token);
@@ -294,9 +343,9 @@ class Setup {
     return ids;
   }
 
-  // 12 ------------------------------------------------------------------------------------------------
+  // 9 -------------------------------------------------------------------------------------------------
   async gateway(): Promise<void> {
-    this.say("12. AI Gateway");
+    this.say("9. AI Gateway (core features; no Logpush, which needs Workers Paid)");
     const token = this.secrets["PL_CF_SETUP_TOKEN"] ?? "";
     const path = `/accounts/${this.state.account_id}/ai-gateway/gateways`;
     const got = await this.api("GET", `${path}/${GATEWAY}`, token);
@@ -314,7 +363,7 @@ class Setup {
     });
   }
 
-  // 13, 16 --------------------------------------------------------------------------------------------
+  // 10, 13 --------------------------------------------------------------------------------------------
   deploy(secrets: Record<string, string>): void {
     const dir = mkdtempSync(join(tmpdir(), "pl-secrets-"));
     const file = join(dir, "secrets.json");
@@ -323,9 +372,9 @@ class Setup {
       writePrivate(stateFile, JSON.stringify(this.state));
       // The dashboard ships with every deploy as static assets (built locally; nothing is uploaded here).
       const build = this.run(["npm", "run", "build:web"], { mutating: false });
-      if (!build.ok) throw new Error(`dashboard build failed: ${build.stderr}`);
+      if (!build.ok && !this.dryRun) throw new Error(`dashboard build failed: ${build.stderr}`);
       const render = this.run(["node", "scripts/render-wrangler.ts", "--state", stateFile], { mutating: false });
-      if (!render.ok) throw new Error(`render failed: ${render.stderr}`);
+      if (!render.ok && !this.dryRun) throw new Error(`render failed: ${render.stderr}`);
       const check = this.run(["node", "scripts/predeploy-check.ts", "--state", stateFile], { mutating: false });
       if (!check.ok) {
         if (!this.dryRun) throw new Error(`predeploy-check refused: ${check.stderr}`);
@@ -338,8 +387,9 @@ class Setup {
     }
   }
 
+  // 11 ------------------------------------------------------------------------------------------------
   async accessApp(serviceTokenIds: Record<string, string>): Promise<void> {
-    this.say("14. Access application");
+    this.say("11. Access application");
     const token = this.secrets["PL_CF_SETUP_TOKEN"] ?? "";
     const base = `/accounts/${this.state.account_id}/access/apps`;
     const apps = await this.api("GET", base, token);
@@ -347,8 +397,10 @@ class Setup {
     if (!app) {
       const tokens = await this.api("GET", `/accounts/${this.state.account_id}/access/service_tokens`, token);
       const byName = new Map<string, string>(((tokens.json?.result ?? []) as { name: string; id: string }[]).map((t) => [t.name, t.id]));
+      const people = [this.config["PL_OWNER_EMAIL"] ?? "", ...Object.keys(parsePersonaEmails(this.config["PL_PERSONA_EMAILS"] ?? ""))].filter(Boolean);
       const policies = [
-        { name: "owner", decision: "allow", include: [{ email: { email: this.config["PL_OWNER_EMAIL"] } }] },
+        // One-time PIN sign-in; each person who signs in takes one of the 50 Free seats.
+        { name: "people", decision: "allow", include: people.map((email) => ({ email: { email } })) },
         {
           name: "machines",
           decision: "non_identity",
@@ -372,19 +424,14 @@ class Setup {
   }
 
   roleMap(serviceTokenIds: Record<string, string>): void {
-    const owner = this.config["PL_OWNER_EMAIL"] ?? "";
-    this.state.role_map = {
-      emails: owner ? { [owner.toLowerCase()]: ["viewer", "operator"] } : {},
-      service_tokens: Object.fromEntries(
-        Object.entries(SERVICE_TOKENS).map(([name, meta]) => [serviceTokenIds[name] ?? name, meta.role]),
-      ),
-    };
+    this.state.role_map = buildRoleMap(this.config["PL_OWNER_EMAIL"] ?? "", this.config["PL_PERSONA_EMAILS"] ?? "", serviceTokenIds);
   }
 
+  // 12 ------------------------------------------------------------------------------------------------
   bootstrapGcp(): boolean {
-    this.say("15. Google Cloud (peoplelake prod bootstrap-gcp)");
+    this.say("12. Google Cloud (peoplelake prod bootstrap-gcp)");
     const res = this.run(["uv", "run", "--project", "pipeline", "peoplelake", "prod", "bootstrap-gcp", ...(this.dryRun ? ["--plan"] : [])], { mutating: false });
-    process.stdout.write(res.stdout);
+    if (res.stdout) process.stdout.write(res.stdout);
     if (!res.ok) this.say(`  bootstrap-gcp did not pass:\n${res.stderr.slice(0, 2000)}`);
     const gcp = join(this.prod, "gcp.json");
     return res.ok && existsSync(gcp) && (JSON.parse(readFileSync(gcp, "utf8")) as { passed?: boolean }).passed === true;
@@ -397,12 +444,14 @@ class Setup {
       await this.subdomain();
       this.buckets();
       this.catalog();
+      this.lakeTable();
+      this.maintenance();
       this.queues();
       ids = await this.serviceTokens();
       await this.gateway();
       this.saveState();
       if (!this.state.access.app_id) {
-        this.say("13. first deploy (fail closed: ACCESS_AUD=pending, RUNS_ENABLED=false)");
+        this.say("10. first deploy (fail closed: ACCESS_AUD=pending, RUNS_ENABLED=false, no secrets)");
         this.state.runs_enabled = false;
         this.state.access.aud = "pending";
         this.roleMap(ids);
@@ -417,7 +466,7 @@ class Setup {
       this.saveState();
     }
     if (!only || only === "worker") {
-      this.say("16. final deploy");
+      this.say("13. final deploy");
       if (Object.keys(ids).length === 0) {
         for (const [name, meta] of Object.entries(SERVICE_TOKENS)) ids[name] = this.secrets[`${meta.env}_CLIENT_ID`] ?? name;
       }
@@ -430,7 +479,7 @@ class Setup {
       this.deploy(secrets);
       this.say(`  RUNS_ENABLED=${this.state.runs_enabled}`);
     }
-    this.say("17. next: npm run doctor");
+    this.say("14. next: npm run doctor -- --quick && npm run budget -- --check");
   }
 }
 
