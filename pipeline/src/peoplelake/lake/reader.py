@@ -2,8 +2,8 @@
 
 Normal path: every APPEND snapshot after the watermark up to the target snapshot, scanned one at a time
 so each row keeps the id of the snapshot that added it (compaction `replace` snapshots are skipped).
-Replays (no watermark) and expired watermarks read the full table as of the target snapshot instead
-(`fallback_full_scan`); the MERGE on delivery_id keeps that idempotent.
+Replays and first loads (no watermark) read the full table as of the target snapshot; an expired
+watermark does the same and reports `fallback_full_scan`. The MERGE on delivery_id keeps both idempotent.
 """
 
 from __future__ import annotations
@@ -54,7 +54,9 @@ def read_appends(table: Table, from_exclusive: int | None, to_inclusive: int | N
         return _empty(from_exclusive, to_id)
     if from_exclusive is None or meta.snapshot_by_id(from_exclusive) is None:
         data = to_canonical(table.scan(snapshot_id=to_id).to_arrow())
-        info = ReadInfo(str(from_exclusive) if from_exclusive is not None else None, str(to_id), 1, True, data.num_rows)
+        # A planned full read (no watermark: first load or replay) is not a fallback; a missing watermark is.
+        fallback = from_exclusive is not None
+        info = ReadInfo(str(from_exclusive) if fallback else None, str(to_id), 1, fallback, data.num_rows)
         return LakeBatch(data, [f"full-scan@{to_id}"] * data.num_rows, info)
 
     appends = [

@@ -15,7 +15,13 @@ def built(tmp_path_factory, small):
     env.load(env.items)
     outcome = env.dbt.build()
     assert outcome.success, outcome.failed_nodes
-    assert outcome.tests_warn == 0 and outcome.checks_warn == {}
+    assert outcome.tests_warn == 0 and set(outcome.checks_warn.values()) == {0}
+    assert set(outcome.checks_warn) == {
+        "recon_offer_to_hire",
+        "recon_event_counts_vs_manifest",
+        "recon_metrics_vs_oracle",
+        "recon_anomalies_open",
+    }
     yield env
     mp.undo()
 

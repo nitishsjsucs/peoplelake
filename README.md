@@ -19,7 +19,7 @@ v1 is under construction and this repository is published while it is built. Thi
 | Local Iceberg lake | done locally: pyiceberg SqlCatalog stand-in, committer for sink roll files (idempotent on key and etag), incremental reader with full-scan fallback; Basin Catalog configured through Iceberg REST but not exercised (needs production) |
 | Worker: auth, ingest, sinks | done locally: fail-closed config, Access JWT verification (RS256, iss, aud, exp) with locally generated dev keys, role gates, `POST /v1/ingest/:source` for three envelopes (zod, all-or-nothing), RawRecord normalization shared with Python through a golden, Basin stream sink (production) and the SinkRoller stand-in (local) |
 | Orchestration: Coordinator, Workflow, dispatchers | done locally (Miniflare Workflows): Coordinator ledger with single-flight runs, attempt-scoped jobs and leases, `WarehouseRunWorkflow` (load, transform or skip, verify, commit, release), poll and Cloud Run dispatchers, Basin Catalog poll, lake-events queue consumer, per-minute cron, eval faults; production Workflows not exercised yet |
-| Runner and local stack | not started |
+| Runner and local stack | done locally: `peoplelake runner poll` (in-process dbt, heartbeats, eval fault hooks) and `peoplelake stack up/down` (wrangler dev, runner, ticker in their own process groups, ports checked free) |
 | Scenario and freshness evals | not started |
 | CI | not started |
 | Workers AI and `/api/ask` | not started |
@@ -119,7 +119,13 @@ uv run --project pipeline peoplelake dev reference-digests --profile small --out
 
 # BigQuery SQL without credentials: both compile branches, sqlglot parse, ORDER BY NULLS lint
 uv run --project pipeline peoplelake dev bq-compile
+
+# the whole local stack: wrangler dev on 127.0.0.1:8791 (inspector 9241), the runner loop and the cron ticker
+uv run --project pipeline peoplelake stack up --reset
+uv run --project pipeline peoplelake stack down        # always leaves 8791, 9241 and 8150 free
 ```
+
+While the stack is up, only the runner process opens the local DuckDB file (ADR 0008).
 
 ### Five metrics and reconciliation
 

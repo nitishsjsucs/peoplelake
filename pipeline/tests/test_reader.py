@@ -47,7 +47,7 @@ def test_replay_reads_everything_as_of_a_snapshot(table, rows):
     append(table, rows, 25, 40)
     batch = read_appends(table, None, s2)
     assert batch.table.num_rows == 25
-    assert batch.info.fallback_full_scan
+    assert not batch.info.fallback_full_scan  # planned full read, not a fallback
     assert batch.table.schema == RAW_ARROW_SCHEMA
 
 

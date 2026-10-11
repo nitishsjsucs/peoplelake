@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Commit 11 of 18 (core) done: orchestration.
+Commit 12 of 18 (core) done: runner and local stack.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -28,8 +28,10 @@ Commit 11 of 18 (core) done: orchestration.
 
 11. Orchestration: `Coordinator` DO (runs, jobs, watermarks, freshness histograms, single-flight with pending replay winning, generation-prefixed run ids and load sequences, idempotent enqueue/complete/commit, leases, claim timeouts and run timeouts via alarm, `resolveWait`, dispatch window, faults incl. `rewind_watermark` and `commit_step_error`), `WarehouseRunWorkflow`, `PollDispatcher`, `CloudRunDispatcher` with the JWT bearer grant, Basin Catalog poll (64-bit snapshot ids kept exact), lake-events queue consumer, cron, APIs `/api/runs|replay|status|metrics/latest|freshness`, `/api/ops/lake|dispatch`, `/internal/jobs/*`, metrics artifact upload, `/internal/dev/faults`; tests drive the real Workflow with a simulated runner (happy path, queued-attempt timeout, lease expiry with a late duplicate, transform retry, three failures, verify rejection, commit step error by mock and by fault, transform skip and its guard). Checked by hand: a manual run in `wrangler dev` went request, claim, result event, transform skip, commit; processes stopped and ports free.
 
+12. Runner and stack: `WorkerClient`, `WorkerSinkSource`, `warehouse/loader.py` (commit pending sink files locally, read appends, load, LoadResult), `runner/jobs.py` (seed when checksums change or on replay, dbt build without unit tests, checks bucketed by manifest severity, digests, ops freshness histogram, canonical metrics artifact, fault hooks), `runner/main.py` (poll and until-idle loops, heartbeats every lease/3, SIGTERM reports failure, restart after 200 jobs), `stack.py` (`LocalStack` with process groups, persisted wrangler state per stack, health wait, ticker, `stack down` from recorded pids, port checks), `sim/client.py` (per-source tokens, batching), CLI `runner poll|run`, `stack up|down|status|ticker`. Measured in this session: a hand-driven run of the whole local loop (stack up, small profile in 5 chunks through the Worker, SinkRoller, local Iceberg, runner and in-process dbt) took 20.0 s, every reconciliation check was 0 and the 10 digests were identical to the reference; ports free afterwards.
+
 ## Next
-12. Runner: job runner with in-process dbt and the local stack manager with process cleanup.
+13. Evals: scenario planner and equivalence eval for five scenarios.
 
 ## Check status (last run at this commit)
 | Check | Result |
@@ -38,7 +40,7 @@ Commit 11 of 18 (core) done: orchestration.
 | `npm run typegen:check` | pass |
 | `npm test` | pass (13 files, 145 tests) |
 | `npm run check:prose` | pass |
-| `npm run test:py` (pytest) | pass (179 tests) |
+| `npm run test:py` (pytest) | pass (186 tests incl. 1 e2e stack test; about 50 s on an idle machine, 287 s at load average 27) |
 | `peoplelake dev bq-compile` | pass (both branches) |
 | dbt unit tests (`dbt test --select test_type:unit` after `dbt run --empty`) | pass (10) |
 | `ruff check` | pass |
@@ -70,4 +72,6 @@ Commit 11 of 18 (core) done: orchestration.
 - When a Workflow wait times out it asks the Coordinator (`resolveWait`): a stored result is used, a live lease (heartbeats) waits again (up to 20 rounds), anything else is expired now.
 - `FaultSpec` gains `job` (load or transform) for `duplicate_result` and `skip_claim`; faults apply to attempt 1 unless `attempt` is set.
 - Extra route `GET /api/status` (viewer) exposes the Coordinator state the eval driver needs.
+- `read_appends` reports `fallback_full_scan` only when a watermark snapshot was given but no longer exists; a first load or replay is a planned full read.
+- The ticker calls `/cdn-cgi/handler/scheduled?cron=...` and falls back to `/__scheduled`.
 - Correction events carry `effectiveDate` = the corrected date for date corrections and the target's date for value corrections; rescinds carry the target's date. The one-event-per-day rule is asserted on business events (hire, rehire, termination, transfer, job and FTE change) for both original and corrected dates.

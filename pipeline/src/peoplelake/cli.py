@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -226,6 +227,57 @@ def _cmd_auth(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_runner(args: argparse.Namespace) -> int:
+    import logging
+
+    from .runner.main import build_runner, install_sigterm_handler
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    install_sigterm_handler()
+    runner = build_runner(args.target, args.worker_url)
+    if args.runner_command == "poll":
+        while True:  # the process restarts its loop after MAX_JOBS_PER_PROCESS jobs (in-process dbt memory)
+            runner.poll(interval=args.interval)
+            if args.once:
+                return 0
+            os.execv(sys.executable, [sys.executable, "-m", "peoplelake.cli", *sys.argv[1:]])
+    processed = runner.poll(until_idle=args.until_idle, interval=2.0)
+    print(json.dumps({"processed": processed, "outcomes": runner.counts}))
+    return 0
+
+
+def _cmd_stack(args: argparse.Namespace) -> int:
+    from .stack import PORTS, LocalStack, StackError, ports_busy, stop_recorded, ticker, wait_ports_free
+
+    if args.stack_command == "ticker":
+        ticker(args.worker_url, args.interval)
+        return 0
+    if args.stack_command == "down":
+        stop_recorded()
+        busy = wait_ports_free(PORTS)
+        print(json.dumps({"ports_busy": busy}))
+        return 1 if busy else 0
+    if args.stack_command == "status":
+        print(json.dumps({"ports_busy": ports_busy()}))
+        return 0
+    stack = LocalStack(mode=args.mode, profile=args.profile)
+    if args.reset:
+        stack.reset_state()
+    try:
+        stack.up()
+    except StackError as exc:
+        print(f"stack up: {exc}", file=sys.stderr)
+        stack.down()
+        return 1
+    # Leave the processes running; `peoplelake stack down` stops them.
+    stack._cleanup_registered = False
+    import atexit
+
+    atexit.unregister(stack.down)
+    print(json.dumps({"worker_url": "http://127.0.0.1:8791", "processes": [p.name for p in stack.processes]}))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="peoplelake", description="PeopleLake pipelines")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -282,6 +334,34 @@ def build_parser() -> argparse.ArgumentParser:
             lp.add_argument("--from-snapshot")
             lp.add_argument("--to-snapshot")
         lp.set_defaults(func=_cmd_lake)
+
+    runner = sub.add_parser("runner", help="claim and run warehouse jobs")
+    runner_sub = runner.add_subparsers(dest="runner_command", required=True)
+    poll = runner_sub.add_parser("poll", help="local loop against wrangler dev")
+    poll.add_argument("--worker-url")
+    poll.add_argument("--target", choices=["local", "prod-drill"], default="local")
+    poll.add_argument("--interval", type=float, default=1.0)
+    poll.add_argument("--once", action="store_true", help="exit after MAX_JOBS_PER_PROCESS jobs instead of restarting")
+    poll.set_defaults(func=_cmd_runner)
+    run = runner_sub.add_parser("run", help="process jobs until idle (the Cloud Run Job entry point)")
+    run.add_argument("--worker-url")
+    run.add_argument("--target", choices=["local", "prod", "prod-drill"], default="prod")
+    run.add_argument("--until-idle", type=float, default=15.0)
+    run.set_defaults(func=_cmd_runner)
+
+    stack = sub.add_parser("stack", help="local stack: wrangler dev, runner and ticker")
+    stack_sub = stack.add_subparsers(dest="stack_command", required=True)
+    up = stack_sub.add_parser("up")
+    up.add_argument("--mode", choices=["eval", "live"], default="live")
+    up.add_argument("--profile", choices=["small", "full"], default="small")
+    up.add_argument("--reset", action="store_true", help="empty Worker state, lake and warehouse first")
+    up.set_defaults(func=_cmd_stack)
+    for name in ("down", "status"):
+        stack_sub.add_parser(name).set_defaults(func=_cmd_stack)
+    tick = stack_sub.add_parser("ticker", help="call the local scheduled handler every interval (stand-in for cron)")
+    tick.add_argument("--worker-url", default="http://127.0.0.1:8791")
+    tick.add_argument("--interval", type=float, default=60.0)
+    tick.set_defaults(func=_cmd_stack)
 
     dev = sub.add_parser("dev", help="developer and CI tools")
     dev_sub = dev.add_subparsers(dest="dev_command", required=True)

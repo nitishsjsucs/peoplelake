@@ -178,8 +178,60 @@ class DuckDBWarehouse:
                 out[name] = digest_table(spec, table)
         return out
 
+    def max_load_seq(self, base: str, table: str) -> int | None:
+        try:
+            with connection(self.path) as con:
+                row = con.execute(f"SELECT max(_pl_load_seq) FROM {base}.{table}").fetchone()
+        except duckdb.CatalogException:
+            return None
+        return None if row is None or row[0] is None else int(row[0])
+
+    def freshness_histogram(self, after_seq: int) -> list[tuple[int, int]]:
+        try:
+            with connection(self.path) as con:
+                rows = con.execute(
+                    """
+                    SELECT epoch_ms(first_received_at) // 10000 * 10 AS bucket, count(*)
+                    FROM pl_ops.ops_event_freshness WHERE _pl_load_seq > ?
+                    GROUP BY bucket ORDER BY bucket NULLS LAST
+                    """,
+                    [after_seq],
+                ).fetchall()
+        except duckdb.CatalogException:
+            return []
+        return [(int(b), int(n)) for b, n in rows]
+
+    def seed_checksum(self) -> str | None:
+        return duckdb_seed_checksum(self)
+
+    def set_seed_checksum(self, checksum: str) -> None:
+        duckdb_set_seed_checksum(self, checksum)
+
     def reset(self) -> None:
         for suffix in ("", ".wal"):
             p = Path(str(self.path) + suffix)
             if p.exists():
                 p.unlink()
+
+
+SEED_STATE_DDL = (
+    "CREATE TABLE IF NOT EXISTS pl_ops.pl_seed_state (checksum VARCHAR NOT NULL, seeded_at TIMESTAMPTZ NOT NULL)"
+)
+
+
+def duckdb_seed_checksum(wh: DuckDBWarehouse) -> str | None:
+    with connection(wh.path) as con:
+        con.execute("CREATE SCHEMA IF NOT EXISTS pl_ops")
+        con.execute(SEED_STATE_DDL)
+        row = con.execute(
+            "SELECT checksum FROM pl_ops.pl_seed_state ORDER BY seeded_at DESC NULLS LAST LIMIT 1"
+        ).fetchone()
+    return row[0] if row else None
+
+
+def duckdb_set_seed_checksum(wh: DuckDBWarehouse, checksum: str) -> None:
+    with connection(wh.path) as con:
+        con.execute("CREATE SCHEMA IF NOT EXISTS pl_ops")
+        con.execute(SEED_STATE_DDL)
+        con.execute("DELETE FROM pl_ops.pl_seed_state")
+        con.execute("INSERT INTO pl_ops.pl_seed_state VALUES (?, now())", [checksum])

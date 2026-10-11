@@ -63,8 +63,24 @@ def _test_name(unique_id: str) -> str:
     return parts[2] if len(parts) > 2 else unique_id
 
 
-def summarize(command: str, run_results: dict[str, Any], success: bool, elapsed_ms: int) -> DbtOutcome:
+def test_severities(manifest: dict[str, Any]) -> dict[str, str]:
+    """unique_id -> 'error' | 'warn' for every data test in the manifest."""
+    out = {}
+    for uid, node in manifest.get("nodes", {}).items():
+        if node.get("resource_type") == "test":
+            out[uid] = str(node.get("config", {}).get("severity", "error")).lower()
+    return out
+
+
+def summarize(
+    command: str,
+    run_results: dict[str, Any],
+    success: bool,
+    elapsed_ms: int,
+    severities: dict[str, str] | None = None,
+) -> DbtOutcome:
     out = DbtOutcome(command=command, success=success, elapsed_ms=elapsed_ms)
+    severities = severities or {}
     for r in run_results.get("results", []):
         uid: str = r.get("unique_id", "")
         status: str = r.get("status", "")
@@ -83,7 +99,8 @@ def summarize(command: str, run_results: dict[str, Any], success: bool, elapsed_
             name = _test_name(uid)
             if status == "pass":
                 out.tests_pass += 1
-                out.checks_error.setdefault(name, 0)
+                bucket = out.checks_warn if severities.get(uid) == "warn" else out.checks_error
+                bucket.setdefault(name, 0)
             elif status == "warn":
                 out.tests_warn += 1
                 out.checks_warn[name] = int(failures)
@@ -134,9 +151,13 @@ class DbtRunner:
         elapsed_ms = int((time.monotonic() - started) * 1000)
         run_results_path = self.target_path / "run_results.json"
         run_results: dict[str, Any] = {}
+        severities: dict[str, str] = {}
         if run_results_path.exists() and command in ("build", "run", "test", "seed"):
             run_results = json.loads(run_results_path.read_text())
-        outcome = summarize(command, run_results, bool(result.success), elapsed_ms)
+            manifest_path = self.target_path / "manifest.json"
+            if manifest_path.exists():
+                severities = test_severities(json.loads(manifest_path.read_text()))
+        outcome = summarize(command, run_results, bool(result.success), elapsed_ms, severities)
         if result.exception is not None:
             outcome.exception = str(result.exception)
         return outcome

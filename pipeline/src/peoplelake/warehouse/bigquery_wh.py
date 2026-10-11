@@ -221,5 +221,56 @@ class BigQueryWarehouse:
     def digests(self, suffix: str | None = None) -> dict[str, str]:
         return {name: digest_table(spec, self.fetch_model(name, suffix)) for name, spec in MODEL_SPECS.items()}
 
+    def max_load_seq(self, base: str, table: str) -> int | None:
+        from google.api_core.exceptions import NotFound
+
+        try:
+            rows = list(self._query(f"SELECT MAX(_pl_load_seq) AS m FROM `{self.dataset(base)}.{table}`").result())
+        except NotFound:
+            return None
+        value = rows[0]["m"] if rows else None
+        return None if value is None else int(value)
+
+    def freshness_histogram(self, after_seq: int) -> list[tuple[int, int]]:
+        from google.api_core.exceptions import NotFound
+        from google.cloud import bigquery
+
+        sql = f"""
+            SELECT DIV(UNIX_SECONDS(first_received_at), 10) * 10 AS bucket, COUNT(*) AS n
+            FROM `{self.dataset("pl_ops")}.ops_event_freshness` WHERE _pl_load_seq > @after
+            GROUP BY bucket ORDER BY bucket ASC NULLS LAST
+        """
+        try:
+            rows = self._query(sql, [bigquery.ScalarQueryParameter("after", "INT64", after_seq)]).result()
+        except NotFound:
+            return []
+        return [(int(r["bucket"]), int(r["n"])) for r in rows]
+
+    def seed_checksum(self) -> str | None:
+        from google.api_core.exceptions import NotFound
+
+        self._query(
+            f"CREATE TABLE IF NOT EXISTS `{self.dataset('pl_ops')}.pl_seed_state` (checksum STRING NOT NULL, seeded_at TIMESTAMP NOT NULL)"
+        )
+        try:
+            rows = list(
+                self._query(
+                    f"SELECT checksum FROM `{self.dataset('pl_ops')}.pl_seed_state` ORDER BY seeded_at DESC NULLS LAST LIMIT 1"
+                ).result()
+            )
+        except NotFound:
+            return None
+        return rows[0]["checksum"] if rows else None
+
+    def set_seed_checksum(self, checksum: str) -> None:
+        from google.cloud import bigquery
+
+        table = f"`{self.dataset('pl_ops')}.pl_seed_state`"
+        self._query(f"DELETE FROM {table} WHERE TRUE")
+        self._query(
+            f"INSERT INTO {table} VALUES (@c, CURRENT_TIMESTAMP())",
+            [bigquery.ScalarQueryParameter("c", "STRING", checksum)],
+        )
+
     def reset(self) -> None:
         raise RuntimeError("BigQuery datasets are reset only by `peoplelake prod reset` (guarded) or drills")
