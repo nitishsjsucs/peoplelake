@@ -15,6 +15,7 @@ from peoplelake.prod.doctor_gcp import (
     README_STEP,
     Readers,
     ReadOnlyGcloud,
+    artifact_storage_check,
     doctor,
     gcloud_read_only,
 )
@@ -264,3 +265,15 @@ def test_the_analyst_reads_views_only_and_restricted_columns_carry_their_tags(tm
     )
     before, _, _, _ = run(tmp_path / "before", False)
     assert before["policy tags on the restricted columns"].status == "INFO"
+
+
+def test_artifact_registry_storage_is_reported_against_the_free_tier():
+    name = "Artifact Registry repository peoplelake"
+    small = artifact_storage_check(name, "us-central1", json.dumps({"name": "peoplelake", "sizeBytes": "312000000"}))
+    assert small.status == "PASS"
+    assert small.detail.startswith("us-central1; storage 312 MB of the 500 MB free tier")
+    large = artifact_storage_check(name, "us-central1", json.dumps({"sizeBytes": "1200000000"}))
+    assert large.status == "WARN" and "1200 MB" in large.detail and "cleanup policy" in large.fix
+    assert not failed([large])
+    unknown = artifact_storage_check(name, "us-central1", "")
+    assert unknown.status == "PASS" and unknown.detail == "us-central1; storage size not reported"

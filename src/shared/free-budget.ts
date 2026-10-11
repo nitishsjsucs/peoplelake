@@ -190,8 +190,10 @@ export const PEAK_DAY = {
   buildsPerMonth: 3,
   minutesPerBuild: 8,
   bqStorageBytes: 500_000_000,
-  // SPEC 29.5 estimates about 1.2 GB for 2 runner images (not measured); the cleanup policy keeps 1.
-  runnerImageBytes: 600_000_000,
+  // Measured 2026-10-11: the gzip of `docker save` of the runner image (linux/arm64 on the build Mac; Cloud
+  // Build makes linux/amd64), after the Dockerfile stopped baking uv's cache in; the cleanup policy keeps 1.
+  // CI's runner-image job prints the same measurement for linux/amd64 on every push.
+  runnerImageBytes: 340_000_000,
   runnerImagesKept: 1,
   // One active version per secret: bootstrap destroys superseded versions (peoplelake-r2-catalog-token,
   // peoplelake-runner-client-id, peoplelake-runner-client-secret).
@@ -282,7 +284,7 @@ export function budgetRows(i: BudgetInputs): BudgetRow[] {
     row("bigqueryStorage", P.bqStorageBytes, "raw table and models of one full delivery"),
     row("cloudBuildMinutes", P.buildsPerMonth * P.minutesPerBuild, `${P.buildsPerMonth} builds of about ${P.minutesPerBuild} minutes`),
     // Reported, not gated: past the 25% planning share (SPEC 29.5), cents a month beyond the free tier.
-    row("artifactRegistryStorage", P.runnerImageBytes * P.runnerImagesKept, `${P.runnerImagesKept} runner image of about ${P.runnerImageBytes / 1e6} MB (SPEC 29.5 estimate, not measured); about $0.10 per GB-month beyond the free 0.5 GB`, false),
+    row("artifactRegistryStorage", P.runnerImageBytes * P.runnerImagesKept, `${P.runnerImagesKept} runner image of about ${P.runnerImageBytes / 1e6} MB (measured 2026-10-11, gzip of \`docker save\`, linux/arm64); about $0.10 per GB-month beyond the free 0.5 GB`, false),
     row("secretVersions", P.secretActiveVersions, `one active version of each of the ${P.secretActiveVersions} runner secrets (bootstrap destroys superseded versions); $0.06 per version-month beyond the free 6`, false),
   ];
 }

@@ -1795,7 +1795,7 @@ Peak day = the go-live day: `prod:e2e` (100,000 events over 60 minutes, sources 
 | BigQuery storage | 10 GiB a month | under 0.5 GB | under 5% | same | estimate |
 | Cloud Run Job | free tier for jobs [U] | about 25 executions in the go-live month, about 6,000 vCPU-s and 12,000 GiB-s | under $0.50 at list price even without a free tier [U] | 0 | about 4 minutes per execution at 1 vCPU and 2 GiB; no heartbeat |
 | Cloud Build | 2,500 build-minutes a month | at most 24 | 1% | 0 | at most 3 builds of about 8 minutes |
-| Artifact Registry | 0.5 GB free [U] | about 1.2 GB (2 images) [U size]; fixer: 1 image, about 0.6 GB | cents a month | same | cleanup keeps 1 image (fixer); `npm run budget` reports it, not gated |
+| Artifact Registry | 0.5 GB free [U] | about 1.2 GB (2 images) [U size]; fixer: 1 image, measured about 340 MB compressed once the Dockerfile stopped baking uv's 800 MB cache into a layer | cents a month | same | cleanup keeps 1 image (fixer); `npm run budget` reports it, not gated; `doctor-gcp` reports the repository's size |
 | Secret Manager | 6 active versions (billing account) | 3 | 50% (shared) | same | beyond the free versions $0.06 per version a month; fixer: bootstrap destroys superseded versions, so rotations add none, and `npm run budget` reports the row, not gated |
 
 Every peak value is under its planning share; BigQuery is the only path near its share, and the monthly guard caps it.

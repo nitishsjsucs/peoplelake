@@ -83,6 +83,10 @@ jobs:
       - uses: actions/checkout@v7
       - run: docker build --tag peoplelake-runner:ci .
       - run: docker run --rm peoplelake-runner:ci --help
+      - name: Image size, reported (Artifact Registry stores the compressed layers; free 0.5 GB, SPEC 29.5)
+        run: |
+          echo "unpacked bytes: $(docker image inspect --format '{{.Size}}' peoplelake-runner:ci)"
+          echo "gzip of docker save, bytes: $(docker save peoplelake-runner:ci | gzip -c | wc -c)"
 
   e2e:
     needs: [node, python, dbt]
@@ -108,7 +112,7 @@ jobs:
           name: reference-digests-small
       - run: uv run --project pipeline peoplelake auth dev-keys
       - name: Scenario ${{ matrix.scenario }} on the small profile (local stack, DuckDB)
-        # Twice the slowest small-profile scenario step measured on this runner (S4, 148 s; see README CI).
+        # Twice the slowest small-profile scenario step measured on this runner so far (S4, 148 s; see README CI).
         timeout-minutes: 5
         run: >
           uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10

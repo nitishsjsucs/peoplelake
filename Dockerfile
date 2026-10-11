@@ -2,10 +2,13 @@
 # Built by Cloud Build in production (infra/gcp/cloudbuild.yaml); Docker is not needed on a laptop.
 FROM python:3.12-slim
 
+# UV_NO_CACHE: uv's download cache (about 800 MB, a second copy of every installed package) must not be
+# baked into a layer; every image byte counts against Artifact Registry's 0.5 GB free storage.
 ENV TZ=UTC \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    UV_NO_CACHE=1 \
     PL_REPO_ROOT=/app \
     PL_DATA_DIR=/tmp/peoplelake
 

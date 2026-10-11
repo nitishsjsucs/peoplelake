@@ -59,6 +59,26 @@ MONTH_BILLED_SQL = (
     "OR EXISTS (SELECT 1 FROM UNNEST(labels) AS l WHERE l.key = 'app' AND l.value = 'peoplelake'))"
 )
 
+# Artifact Registry's free storage (0.5 GB a month, shared by the billing account's projects). The
+# repository's `sizeBytes` is reported against it (SPEC 29.5: reported, not gated); past the free tier the
+# check warns, because storage then costs about $0.10 per GB-month.
+ARTIFACT_FREE_BYTES = 500_000_000
+
+
+def artifact_storage_check(name: str, region: str, describe_json: str) -> Check:
+    try:
+        size = int(json.loads(describe_json or "{}").get("sizeBytes", ""))
+    except (ValueError, TypeError, AttributeError):
+        return Check(name, "PASS", f"{region}; storage size not reported")
+    detail = (
+        f"{region}; storage {size / 1e6:.0f} MB of the {ARTIFACT_FREE_BYTES / 1e6:.0f} MB free tier "
+        "(shared by the billing account; reported, not gated)"
+    )
+    if size > ARTIFACT_FREE_BYTES:
+        return Check(name, "WARN", detail, "the cleanup policy keeps 1 image; delete older images by hand")
+    return Check(name, "PASS", detail)
+
+
 # README "Production setup", "Steps only a person can do": the numbers the fixes cite (a test reads README).
 README_STEP = {"billing": 4, "quota_project": 6, "prod_files": 7, "setup": 8, "go_live": 10}
 SETUP_FIX = f"npm run setup:prod (README production setup step {README_STEP['setup']})"
@@ -436,7 +456,9 @@ def doctor(
         if "artifactregistry.googleapis.com" not in state["apis"]:
             return Check(name, "MISSING", missing_api("artifactregistry.googleapis.com"), SETUP_FIX)
         res = gcloud(["artifacts", "repositories", "describe", REPO, f"--location={config.region}", "--format=json"])
-        return Check(name, "PASS" if res.returncode == 0 else "MISSING", config.region, SETUP_FIX)
+        if res.returncode != 0:
+            return Check(name, "MISSING", config.region, SETUP_FIX)
+        return artifact_storage_check(name, config.region, res.stdout)
 
     def job() -> Check:
         if "run.googleapis.com" not in state["apis"]:
