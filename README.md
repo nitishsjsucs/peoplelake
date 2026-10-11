@@ -315,7 +315,7 @@ Scenario step timeouts come from measured runs of the Free plan design. Small pr
 
 ## Production setup
 
-Production runs on the Cloudflare Workers **Free** plan (Workers, Durable Objects, Queues, Workflows, R2, Basin Catalog, Workers AI, AI Gateway, Zero Trust Access) and in a Google Cloud project shared with three other repos (BigQuery and a Cloud Run Job runner). `npm run setup:prod` creates every resource from the CLIs and APIs once the steps below that need a person are done, and `npm run doctor` checks every prerequisite and prints the exact fix for anything missing. Both are idempotent and safe to rerun. Nothing in production has been exercised from this repository yet.
+Production runs on the Cloudflare Workers **Free** plan (Workers, Durable Objects, Queues, Workflows, R2, Basin Catalog, Workers AI, AI Gateway, Zero Trust Access) and in a Google Cloud project shared with three other repos (BigQuery and a Cloud Run Job runner). `npm run setup:prod` creates every resource from the CLIs and APIs once the steps below that need a person are done, and `npm run doctor` checks every prerequisite, read only, and prints the exact fix for anything missing (see What the doctor checks). Both are idempotent and safe to rerun. Nothing in production has been exercised from this repository yet.
 
 ### Accounts and expected cost
 
@@ -335,7 +335,7 @@ Done already: the account stays on the Workers Free plan; R2 is activated with a
 Cloudflare:
 1. Zero Trust, Integrations, Identity providers, Add new identity provider, **One-time PIN** (new organizations do not get it automatically). The owner and the persona addresses sign in with it; each person who signs in takes one of the 50 Free seats.
 2. R2, Overview, Manage API tokens, Create API token `peoplelake-catalog-rw` with **Admin Read & Write**. Save it as `PL_R2_CATALOG_TOKEN` in `.prod/secrets.env`. It is the only R2 token: the runner commits to Basin Catalog with it (from Secret Manager), and setup uses it for `lake init` and snapshot expiration. It can reach every bucket on the account, so it lives only in `.prod/secrets.env` and in a secret only `peoplelake-runner` can read.
-3. My Profile, API Tokens, Create Custom Token `peoplelake-setup`, scoped to this account, with **Access: Apps and Policies**, **Access: Service Tokens** and **AI Gateway**, each at the edit level. Save it as `PL_CF_SETUP_TOKEN`. Do not name it `CLOUDFLARE_API_TOKEN` (wrangler would use it instead of the OAuth login).
+3. My Profile, API Tokens, Create Custom Token `peoplelake-setup`, scoped to this account, with **Access: Apps and Policies**, **Access: Service Tokens** and **AI Gateway**, each at the edit level, and optionally **Access: Organizations, Identity Providers, and Groups** at the read level so that `npm run doctor` can confirm the One-time PIN login method (without it the doctor says it cannot tell). Save it as `PL_CF_SETUP_TOKEN`. Do not name it `CLOUDFLARE_API_TOKEN` (wrangler would use it instead of the OAuth login).
 
 Google Cloud:
 
@@ -377,6 +377,19 @@ Then (the owner's operator):
     ```
     `prod verify` requires exactly 100,000 unique events in `peoplelake_staging.stg_events`, R7 at 0, the newest landing cursor equal to the last landed roll, and digests equal to the local full-profile reference. Then open `https://peoplelake.<subdomain>.workers.dev/` and sign in through Access with a one-time PIN to see the dashboard.
 11. The owner's publishing loop pushes `main`, so CI runs; CI needs no secrets and holds no cloud credentials.
+
+### What the doctor checks
+
+`npm run doctor` runs before anything is provisioned as well as after, and changes nothing: every command it can run is on an allowlist of read commands (`wrangler whoami`, `auth token`, `r2 bucket list`, `basin catalog get`, `queues list`, `deployments list`, `secret list`; `gcloud` describe, list and get commands with prompts off, so gcloud never offers to enable an API), every Cloudflare API call is a GET, and the Google client calls are gets and lists (the one capped query, bytes billed this month, runs only once a `peoplelake-*` service account exists). The only exception is `--with-dispatch`, which asks the deployed Worker to start one runner execution. Settings come from the `.prod` files; `PL_*` environment variables override `.prod/config.env`, and without it the doctor checks the account `wrangler whoami` shows and the project `gcloud config` points at, and says that the file is missing.
+
+| Part | What it checks |
+|---|---|
+| Local | Node, npm, uv, Python 3.12, wrangler 4.149.0, `TZ=UTC` in scripts, ports 8791, 9241 and 8150, dev keys, the Workers Free plan rules and budget |
+| `.prod` files | presence and mode 600, the two secrets a person creates (steps 2 and 3) and the service token secrets setup writes, names only |
+| Cloudflare | wrangler login and account, the workers.dev subdomain, R2 enabled, both buckets, Basin Catalog, the Iceberg table and its landing cursor, both queues, the Zero Trust team domain (its public signing keys), and with `PL_CF_SETUP_TOKEN` the token itself, the One-time PIN login method, the five service tokens, AI Gateway and the Access application; once the Worker is deployed, its secret, `RUNS_ENABLED`, Access in front of it, each service token's role, a wrong secret rejected, the landing, `GET /api/ops/budget` against the planning shares, Workers AI through the gateway and the dispatch token |
+| Google Cloud (`peoplelake prod doctor-gcp`) | gcloud login, the project, the ADC quota project, billing, the 11 APIs, the key creation policy, the four service accounts and that they hold no project-level role beyond the two allowed, the build bucket, the 12 datasets (time travel, no default expiration), policy tags and data masking, the three secrets, the Artifact Registry repository, the Cloud Run job and its last execution, bytes billed this month against the 275 GB guard, and the go-live evidence (reported, not failed, before go-live) |
+
+It ends with a summary that lists every check not passing under its fix, in the order of the steps above. It exits 1 on any FAIL, MISSING or UNKNOWN; WARN and INFO do not fail it.
 
 ### What `setup:prod` does for you
 

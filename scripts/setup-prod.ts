@@ -91,7 +91,7 @@ export interface RunResult {
 export type Exec = (argv: string[], opts: { env?: Record<string, string>; input?: string }) => RunResult;
 export type Http = (method: string, url: string, token: string, body?: unknown) => Promise<{ ok: boolean; status: number; json: any }>;
 
-const realExec: Exec = (argv, opts) => {
+export const realExec: Exec = (argv, opts) => {
   const res = spawnSync(argv[0] ?? "", argv.slice(1), {
     env: { ...process.env, ...opts.env },
     input: opts.input,
@@ -101,7 +101,7 @@ const realExec: Exec = (argv, opts) => {
   return { ok: res.status === 0, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
 };
 
-const realHttp: Http = async (method, url, token, body) => {
+export const realHttp: Http = async (method, url, token, body) => {
   const res = await fetch(url, {
     method,
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },

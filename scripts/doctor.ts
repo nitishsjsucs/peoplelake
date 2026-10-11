@@ -1,12 +1,20 @@
 // npm run doctor [-- --local-only | --quick | --with-dispatch]
 //
 // Checks every prerequisite (SPEC 21.3 and 21.0) and prints PASS, FAIL, MISSING, UNKNOWN, WARN or INFO per
-// check, with the exact command or console step for every non-pass. Never prints secret values, only names.
+// check, with the exact command, console step or README production setup step for every non-pass, then a
+// summary that groups everything not passing by its fix. Never prints secret values, only names.
+//
+// Read only. It works before anything is provisioned: the account comes from `wrangler whoami`, and each
+// resource that is not there yet is reported MISSING with the step that creates it. Every command goes
+// through an allowlist of read commands (whoami, auth token, list, get) and every Cloudflare API call is
+// a GET; the only exception is `--with-dispatch`, which asks the deployed Worker to start one runner
+// execution. Settings come from `.prod/config.env`, `.prod/secrets.env` and `.prod/state.json`; PL_*
+// environment variables override `.prod/config.env`.
+//
 // Workers Free plan: the config must need nothing from Workers Paid (no pipelines, no limits, one cron,
 // SQLite Durable Objects), the budget estimates must stay within the planning shares, and production's
 // GET /api/ops/budget is printed against them. After the Cloudflare checks it runs
-// `peoplelake prod doctor-gcp` (unless --local-only).
-import { spawnSync } from "node:child_process";
+// `peoplelake prod doctor-gcp` (unless --local-only or --quick) and merges its checks into the summary.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
@@ -15,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { budgetRows, CLOUDFLARE_PLANNING_SHARE, overBudget } from "../src/shared/free-budget.ts";
 import { budgetInputsFromConfig, freePlanConfigProblems } from "./lib/free-plan.ts";
 import type { ProdState } from "./lib/prod-state.ts";
-import { LAKE_BUCKET, QUEUES, readEnvFile, REPORTS_BUCKET, SERVICE_TOKENS } from "./setup-prod.ts";
+import { type Exec, GATEWAY, type Http, LAKE_BUCKET, QUEUES, readEnvFile, realExec, realHttp, REPORTS_BUCKET, SERVICE_TOKENS, WORKER } from "./setup-prod.ts";
 
 export type Status = "PASS" | "FAIL" | "MISSING" | "UNKNOWN" | "WARN" | "INFO";
 export interface Check {
@@ -25,10 +33,45 @@ export interface Check {
   fix?: string;
 }
 
+const API = "https://api.cloudflare.com/client/v4";
+
+// README "Production setup", "Steps only a person can do": the numbers the fixes cite (a test reads README).
+export const README_STEP = { onetimePin: 1, catalogToken: 2, setupToken: 3, billing: 4, quotaProject: 6, prodFiles: 7, setup: 8, goLive: 10 } as const;
+const step = (n: number) => `README production setup step ${n}`;
+export const SETUP_FIX = `npm run setup:prod (${step(README_STEP.setup)})`;
+export const PROD_FILES_FIX = `${step(README_STEP.prodFiles)}: .prod/config.env and .prod/secrets.env`;
+
 export function format(c: Check): string {
   let line = `${c.status.padEnd(8)} ${c.name}${c.detail ? `: ${c.detail}` : ""}`;
   if (c.status !== "PASS" && c.status !== "INFO" && c.fix) line += `\n         fix: ${c.fix}`;
   return line;
+}
+
+/** A doctor run fails on FAIL, MISSING or UNKNOWN; PASS, WARN and INFO do not fail it. */
+export function failed(checks: Check[]): boolean {
+  return checks.some((c) => c.status === "FAIL" || c.status === "MISSING" || c.status === "UNKNOWN");
+}
+
+/** Counts per status, then every check that did not pass grouped under its fix, in first-seen order. */
+export function summary(checks: Check[]): string[] {
+  const counts = new Map<Status, number>();
+  for (const c of checks) counts.set(c.status, (counts.get(c.status) ?? 0) + 1);
+  const order: Status[] = ["PASS", "FAIL", "MISSING", "UNKNOWN", "WARN", "INFO"];
+  const lines = [`${checks.length} checks: ${order.filter((s) => counts.get(s)).map((s) => `${counts.get(s)} ${s.toLowerCase()}`).join(", ")}`];
+  const groups = new Map<string, string[]>();
+  for (const c of checks) {
+    if (c.status === "PASS" || c.status === "INFO") continue;
+    const key = c.fix ?? "(no fix recorded)";
+    groups.set(key, [...(groups.get(key) ?? []), `${c.name} (${c.status})`]);
+  }
+  if (groups.size > 0) {
+    // In README step order (the first step a fix cites); fixes that cite no step keep their order at the end.
+    const firstStep = (fix: string) => Number(/step (\d+)/.exec(fix)?.[1] ?? 99);
+    const ordered = [...groups].map((g, i) => ({ g, i })).sort((a, b) => firstStep(a.g[0]) - firstStep(b.g[0]) || a.i - b.i);
+    lines.push("Not passing, grouped by fix in README step order:");
+    for (const { g: [fix, names] } of ordered) lines.push(`  ${fix}`, ...names.map((n) => `    - ${n}`));
+  }
+  return lines;
 }
 
 export function versionAtLeast(version: string, minimum: string): boolean {
@@ -40,10 +83,72 @@ export function versionAtLeast(version: string, minimum: string): boolean {
   return true;
 }
 
-function sh(cmd: string, args: string[], cwd: string, env?: Record<string, string>) {
-  const res = spawnSync(cmd, args, { cwd, encoding: "utf8", env: { ...process.env, ...env } });
-  return { ok: res.status === 0, out: `${res.stdout ?? ""}${res.stderr ?? ""}`.trim() };
+// --- read-only guard ---------------------------------------------------------------------------------
+
+/** The wrangler subcommands the doctor may run (prefixes after `wrangler`). */
+export const READ_ONLY_WRANGLER: readonly (readonly string[])[] = [
+  ["--version"],
+  ["whoami"],
+  ["auth", "token"],
+  ["r2", "bucket", "list"],
+  ["basin", "catalog", "get"],
+  ["queues", "list"],
+  ["deployments", "list"],
+  ["secret", "list"],
+];
+/** Every other command the doctor may run (prefixes of the whole argument list). */
+export const READ_ONLY_COMMANDS: readonly (readonly string[])[] = [
+  ["npm", "--version"],
+  ["uv", "--version"],
+  ["which"],
+  ["uv", "run", "--project", "pipeline", "python", "--version"],
+  ["uv", "run", "--project", "pipeline", "peoplelake", "lake", "status"],
+  ["uv", "run", "--project", "pipeline", "peoplelake", "prod", "doctor-gcp"],
+];
+
+const startsWith = (argv: readonly string[], prefix: readonly string[]) => prefix.every((x, i) => argv[i] === x);
+
+export function doctorCommandAllowed(argv: string[]): boolean {
+  const [cmd, ...rest] = argv;
+  if (cmd === "wrangler" || cmd?.endsWith("/wrangler")) return READ_ONLY_WRANGLER.some((p) => startsWith(rest, p));
+  return READ_ONLY_COMMANDS.some((p) => startsWith(argv, p));
 }
+
+export interface DoctorDeps {
+  exec: Exec;
+  /** Cloudflare API with a bearer token; the doctor only ever sends GET. */
+  http: Http;
+  /** A GET to a public URL (team domain, workers.dev), optionally with service-token headers. */
+  probe: (url: string, headers?: Record<string, string>) => Promise<{ status: number; json: unknown }>;
+}
+
+const realProbe: DoctorDeps["probe"] = async (url, headers) => {
+  try {
+    const res = await fetch(url, { headers: headers ?? {}, redirect: "manual" });
+    return { status: res.status, json: await res.json().catch(() => null) };
+  } catch {
+    return { status: 0, json: null };
+  }
+};
+
+export const realDeps: DoctorDeps = { exec: realExec, http: realHttp, probe: realProbe };
+
+/** Wraps the dependencies so that nothing but read commands and GET requests can leave the doctor. */
+export function readOnly(deps: DoctorDeps): DoctorDeps {
+  return {
+    exec: (argv, opts) => {
+      if (!doctorCommandAllowed(argv)) throw new Error(`the doctor runs read-only commands only, not: ${argv.slice(0, 4).join(" ")}`);
+      return deps.exec(argv, opts);
+    },
+    http: (method, url, token, body) => {
+      if (method !== "GET") throw new Error(`the doctor only sends GET requests, not ${method} ${url}`);
+      return deps.http(method, url, token, body);
+    },
+    probe: deps.probe,
+  };
+}
+
+// --- local --------------------------------------------------------------------------------------------
 
 function portFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -63,28 +168,32 @@ export function scriptsMissingTz(scripts: Record<string, string>): string[] {
     .map(([name]) => name);
 }
 
-export async function localChecks(root: string): Promise<Check[]> {
+export async function localChecks(root: string, deps: DoctorDeps = readOnly(realDeps)): Promise<Check[]> {
+  const sh = (argv: string[]) => {
+    const r = deps.exec(argv, {});
+    return { ok: r.ok, out: `${r.stdout}${r.stderr}`.trim() };
+  };
   const out: Check[] = [];
   out.push(
     versionAtLeast(process.version, "22.18.0")
       ? { name: "node >= 22.18", status: "PASS", detail: process.version }
       : { name: "node >= 22.18", status: "FAIL", detail: process.version, fix: "install Node 24 LTS (see .nvmrc)" },
   );
-  const npm = sh("npm", ["--version"], root);
+  const npm = sh(["npm", "--version"]);
   out.push(npm.ok ? { name: "npm", status: "PASS", detail: npm.out } : { name: "npm", status: "MISSING", fix: "install Node with npm" });
-  const uv = sh("uv", ["--version"], root);
+  const uv = sh(["uv", "--version"]);
   out.push(
     uv.ok && /uv 0\.12\./.test(uv.out)
       ? { name: "uv 0.12.x", status: "PASS", detail: uv.out }
       : { name: "uv 0.12.x", status: uv.ok ? "FAIL" : "MISSING", detail: uv.out, fix: "brew install uv (0.12.x)" },
   );
-  const py = sh("uv", ["run", "--project", "pipeline", "python", "--version"], root);
+  const py = sh(["uv", "run", "--project", "pipeline", "python", "--version"]);
   out.push(
     py.ok && py.out.includes("3.12")
       ? { name: "Python 3.12 (pipeline)", status: "PASS", detail: py.out.split("\n").pop() ?? "" }
       : { name: "Python 3.12 (pipeline)", status: "FAIL", detail: py.out.slice(0, 200), fix: "uv sync --locked --project pipeline" },
   );
-  const wr = sh(join(root, "node_modules", ".bin", "wrangler"), ["--version"], root);
+  const wr = sh([join(root, "node_modules", ".bin", "wrangler"), "--version"]);
   out.push(
     wr.ok && wr.out.includes("4.149.0")
       ? { name: "wrangler 4.149.0 (node_modules)", status: "PASS" }
@@ -111,7 +220,7 @@ export async function localChecks(root: string): Promise<Check[]> {
       : { name: "dev keys and .dev.vars", status: "MISSING", fix: "uv run --project pipeline peoplelake auth dev-keys" },
   );
   out.push(...freePlanChecks(readFileSync(join(root, "wrangler.jsonc"), "utf8")));
-  const llama = sh("which", ["llama-server"], root);
+  const llama = sh(["which", "llama-server"]);
   const gguf = join(homedir(), "Developer", "projects", "_models", "Qwen3-1.7B-Q4_0-rtn.gguf");
   out.push({
     name: "llama-server and Qwen3-1.7B GGUF (optional, local LLM)",
@@ -165,128 +274,272 @@ export function opsBudgetChecks(b: OpsBudget): Check[] {
   ];
 }
 
+// --- .prod files ----------------------------------------------------------------------------------------
+
+/** Secrets a person creates (README steps 2 and 3); setup:prod writes the service token ones. */
+export const PERSON_SECRETS = { PL_R2_CATALOG_TOKEN: README_STEP.catalogToken, PL_CF_SETUP_TOKEN: README_STEP.setupToken } as const;
+
 export function prodFileChecks(root: string): Check[] {
   const prod = join(root, ".prod");
   const out: Check[] = [];
   for (const f of ["config.env", "secrets.env", "state.json", "gcp.json", "gcp-dispatcher-key.json"]) {
     const p = join(prod, f);
     if (!existsSync(p)) {
-      out.push({ name: `.prod/${f}`, status: f.endsWith(".env") ? "MISSING" : "INFO", detail: "not present yet", fix: "README production setup, step 12 and npm run setup:prod" });
+      if (f.endsWith(".env")) out.push({ name: `.prod/${f}`, status: "MISSING", detail: "not present yet", fix: PROD_FILES_FIX });
+      else out.push({ name: `.prod/${f}`, status: "INFO", detail: "not present yet; npm run setup:prod writes it" });
       continue;
     }
     const loose = (statSync(p).mode & 0o077) !== 0;
     out.push(loose ? { name: `.prod/${f} mode`, status: "WARN", detail: "group or world readable", fix: `chmod 600 .prod/${f}` } : { name: `.prod/${f} mode 600`, status: "PASS" });
   }
   const secrets = readEnvFile(join(prod, "secrets.env"));
-  const names = ["PL_CF_SETUP_TOKEN", "PL_R2_CATALOG_TOKEN", ...Object.values(SERVICE_TOKENS).flatMap((t) => [`${t.env}_CLIENT_ID`, `${t.env}_CLIENT_SECRET`])];
-  const missing = names.filter((n) => !secrets[n]);
-  out.push(missing.length === 0 ? { name: "secret names present", status: "PASS" } : { name: "secret names present", status: "MISSING", detail: missing.join(", "), fix: "README production setup steps 4 and 5, then npm run setup:prod" });
+  for (const [name, n] of Object.entries(PERSON_SECRETS)) {
+    out.push(secrets[name] ? { name: `secret ${name} (name only)`, status: "PASS" } : { name: `secret ${name}`, status: "MISSING", detail: "not in .prod/secrets.env", fix: `${step(n)} (then save it in .prod/secrets.env)` });
+  }
+  const written = Object.values(SERVICE_TOKENS).flatMap((t) => [`${t.env}_CLIENT_ID`, `${t.env}_CLIENT_SECRET`]);
+  const missing = written.filter((n) => !secrets[n]);
+  out.push(
+    missing.length === 0
+      ? { name: "service token secrets written by setup (names only)", status: "PASS" }
+      : { name: "service token secrets written by setup", status: "MISSING", detail: `${missing.length} of ${written.length} not in .prod/secrets.env`, fix: SETUP_FIX },
+  );
   return out;
 }
 
-async function cloudflareChecks(root: string, withDispatch: boolean): Promise<Check[]> {
+/** `.prod/config.env` with PL_* environment variables taking precedence. */
+export function doctorConfig(root: string, env: Record<string, string | undefined>): Record<string, string> {
+  const fromEnv = Object.fromEntries(Object.entries(env).filter(([k, v]) => k.startsWith("PL_") && v) as [string, string][]);
+  return { ...readEnvFile(join(root, ".prod", "config.env")), ...fromEnv };
+}
+
+/** True when `text` lists `name` as a whole name (not as the prefix of a longer one such as `x-dlq`). */
+export function listsName(text: string, name: string): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`).test(text);
+}
+
+// --- Cloudflare -----------------------------------------------------------------------------------------
+
+export async function cloudflareChecks(root: string, deps: DoctorDeps, opts: { withDispatch?: boolean; env?: Record<string, string | undefined> } = {}): Promise<Check[]> {
   const out: Check[] = [];
-  const wrangler = (args: string[]) => sh(join(root, "node_modules", ".bin", "wrangler"), args, root);
-  const who = wrangler(["whoami"]);
-  const loggedIn = who.ok && !/not authenticated|not logged in/i.test(who.out);
-  out.push(loggedIn ? { name: "wrangler login", status: "PASS" } : { name: "wrangler login", status: "MISSING", fix: "npx wrangler login" });
+  const config = doctorConfig(root, opts.env ?? {});
+  const secrets = readEnvFile(join(root, ".prod", "secrets.env"));
   const statePath = join(root, ".prod", "state.json");
-  if (!existsSync(statePath)) {
-    out.push({ name: "production state", status: "MISSING", fix: "npm run setup:prod" });
+  const state = existsSync(statePath) ? (JSON.parse(readFileSync(statePath, "utf8")) as ProdState) : null;
+  let account = config["PL_CF_ACCOUNT_ID"] || state?.account_id || "";
+  const wrangler = (args: string[]) => {
+    const r = deps.exec([join(root, "node_modules", ".bin", "wrangler"), ...args], account ? { env: { CLOUDFLARE_ACCOUNT_ID: account } } : {});
+    return { ok: r.ok, out: `${r.stdout}\n${r.stderr}`.trim(), stdout: r.stdout };
+  };
+
+  // Login and account
+  const who = wrangler(["whoami", "--json"]);
+  let whoami: { loggedIn?: boolean; accounts?: { id: string }[] } = {};
+  try {
+    whoami = JSON.parse(who.stdout) as typeof whoami;
+  } catch {
+    whoami = {};
+  }
+  if (!who.ok || !whoami.loggedIn) {
+    out.push({ name: "wrangler login", status: "MISSING", fix: "npx wrangler login" });
     return out;
   }
-  const state = JSON.parse(readFileSync(statePath, "utf8")) as ProdState;
-  const secrets = readEnvFile(join(root, ".prod", "secrets.env"));
-  out.push(state.workers_subdomain ? { name: "workers.dev subdomain", status: "PASS", detail: state.workers_subdomain } : { name: "workers.dev subdomain", status: "MISSING", fix: "set PL_WORKERS_SUBDOMAIN and npm run setup:prod" });
+  out.push({ name: "wrangler login (OAuth)", status: "PASS" });
+  const accounts = (whoami.accounts ?? []).map((a) => a.id);
+  if (account) {
+    out.push(
+      accounts.includes(account)
+        ? { name: "Cloudflare account (PL_CF_ACCOUNT_ID) in the wrangler login", status: "PASS" }
+        : { name: "Cloudflare account (PL_CF_ACCOUNT_ID) in the wrangler login", status: "FAIL", detail: "not one of the login's accounts", fix: "set PL_CF_ACCOUNT_ID to the Account ID npx wrangler whoami prints" },
+    );
+  } else if (accounts.length === 1 && accounts[0]) {
+    account = accounts[0];
+    out.push({ name: "Cloudflare account", status: "INFO", detail: "PL_CF_ACCOUNT_ID is not set; checking the login's only account" });
+  } else {
+    out.push({ name: "Cloudflare account", status: "MISSING", detail: `PL_CF_ACCOUNT_ID is not set and the login has ${accounts.length} accounts`, fix: PROD_FILES_FIX });
+    return out;
+  }
+
+  // workers.dev subdomain: wrangler's own OAuth token, one GET, never printed.
+  let subdomain = "";
+  const tokenOut = wrangler(["auth", "token", "--json"]);
+  let oauth = "";
+  try {
+    oauth = (JSON.parse(tokenOut.stdout) as { token?: string }).token ?? "";
+  } catch {
+    oauth = "";
+  }
+  if (oauth) {
+    const got = await deps.http("GET", `${API}/accounts/${account}/workers/subdomain`, oauth);
+    subdomain = (got.json?.result?.subdomain as string | undefined) ?? "";
+    const wanted = config["PL_WORKERS_SUBDOMAIN"] ?? "";
+    if (subdomain && wanted && wanted !== subdomain) out.push({ name: "workers.dev subdomain", status: "WARN", detail: `the account's is ${subdomain}, PL_WORKERS_SUBDOMAIN says ${wanted}`, fix: `set PL_WORKERS_SUBDOMAIN=${subdomain} (setup uses the account's anyway)` });
+    else if (subdomain) out.push({ name: "workers.dev subdomain", status: "PASS", detail: `${subdomain}.workers.dev` });
+    else out.push({ name: "workers.dev subdomain", status: "MISSING", detail: `HTTP ${got.status}`, fix: "register one in the dashboard: Workers & Pages, Overview, Subdomain (Workflows need one)" });
+  } else {
+    out.push({ name: "workers.dev subdomain", status: "UNKNOWN", detail: "wrangler auth token returned no OAuth token", fix: "npx wrangler login" });
+  }
+  subdomain ||= state?.workers_subdomain ?? "";
+
+  // R2 buckets and Basin Catalog
+  const buckets = wrangler(["r2", "bucket", "list"]);
+  const bucketPresent = new Map<string, boolean>();
+  if (!buckets.ok) {
+    const r2Off = /enable R2|10042/i.test(buckets.out);
+    out.push({ name: "R2", status: r2Off ? "MISSING" : "UNKNOWN", detail: r2Off ? "R2 is not enabled on the account" : buckets.out.split("\n")[0]?.slice(0, 160), fix: "enable R2 with a payment card in the dashboard (R2, Overview)" });
+  } else {
+    for (const b of [LAKE_BUCKET, REPORTS_BUCKET]) {
+      const present = new RegExp(`name:\\s+${b}\\s*$`, "m").test(buckets.out);
+      bucketPresent.set(b, present);
+      out.push(present ? { name: `R2 bucket ${b}`, status: "PASS" } : { name: `R2 bucket ${b}`, status: "MISSING", fix: SETUP_FIX });
+    }
+  }
+  if (bucketPresent.get(LAKE_BUCKET)) {
+    const catalog = wrangler(["basin", "catalog", "get", LAKE_BUCKET]);
+    out.push(catalog.ok && !/not enabled|disabled/i.test(catalog.out) ? { name: `Basin Catalog on ${LAKE_BUCKET}`, status: "PASS" } : { name: `Basin Catalog on ${LAKE_BUCKET}`, status: "MISSING", fix: SETUP_FIX });
+  } else {
+    out.push({ name: `Basin Catalog on ${LAKE_BUCKET}`, status: "MISSING", detail: "the bucket does not exist yet", fix: SETUP_FIX });
+  }
+  const lakeEnv = {
+    PL_R2_CATALOG_URI: config["PL_R2_CATALOG_URI"] || state?.catalog.uri || "",
+    PL_R2_WAREHOUSE: config["PL_R2_WAREHOUSE"] || state?.catalog.warehouse || "",
+    PL_R2_CATALOG_TOKEN: secrets["PL_R2_CATALOG_TOKEN"] ?? "",
+  };
+  const lakeNeeds = Object.entries(lakeEnv).filter(([, v]) => !v).map(([k]) => k);
+  if (lakeNeeds.length > 0) {
+    out.push({ name: "Iceberg table peoplelake.raw_events", status: "MISSING", detail: `not checkable yet: needs ${lakeNeeds.join(", ")}`, fix: SETUP_FIX });
+  } else {
+    const lakeCli = deps.exec(["uv", "run", "--project", "pipeline", "peoplelake", "lake", "status", "--target", "prod"], { env: lakeEnv });
+    let lakeStatus: { exists?: boolean; landing_cursor?: string | null } = {};
+    try {
+      lakeStatus = JSON.parse(lakeCli.stdout.trim().split("\n").pop() ?? "{}") as typeof lakeStatus;
+    } catch {
+      lakeStatus = {};
+    }
+    out.push(
+      lakeStatus.exists
+        ? { name: "Iceberg table peoplelake.raw_events", status: "PASS", detail: `landing cursor ${lakeStatus.landing_cursor ?? "none yet"}` }
+        : { name: "Iceberg table peoplelake.raw_events", status: "MISSING", detail: `${lakeCli.stdout}${lakeCli.stderr}`.trim().slice(0, 200), fix: SETUP_FIX },
+    );
+  }
+
+  // Queues
+  const queues = wrangler(["queues", "list"]);
+  for (const q of QUEUES) {
+    out.push(queues.ok && listsName(queues.out, q) ? { name: `queue ${q}`, status: "PASS" } : { name: `queue ${q}`, status: queues.ok ? "MISSING" : "UNKNOWN", ...(queues.ok ? {} : { detail: queues.out.split("\n")[0]?.slice(0, 160) }), fix: SETUP_FIX });
+  }
+
+  // Zero Trust: the team domain publishes its signing keys (public, no token).
+  const team = config["PL_ACCESS_TEAM_DOMAIN"] || state?.access.team_domain || "";
+  if (team) {
+    const certs = await deps.probe(`${team.replace(/\/$/, "")}/cdn-cgi/access/certs`);
+    const keys = (certs.json as { keys?: unknown[] } | null)?.keys ?? [];
+    out.push(certs.status === 200 && keys.length > 0 ? { name: "Zero Trust team domain", status: "PASS", detail: `${keys.length} signing keys published` } : { name: "Zero Trust team domain", status: "FAIL", detail: `certs HTTP ${certs.status}`, fix: "check PL_ACCESS_TEAM_DOMAIN against Zero Trust, Settings (team domain)" });
+  } else {
+    out.push({ name: "Zero Trust team domain", status: "MISSING", detail: "PL_ACCESS_TEAM_DOMAIN is not set", fix: PROD_FILES_FIX });
+  }
+
+  // Access and AI Gateway through the setup token (wrangler's OAuth login has no Access or AI Gateway scopes).
+  const setupToken = secrets["PL_CF_SETUP_TOKEN"] ?? "";
+  if (!setupToken) {
+    // wrangler's OAuth login cannot read Access or AI Gateway, so these wait for the setup token.
+    out.push({ name: "One-time PIN login method", status: "UNKNOWN", detail: "not checkable without PL_CF_SETUP_TOKEN", fix: `${step(README_STEP.onetimePin)}: Zero Trust, Integrations, Identity providers, One-time PIN` });
+    out.push({ name: "Access service tokens, AI Gateway and the Access application", status: "UNKNOWN", detail: "not checkable without PL_CF_SETUP_TOKEN; setup creates them", fix: SETUP_FIX });
+  } else {
+    const verify = await deps.http("GET", `${API}/user/tokens/verify`, setupToken);
+    out.push(verify.ok && verify.json?.result?.status === "active" ? { name: "PL_CF_SETUP_TOKEN active", status: "PASS" } : { name: "PL_CF_SETUP_TOKEN active", status: "FAIL", detail: `HTTP ${verify.status}`, fix: step(README_STEP.setupToken) });
+    const idps = await deps.http("GET", `${API}/accounts/${account}/access/identity_providers`, setupToken);
+    if (idps.ok) {
+      const types = ((idps.json?.result ?? []) as { type?: string }[]).map((i) => i.type);
+      out.push(types.includes("onetimepin") ? { name: "One-time PIN login method", status: "PASS" } : { name: "One-time PIN login method", status: "MISSING", fix: `${step(README_STEP.onetimePin)}: Zero Trust, Integrations, Identity providers, One-time PIN` });
+    } else {
+      out.push({ name: "One-time PIN login method", status: "WARN", detail: `cannot read identity providers with PL_CF_SETUP_TOKEN (HTTP ${idps.status})`, fix: `check Zero Trust, Integrations, Identity providers, or add Access: Organizations, Identity Providers, and Groups Read to the token (${step(README_STEP.setupToken)})` });
+    }
+    const tokens = await deps.http("GET", `${API}/accounts/${account}/access/service_tokens`, setupToken);
+    const tokenNames = new Set(((tokens.json?.result ?? []) as { name: string }[]).map((t) => t.name));
+    const missingTokens = Object.keys(SERVICE_TOKENS).filter((n) => !tokenNames.has(n));
+    out.push(tokens.ok ? (missingTokens.length === 0 ? { name: "Access service tokens (5)", status: "PASS" } : { name: "Access service tokens", status: "MISSING", detail: missingTokens.join(", "), fix: SETUP_FIX }) : { name: "Access service tokens", status: "UNKNOWN", detail: `HTTP ${tokens.status}`, fix: step(README_STEP.setupToken) });
+    const gateway = await deps.http("GET", `${API}/accounts/${account}/ai-gateway/gateways/${GATEWAY}`, setupToken);
+    out.push(gateway.ok ? { name: `AI Gateway ${GATEWAY}`, status: "PASS" } : { name: `AI Gateway ${GATEWAY}`, status: gateway.status === 404 ? "MISSING" : "UNKNOWN", detail: `HTTP ${gateway.status}`, fix: SETUP_FIX });
+    const apps = await deps.http("GET", `${API}/accounts/${account}/access/apps`, setupToken);
+    const app = ((apps.json?.result ?? []) as { name: string; aud?: string }[]).find((a) => a.name === WORKER);
+    out.push(apps.ok ? (app ? { name: "Access application peoplelake", status: "PASS" } : { name: "Access application peoplelake", status: "MISSING", fix: SETUP_FIX }) : { name: "Access application peoplelake", status: "UNKNOWN", detail: `HTTP ${apps.status}`, fix: step(README_STEP.setupToken) });
+    if (app && state && app.aud !== state.access.aud) out.push({ name: "Access AUD in .prod/state.json", status: "FAIL", detail: "differs from the application's", fix: "npm run setup:prod -- --only cloudflare, then npm run deploy" });
+  }
+
+  // The deployed Worker and its live checks
+  const deployed = wrangler(["deployments", "list", "--name", WORKER]);
+  if (!deployed.ok) {
+    out.push({ name: `Worker ${WORKER} deployed`, status: "MISSING", fix: SETUP_FIX });
+    out.push({ name: "live checks (Access in front of the Worker, service token roles, landing, budget, Workers AI, dispatch)", status: "INFO", detail: "run once the Worker is deployed" });
+    return out;
+  }
+  out.push({ name: `Worker ${WORKER} deployed`, status: "PASS" });
   const rendered = join(root, "wrangler.production.jsonc");
   if (existsSync(rendered)) {
     const problems = freePlanConfigProblems(readFileSync(rendered, "utf8"));
     out.push(problems.length === 0 ? { name: "rendered production config needs nothing from Workers Paid", status: "PASS" } : { name: "rendered production config", status: "FAIL", detail: problems.join("; "), fix: "npm run deploy re-renders it from wrangler.jsonc" });
   }
-  const buckets = wrangler(["r2", "bucket", "list"]).out;
-  for (const b of [LAKE_BUCKET, REPORTS_BUCKET]) {
-    out.push(buckets.includes(b) ? { name: `R2 bucket ${b}`, status: "PASS" } : { name: `R2 bucket ${b}`, status: "MISSING", fix: "enable R2 with a payment card (dash), then npm run setup:prod" });
-  }
-  const catalog = wrangler(["basin", "catalog", "get", LAKE_BUCKET]);
-  out.push(catalog.ok && !/not enabled/i.test(catalog.out) ? { name: "Basin Catalog enabled", status: "PASS" } : { name: "Basin Catalog enabled", status: "MISSING", fix: "npm run setup:prod -- --only cloudflare" });
-  const lakeCli = sh("uv", ["run", "--project", "pipeline", "peoplelake", "lake", "status", "--target", "prod"], root, {
-    PL_R2_CATALOG_URI: state.catalog.uri,
-    PL_R2_WAREHOUSE: state.catalog.warehouse,
-    PL_R2_CATALOG_TOKEN: secrets["PL_R2_CATALOG_TOKEN"] ?? "",
-  });
-  const lakeStatus = (() => {
-    try {
-      return JSON.parse(lakeCli.out.split("\n").pop() ?? "{}") as { exists?: boolean; landing_cursor?: string | null };
-    } catch {
-      return {};
-    }
-  })();
-  out.push(
-    lakeStatus.exists
-      ? { name: "Iceberg table peoplelake.raw_events", status: "PASS", detail: `landing cursor ${lakeStatus.landing_cursor ?? "none yet"}` }
-      : { name: "Iceberg table peoplelake.raw_events", status: "MISSING", detail: lakeCli.out.slice(0, 200), fix: "npm run setup:prod -- --only cloudflare (peoplelake lake init --target prod)" },
-  );
-  const queues = wrangler(["queues", "list"]).out;
-  for (const q of QUEUES) {
-    out.push(queues.includes(q) ? { name: `queue ${q}`, status: "PASS" } : { name: `queue ${q}`, status: "MISSING", fix: "npm run setup:prod" });
-  }
-  const deployed = wrangler(["deployments", "list", "--name", "peoplelake"]);
-  out.push(deployed.ok ? { name: "Worker peoplelake deployed", status: "PASS" } : { name: "Worker peoplelake deployed", status: "MISSING", fix: "npm run deploy" });
-  const secretList = wrangler(["secret", "list", "--name", "peoplelake"]).out;
-  for (const s of ["GCP_DISPATCHER_KEY"]) {
-    out.push(secretList.includes(s) ? { name: `Worker secret ${s} (name only)`, status: "PASS" } : { name: `Worker secret ${s}`, status: "MISSING", fix: "npm run setup:prod -- --only worker" });
-  }
-  out.push(state.runs_enabled ? { name: "RUNS_ENABLED", status: "PASS" } : { name: "RUNS_ENABLED", status: "FAIL", detail: "false (fail-closed until GCP passes)", fix: "npm run setup:prod -- --only gcp, then --only worker" });
+  const secretList = wrangler(["secret", "list", "--name", WORKER]).out;
+  out.push(listsName(secretList, "GCP_DISPATCHER_KEY") ? { name: "Worker secret GCP_DISPATCHER_KEY (name only)", status: "PASS" } : { name: "Worker secret GCP_DISPATCHER_KEY", status: "MISSING", fix: "npm run setup:prod -- --only worker" });
+  out.push(state?.runs_enabled ? { name: "RUNS_ENABLED", status: "PASS" } : { name: "RUNS_ENABLED", status: "FAIL", detail: "false (fail-closed until the Google Cloud bootstrap passes)", fix: "npm run setup:prod -- --only gcp, then --only worker" });
+  if (!subdomain) return out;
 
-  const url = `https://peoplelake.${state.workers_subdomain}.workers.dev`;
-  const anon = await fetch(`${url}/v1/health`, { redirect: "manual" }).catch(() => null);
-  const answeredByAccess = anon !== null && (anon.status === 401 || anon.status === 403 || (anon.status >= 300 && anon.status < 400));
-  out.push(answeredByAccess ? { name: "Access in front of the Worker", status: "PASS", detail: `unauthenticated /v1/health -> ${anon?.status}` } : { name: "Access in front of the Worker", status: "FAIL", detail: `unauthenticated /v1/health -> ${anon?.status ?? "no response"}`, fix: "npm run setup:prod -- --only cloudflare (Access application)" });
+  const url = `https://${WORKER}.${subdomain}.workers.dev`;
+  const anon = await deps.probe(`${url}/v1/health`);
+  const answeredByAccess = anon.status === 401 || anon.status === 403 || (anon.status >= 300 && anon.status < 400);
+  out.push(answeredByAccess ? { name: "Access in front of the Worker", status: "PASS", detail: `unauthenticated /v1/health -> ${anon.status}` } : { name: "Access in front of the Worker", status: "FAIL", detail: `unauthenticated /v1/health -> ${anon.status || "no response"}`, fix: "npm run setup:prod -- --only cloudflare (Access application)" });
   const headers = (env: string) => ({ "CF-Access-Client-Id": secrets[`${env}_CLIENT_ID`] ?? "", "CF-Access-Client-Secret": secrets[`${env}_CLIENT_SECRET`] ?? "" });
   for (const [name, meta] of Object.entries(SERVICE_TOKENS)) {
-    const res = await fetch(`${url}/v1/health/auth`, { headers: headers(meta.env) }).catch(() => null);
-    const body = res?.ok ? ((await res.json()) as { roles?: string[] }) : null;
-    out.push(body?.roles?.includes(meta.role) ? { name: `service token ${name} -> ${meta.role}`, status: "PASS" } : { name: `service token ${name} -> ${meta.role}`, status: "FAIL", detail: `HTTP ${res?.status ?? "none"}`, fix: "npm run setup:prod (tokens, Access policy, role map)" });
+    const res = await deps.probe(`${url}/v1/health/auth`, headers(meta.env));
+    const roles = res.status === 200 ? ((res.json as { roles?: string[] } | null)?.roles ?? []) : [];
+    out.push(roles.includes(meta.role) ? { name: `service token ${name} -> ${meta.role}`, status: "PASS" } : { name: `service token ${name} -> ${meta.role}`, status: "FAIL", detail: `HTTP ${res.status || "none"}`, fix: "npm run setup:prod (tokens, Access policy, role map)" });
   }
-  const wrong = await fetch(`${url}/v1/health/auth`, { headers: { "CF-Access-Client-Id": secrets["PL_CF_RUNNER_CLIENT_ID"] ?? "x", "CF-Access-Client-Secret": "wrong-secret" }, redirect: "manual" }).catch(() => null);
-  out.push(wrong && [401, 403].includes(wrong.status) ? { name: "wrong service token secret rejected", status: "PASS" } : { name: "wrong service token secret rejected", status: "FAIL", detail: `HTTP ${wrong?.status ?? "none"}` });
+  const wrong = await deps.probe(`${url}/v1/health/auth`, { "CF-Access-Client-Id": secrets["PL_CF_RUNNER_CLIENT_ID"] ?? "x", "CF-Access-Client-Secret": "wrong-secret" });
+  out.push([401, 403].includes(wrong.status) || (wrong.status >= 300 && wrong.status < 400) ? { name: "wrong service token secret rejected", status: "PASS" } : { name: "wrong service token secret rejected", status: "FAIL", detail: `HTTP ${wrong.status || "none"}` });
   const op = headers("PL_CF_DOCTOR");
-  const lake = await fetch(`${url}/api/ops/lake`, { headers: op }).catch(() => null);
-  const lakeBody = lake?.ok ? ((await lake.json()) as { landing?: { landed_through?: string | null; pending_roll?: boolean } }) : null;
-  out.push(
-    lakeBody?.landing
-      ? { name: "landing (LandingRoller)", status: "PASS", detail: `landed through ${lakeBody.landing.landed_through ?? "nothing yet"}` }
-      : { name: "landing (LandingRoller)", status: "FAIL", detail: `HTTP ${lake?.status ?? "none"}`, fix: "npm run deploy" },
-  );
-  const budget = await fetch(`${url}/api/ops/budget`, { headers: op }).catch(() => null);
-  if (budget?.ok) out.push(...opsBudgetChecks((await budget.json()) as OpsBudget));
-  else out.push({ name: "GET /api/ops/budget", status: "FAIL", detail: `HTTP ${budget?.status ?? "none"}`, fix: "npm run deploy" });
-  const ai = await fetch(`${url}/api/ops/ai`, { headers: op }).catch(() => null);
-  const aiBody = ai?.ok ? ((await ai.json()) as { ok?: boolean; gateway_log_id_present?: boolean }) : null;
-  out.push(aiBody?.gateway_log_id_present ? { name: "Workers AI through AI Gateway", status: "PASS" } : { name: "Workers AI through AI Gateway", status: "FAIL", detail: `HTTP ${ai?.status ?? "none"}`, fix: "npm run setup:prod (AI Gateway peoplelake)" });
-  const dispatch = await fetch(`${url}/api/ops/dispatch${withDispatch ? "?execute=1" : ""}`, { headers: op }).catch(() => null);
-  const dBody = dispatch?.ok ? ((await dispatch.json()) as { ok?: boolean }) : null;
-  out.push(dBody?.ok ? { name: `Cloud Run dispatch token${withDispatch ? " and one execution" : ""}`, status: "PASS" } : { name: "Cloud Run dispatch token", status: "FAIL", detail: `HTTP ${dispatch?.status ?? "none"}`, fix: "check GCP_DISPATCHER_KEY (npm run setup:prod -- --only worker)" });
+  const lake = await deps.probe(`${url}/api/ops/lake`, op);
+  const landing = lake.status === 200 ? (lake.json as { landing?: { landed_through?: string | null } } | null)?.landing : undefined;
+  out.push(landing ? { name: "landing (LandingRoller)", status: "PASS", detail: `landed through ${landing.landed_through ?? "nothing yet"}` } : { name: "landing (LandingRoller)", status: "FAIL", detail: `HTTP ${lake.status || "none"}`, fix: "npm run deploy" });
+  const budget = await deps.probe(`${url}/api/ops/budget`, op);
+  if (budget.status === 200 && budget.json) out.push(...opsBudgetChecks(budget.json as OpsBudget));
+  else out.push({ name: "GET /api/ops/budget", status: "FAIL", detail: `HTTP ${budget.status || "none"}`, fix: "npm run deploy" });
+  const ai = await deps.probe(`${url}/api/ops/ai`, op);
+  out.push((ai.json as { gateway_log_id_present?: boolean } | null)?.gateway_log_id_present ? { name: "Workers AI through AI Gateway", status: "PASS" } : { name: "Workers AI through AI Gateway", status: "FAIL", detail: `HTTP ${ai.status || "none"}`, fix: "npm run setup:prod (AI Gateway peoplelake)" });
+  const dispatch = await deps.probe(`${url}/api/ops/dispatch${opts.withDispatch ? "?execute=1" : ""}`, op);
+  out.push((dispatch.json as { ok?: boolean } | null)?.ok ? { name: `Cloud Run dispatch token${opts.withDispatch ? " and one execution" : ""}`, status: "PASS" } : { name: "Cloud Run dispatch token", status: "FAIL", detail: `HTTP ${dispatch.status || "none"}`, fix: "check GCP_DISPATCHER_KEY (npm run setup:prod -- --only worker)" });
   return out;
+}
+
+/** `peoplelake prod doctor-gcp --json`, merged into this doctor's checks. */
+export function gcpChecks(deps: DoctorDeps): Check[] {
+  const res = deps.exec(["uv", "run", "--project", "pipeline", "peoplelake", "prod", "doctor-gcp", "--json"], {});
+  try {
+    const rows = JSON.parse(res.stdout.trim().split("\n").pop() ?? "") as { name: string; status: Status; detail: string; fix: string }[];
+    return rows.map((r) => ({ name: r.name, status: r.status, ...(r.detail ? { detail: r.detail } : {}), ...(r.fix ? { fix: r.fix } : {}) }));
+  } catch {
+    return [{ name: "peoplelake prod doctor-gcp", status: "UNKNOWN", detail: `${res.stdout}${res.stderr}`.trim().slice(-300), fix: "uv sync --locked --project pipeline" }];
+  }
 }
 
 async function main(): Promise<number> {
   const root = process.cwd();
   const localOnly = process.argv.includes("--local-only");
   const quick = process.argv.includes("--quick");
-  const checks = [...(await localChecks(root))];
+  const deps = readOnly(realDeps);
+  const sections: [string, Check[]][] = [["Local", await localChecks(root, deps)]];
   if (!localOnly) {
-    checks.push(...prodFileChecks(root));
-    checks.push(...(await cloudflareChecks(root, process.argv.includes("--with-dispatch"))));
+    sections.push([".prod files", prodFileChecks(root)]);
+    sections.push(["Cloudflare", await cloudflareChecks(root, deps, { withDispatch: process.argv.includes("--with-dispatch"), env: process.env })]);
+    if (!quick) sections.push(["Google Cloud (peoplelake prod doctor-gcp)", gcpChecks(deps)]);
   }
-  for (const c of checks) console.log(format(c));
-  let failed = checks.some((c) => c.status === "FAIL" || c.status === "MISSING");
-  if (!localOnly && !quick) {
-    console.log("\nGoogle Cloud (peoplelake prod doctor-gcp)");
-    const gcp = spawnSync("uv", ["run", "--project", "pipeline", "peoplelake", "prod", "doctor-gcp"], { cwd: root, stdio: "inherit" });
-    failed = failed || gcp.status !== 0;
+  for (const [title, checks] of sections) {
+    console.log(`\n${title}`);
+    for (const c of checks) console.log(format(c));
   }
-  return failed ? 1 : 0;
+  const all = sections.flatMap(([, checks]) => checks);
+  console.log(`\n${summary(all).join("\n")}`);
+  return failed(all) ? 1 : 0;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

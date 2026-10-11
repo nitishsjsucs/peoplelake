@@ -522,12 +522,19 @@ def _cmd_prod(args: argparse.Namespace) -> int:
 
         return bootstrap(plan=args.plan, prod_dir=prod_dir)
     if args.prod_command == "doctor-gcp":
+        from dataclasses import asdict
+
+        from .prod.checks import failed, summary
         from .prod.doctor_gcp import doctor
 
         checks = doctor(prod_dir)
-        for c in checks:
-            print(c.line())
-        return 0 if all(c.status in ("PASS", "WARN") for c in checks) else 1
+        if args.json:
+            print(json.dumps([asdict(c) for c in checks]))
+        else:
+            for c in checks:
+                print(c.line())
+            print("\n" + "\n".join(summary(checks)))
+        return 1 if failed(checks) else 0
     from .prod.bootstrap_gcp import GcpConfig
 
     config = GcpConfig.load(prod_dir)
@@ -768,7 +775,9 @@ def build_parser() -> argparse.ArgumentParser:
     bs = prod_sub.add_parser("bootstrap-gcp", help="create every GCP resource, idempotent")
     bs.add_argument("--plan", action="store_true", help="print every mutation without making it")
     bs.set_defaults(func=_cmd_prod)
-    prod_sub.add_parser("doctor-gcp", help="check every GCP prerequisite").set_defaults(func=_cmd_prod)
+    doc = prod_sub.add_parser("doctor-gcp", help="check every GCP prerequisite (read only)")
+    doc.add_argument("--json", action="store_true", help="print the checks as JSON (npm run doctor merges them)")
+    doc.set_defaults(func=_cmd_prod)
     prod_sub.add_parser(
         "deploy-runner", help="build the runner image with Cloud Build and update the job"
     ).set_defaults(func=_cmd_prod)

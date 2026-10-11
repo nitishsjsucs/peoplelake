@@ -1,9 +1,19 @@
-"""`peoplelake prod doctor-gcp` (SPEC 21.3 and 21.0, Google Cloud part). Never prints secret values.
+"""`peoplelake prod doctor-gcp` (SPEC 21.3 and 21.0, Google Cloud part). Read only; never prints secret values.
+
+It runs before anything is provisioned as well as after: the project comes from `.prod/config.env`
+(`PL_GCP_PROJECT`, which the environment may override) or else from `gcloud config`, and every check that
+finds nothing says exactly what is missing and which README production setup step or command fixes it.
+
+Read only by construction: every gcloud command goes through `ReadOnlyGcloud`, which refuses anything
+outside a list of describe, list and get commands and runs gcloud with prompts off and API enablement
+prompts off (gcloud otherwise offers to enable a disabled API, which would change the project). The
+Google client calls are gets and lists; the one query (bytes billed this month, capped at 1 GB) runs only
+once a `peoplelake-*` service account exists, since nothing can be billed to accounts that do not exist.
 
 The project is shared by four repos: besides the resources, it checks that this repo's service accounts
 hold no project-level role other than `roles/bigquery.jobUser` and `roles/logging.logWriter`, that no
 `peoplelake_*` dataset has a default expiration, and the bytes billed this month by the `peoplelake-*`
-service accounts against the 275 GB monthly guard (its own query is capped at 1 GB)."""
+service accounts against the 275 GB monthly guard."""
 
 from __future__ import annotations
 
@@ -11,13 +21,18 @@ import json
 import os
 import shutil
 import subprocess
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ..budget import BQ_MONTHLY_BYTES_CAP
+from ..envfile import read_env_file
 from ..paths import repo_root
 from .bootstrap_gcp import (
     DATA_POLICIES,
     JOB,
+    REPO,
     SECRETS,
     SERVICE_ACCOUNTS,
     SERVICES,
@@ -35,6 +50,61 @@ MONTH_BILLED_SQL = (
     "WHERE STARTS_WITH(user_email, 'peoplelake-') AND creation_time >= TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), MONTH)"
 )
 
+# README "Production setup", "Steps only a person can do": the numbers the fixes cite (a test reads README).
+README_STEP = {"billing": 4, "quota_project": 6, "prod_files": 7, "setup": 8, "go_live": 10}
+SETUP_FIX = f"npm run setup:prod (README production setup step {README_STEP['setup']})"
+PROD_FILES_FIX = f"README production setup step {README_STEP['prod_files']}: .prod/config.env and .prod/secrets.env"
+
+# The only gcloud commands the doctor may run (prefixes of the argument list).
+READ_ONLY_GCLOUD: tuple[tuple[str, ...], ...] = (
+    ("auth", "list"),
+    ("config", "get-value"),
+    ("projects", "describe"),
+    ("projects", "get-iam-policy"),
+    ("billing", "projects", "describe"),
+    ("services", "list"),
+    ("resource-manager", "org-policies", "describe"),
+    ("iam", "service-accounts", "describe"),
+    ("storage", "buckets", "describe"),
+    ("secrets", "describe"),
+    ("artifacts", "repositories", "describe"),
+    ("run", "jobs", "describe"),
+    ("run", "jobs", "executions", "list"),
+)
+# No prompts at all, and in particular no "API ... not enabled, enable and retry?" (gcloud core properties
+# disable_prompts and should_prompt_to_enable_api).
+GCLOUD_ENV = {"CLOUDSDK_CORE_DISABLE_PROMPTS": "1", "CLOUDSDK_CORE_SHOULD_PROMPT_TO_ENABLE_API": "false"}
+
+
+def gcloud_read_only(args: list[str]) -> bool:
+    return any(tuple(args[: len(prefix)]) == prefix for prefix in READ_ONLY_GCLOUD)
+
+
+class ReadOnlyGcloud:
+    def __init__(self, runner: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> None:
+        self.runner = runner
+        self.project: str | None = None
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args: list[str], *, project: bool = True) -> subprocess.CompletedProcess:
+        if not gcloud_read_only(args):
+            raise PermissionError(f"the doctor runs read-only gcloud commands only, not: gcloud {' '.join(args[:4])}")
+        argv = ["gcloud", *args] + (["--project", self.project] if project and self.project else [])
+        self.calls.append(argv)
+        return self.runner(
+            argv,
+            capture_output=True,
+            text=True,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            env={**os.environ, **GCLOUD_ENV},
+        )
+
+
+def api_disabled(exc: BaseException) -> bool:
+    text = str(exc)
+    return "SERVICE_DISABLED" in text or "has not been used in project" in text or "it is disabled" in text
+
 
 def month_bytes_billed(client) -> int:  # noqa: ANN001
     """Bytes billed this UTC month by this repo's service accounts (the caller needs project-wide job
@@ -42,15 +112,85 @@ def month_bytes_billed(client) -> int:  # noqa: ANN001
     return int(list(client.query(MONTH_BILLED_SQL).result())[0]["b"])
 
 
-def _gcloud(args: list[str], project: str | None = None) -> subprocess.CompletedProcess:
-    argv = ["gcloud", *args] + (["--project", project] if project else [])
-    return subprocess.run(argv, capture_output=True, text=True, check=False)
+@dataclass
+class Readers:
+    """Google client reads, injectable for tests. Each raises the client's own exceptions."""
+
+    adc: Callable[[], tuple[bool, str | None]]
+    get_dataset: Callable[[str], Any]  # dataset id -> dataset, or None when it does not exist
+    taxonomies: Callable[[str], list[str]]  # location parent -> display names
+    data_policies: Callable[[str], list[str]]  # location parent -> data policy ids
+    month_billed: Callable[[], int]
 
 
-def doctor(prod_dir: Path | None = None) -> list[Check]:
+def real_readers(project: str, location: str) -> Readers:
+    from .adc import adc_quota_project
+
+    def bq():
+        from ..warehouse.bigquery_wh import bigquery_client
+
+        return bigquery_client(project, location)
+
+    def get_dataset(name: str):
+        from google.api_core.exceptions import NotFound
+
+        try:
+            return bq().get_dataset(f"{project}.{name}")
+        except NotFound:
+            return None
+
+    def taxonomies(parent: str) -> list[str]:
+        from google.cloud import datacatalog_v1
+
+        return [t.display_name for t in datacatalog_v1.PolicyTagManagerClient().list_taxonomies(parent=parent)]
+
+    def data_policies(parent: str) -> list[str]:
+        from google.cloud import bigquery_datapolicies_v1
+
+        client = bigquery_datapolicies_v1.DataPolicyServiceClient()
+        return [d.data_policy_id for d in client.list_data_policies(parent=parent)]
+
+    return Readers(
+        adc=adc_quota_project,
+        get_dataset=get_dataset,
+        taxonomies=taxonomies,
+        data_policies=data_policies,
+        month_billed=lambda: month_bytes_billed(bq()),
+    )
+
+
+def resolve_config(prod_dir: Path, env: Mapping[str, str], gcloud: ReadOnlyGcloud) -> tuple[GcpConfig | None, Check]:
+    """`.prod/config.env` (PL_* environment variables override it), else the project gcloud is configured for."""
+    in_file = read_env_file(prod_dir / "config.env")
+    merged = {**in_file, **{k: v for k, v in env.items() if k.startswith("PL_") and v}}
+    project = merged.get("PL_GCP_PROJECT", "")
+    if project:
+        config = GcpConfig.load(prod_dir) if in_file.get("PL_GCP_PROJECT") else GcpConfig(project=project)
+        config.project = project
+        config.region = merged.get("PL_GCP_REGION", config.region)
+        config.bq_location = merged.get("PL_BQ_LOCATION", config.bq_location)
+        return config, Check("Google Cloud project", "PASS", f"{project} (PL_GCP_PROJECT)")
+    configured = gcloud(["config", "get-value", "project"], project=False).stdout.strip()
+    fix = PROD_FILES_FIX
+    if configured and configured != "(unset)":
+        detail = f"PL_GCP_PROJECT is not set; checking {configured} from gcloud config"
+        return GcpConfig(project=configured), Check("Google Cloud project", "MISSING", detail, fix)
+    return None, Check("Google Cloud project", "MISSING", "PL_GCP_PROJECT is not set and gcloud has no project", fix)
+
+
+def doctor(
+    prod_dir: Path | None = None,
+    *,
+    gcloud: ReadOnlyGcloud | None = None,
+    readers: Callable[[str, str], Readers] = real_readers,
+    env: Mapping[str, str] | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+) -> list[Check]:
     prod_dir = prod_dir or repo_root() / ".prod"
+    gcloud = gcloud or ReadOnlyGcloud()
+    env = os.environ if env is None else env
     out: list[Check] = []
-    if shutil.which("gcloud") is None:
+    if which("gcloud") is None:
         return [
             Check(
                 "gcloud installed",
@@ -60,65 +200,69 @@ def doctor(prod_dir: Path | None = None) -> list[Check]:
             )
         ]
     out.append(Check("gcloud installed", "PASS"))
-    try:
-        config = GcpConfig.load(prod_dir)
-    except SystemExit as exc:
-        return [
-            *out,
-            Check(
-                ".prod/config.env",
-                "MISSING",
-                str(exc),
-                "fill PL_GCP_PROJECT and the other keys (README production setup, step 12)",
-            ),
-        ]
+    account = gcloud(
+        ["auth", "list", "--filter=status:ACTIVE", "--format=value(account)"], project=False
+    ).stdout.strip()
+    out.append(Check("gcloud login", "PASS" if account else "MISSING", "", "gcloud auth login"))
+    config, project_check = resolve_config(prod_dir, env, gcloud)
+    out.append(project_check)
+    if config is None:
+        return out
     p = config.project
+    gcloud.project = p
+    read = readers(p, config.bq_location)
+    state: dict[str, Any] = {"apis": set(), "service_accounts": set(), "job": False}
 
-    def login() -> Check:
-        account = _gcloud(["auth", "list", "--filter=status:ACTIVE", "--format=value(account)"]).stdout.strip()
-        return Check("gcloud login", "PASS" if account else "MISSING", account, "gcloud auth login")
+    def missing_api(api: str) -> str:
+        return f"API {api} is not enabled yet (setup enables it through bootstrap-gcp)"
 
     def adc() -> Check:
-        path = (
-            Path(os.environ.get("CLOUDSDK_CONFIG", Path.home() / ".config" / "gcloud"))
-            / "application_default_credentials.json"
+        loaded, quota = read.adc()
+        fix = (
+            f"README production setup step {README_STEP['quota_project']}: "
+            f"gcloud auth application-default set-quota-project {p}"
         )
-        if not path.exists():
+        if not loaded:
             return Check("application default credentials", "MISSING", "", "gcloud auth application-default login")
-        quota = json.loads(path.read_text()).get("quota_project_id")
-        ok = quota == p
-        return Check(
-            "ADC quota project",
-            "PASS" if ok else "FAIL",
-            f"quota_project_id={quota}",
-            f"gcloud auth application-default set-quota-project {p}",
-        )
+        return Check("ADC quota project", "PASS" if quota == p else "FAIL", f"quota_project_id={quota}", fix)
 
     def project() -> Check:
-        res = _gcloud(["projects", "describe", p, "--format=value(projectId)"])
-        return Check(f"project {p}", "PASS" if res.returncode == 0 else "MISSING", "", f"gcloud projects create {p}")
+        res = gcloud(["projects", "describe", p, "--format=value(projectId)"], project=False)
+        return Check(
+            f"project {p} exists",
+            "PASS" if res.returncode == 0 else "MISSING",
+            "",
+            "the project is shared and must exist already; check PL_GCP_PROJECT",
+        )
 
     def billing() -> Check:
-        enabled = _gcloud(["billing", "projects", "describe", p, "--format=value(billingEnabled)"]).stdout.strip()
+        res = gcloud(["billing", "projects", "describe", p, "--format=value(billingEnabled)"], project=False)
+        enabled = res.stdout.strip()
         return Check(
             "billing enabled",
             "PASS" if enabled.lower() == "true" else "FAIL",
-            enabled,
-            f"gcloud billing projects link {p} --billing-account=<BILLING_ACCOUNT_ID>",
+            f"billingEnabled={enabled or 'unknown'}"
+            + ("" if enabled.lower() == "true" else " (sandbox: no DML, 60-day table expiration)"),
+            f"README production setup step {README_STEP['billing']}: "
+            f"gcloud billing projects link {p} --billing-account=<OPEN_BILLING_ACCOUNT_ID>",
         )
 
     def apis() -> Check:
-        enabled = set(_gcloud(["services", "list", "--enabled", "--format=value(config.name)"], p).stdout.split())
+        enabled = set(gcloud(["services", "list", "--enabled", "--format=value(config.name)"]).stdout.split())
+        state["apis"] = enabled
         missing = [s for s in SERVICES if s not in enabled]
         return Check(
-            "APIs enabled", "PASS" if not missing else "MISSING", ", ".join(missing), "npm run setup:prod -- --only gcp"
+            f"APIs enabled ({len(SERVICES) - len(missing)} of {len(SERVICES)})",
+            "PASS" if not missing else "MISSING",
+            ", ".join(missing),
+            SETUP_FIX,
         )
 
     def key_policy() -> Check:
-        parent = _gcloud(["projects", "describe", p, "--format=value(parent.type)"]).stdout.strip()
+        parent = gcloud(["projects", "describe", p, "--format=value(parent.type)"], project=False).stdout.strip()
         if parent != "organization":
             return Check("service account key creation", "PASS", "no organization policy applies")
-        policy = _gcloud(
+        policy = gcloud(
             [
                 "resource-manager",
                 "org-policies",
@@ -126,8 +270,7 @@ def doctor(prod_dir: Path | None = None) -> list[Check]:
                 "iam.managed.disableServiceAccountKeyCreation",
                 "--effective",
                 "--format=json",
-            ],
-            p,
+            ]
         ).stdout
         blocked = key_creation_blocked(policy)
         return Check(
@@ -138,20 +281,22 @@ def doctor(prod_dir: Path | None = None) -> list[Check]:
         )
 
     def service_accounts() -> Check:
-        missing = [
-            config.sa(name)
+        present = {
+            name
             for name in SERVICE_ACCOUNTS
-            if _gcloud(["iam", "service-accounts", "describe", config.sa(name)], p).returncode != 0
-        ]
+            if gcloud(["iam", "service-accounts", "describe", config.sa(name)]).returncode == 0
+        }
+        state["service_accounts"] = present
+        missing = [name for name in SERVICE_ACCOUNTS if name not in present]
         return Check(
-            "service accounts (peoplelake-runner, -analyst, -dispatcher, -build)",
+            f"service accounts ({len(present)} of {len(SERVICE_ACCOUNTS)})",
             "PASS" if not missing else "MISSING",
             ", ".join(missing),
-            "npm run setup:prod -- --only gcp",
+            SETUP_FIX,
         )
 
     def project_roles() -> Check:
-        policy = json.loads(_gcloud(["projects", "get-iam-policy", p, "--format=json"]).stdout or "{}")
+        policy = json.loads(gcloud(["projects", "get-iam-policy", p, "--format=json"], project=False).stdout or "{}")
         extra = extra_project_roles(policy, {f"serviceAccount:{config.sa(n)}" for n in SERVICE_ACCOUNTS})
         return Check(
             "project-level roles of the peoplelake service accounts",
@@ -161,72 +306,69 @@ def doctor(prod_dir: Path | None = None) -> list[Check]:
         )
 
     def build_identity() -> Check:
-        ok = _gcloud(["storage", "buckets", "describe", f"gs://{build_bucket(p)}"], p).returncode == 0
-        return Check(
-            "build bucket for peoplelake-build",
-            "PASS" if ok else "MISSING",
-            build_bucket(p),
-            "npm run setup:prod -- --only gcp",
-        )
+        ok = gcloud(["storage", "buckets", "describe", f"gs://{build_bucket(p)}"]).returncode == 0
+        return Check("build bucket for peoplelake-build", "PASS" if ok else "MISSING", build_bucket(p), SETUP_FIX)
 
     def datasets() -> Check:
-        from google.api_core.exceptions import NotFound
-
-        from ..warehouse.bigquery_wh import bigquery_client
-
-        bq = bigquery_client(p, config.bq_location)
-        problems = []
+        problems, missing = [], []
         for name, hours in all_datasets():
-            try:
-                ds = bq.get_dataset(f"{p}.{name}")
-            except NotFound:
-                problems.append(f"{name} missing")
+            ds = read.get_dataset(name)
+            if ds is None:
+                missing.append(name)
                 continue
             if ds.max_time_travel_hours != hours:
                 problems.append(f"{name} time travel {ds.max_time_travel_hours} h (want {hours})")
             if ds.default_table_expiration_ms is not None or ds.default_partition_expiration_ms is not None:
                 problems.append(f"{name} has a default expiration (created in the sandbox?)")
+        if missing and len(missing) == len(all_datasets()):
+            return Check("BigQuery datasets", "MISSING", f"none of the {len(missing)} peoplelake_* datasets", SETUP_FIX)
+        if missing:
+            problems.insert(0, f"missing {', '.join(missing)}")
         return Check(
-            "datasets, time travel, no default expiration",
+            "BigQuery datasets, time travel, no default expiration",
             "PASS" if not problems else "FAIL",
-            "; ".join(problems) or "12 datasets",
-            "npm run setup:prod -- --only gcp",
+            "; ".join(problems) or f"{len(all_datasets())} datasets",
+            SETUP_FIX,
         )
 
     def taxonomy() -> Check:
-        from google.cloud import bigquery_datapolicies_v1, datacatalog_v1
-
+        name = "policy tags and data masking"
+        if "datacatalog.googleapis.com" not in state["apis"]:
+            return Check(name, "MISSING", missing_api("datacatalog.googleapis.com"), SETUP_FIX)
         parent = f"projects/{p}/locations/us"
-        found = [
-            t
-            for t in datacatalog_v1.PolicyTagManagerClient().list_taxonomies(parent=parent)
-            if t.display_name == TAXONOMY
-        ]
-        policies = {
-            d.data_policy_id
-            for d in bigquery_datapolicies_v1.DataPolicyServiceClient().list_data_policies(parent=parent)
-        }
-        missing = [x for x in DATA_POLICIES if x not in policies] + ([] if found else [TAXONOMY])
-        return Check(
-            "policy tags and data masking",
-            "PASS" if not missing else "MISSING",
-            ", ".join(missing),
-            "npm run setup:prod -- --only gcp",
-        )
+        try:
+            found = TAXONOMY in read.taxonomies(parent)
+            policies = set(read.data_policies(parent))
+        except Exception as exc:  # noqa: BLE001
+            if api_disabled(exc):
+                return Check(name, "MISSING", f"an API is not enabled yet: {str(exc)[:120]}", SETUP_FIX)
+            raise
+        missing = ([] if found else [TAXONOMY]) + [x for x in DATA_POLICIES if x not in policies]
+        return Check(name, "PASS" if not missing else "MISSING", ", ".join(missing), SETUP_FIX)
 
     def secrets() -> Check:
-        missing = [s for s in SECRETS if _gcloud(["secrets", "describe", s], p).returncode != 0]
-        return Check(
-            "Secret Manager secrets (names only)",
-            "PASS" if not missing else "MISSING",
-            ", ".join(missing),
-            "npm run setup:prod -- --only gcp",
-        )
+        name = "Secret Manager secrets (names only)"
+        if "secretmanager.googleapis.com" not in state["apis"]:
+            return Check(
+                name, "MISSING", f"{', '.join(SECRETS)}; {missing_api('secretmanager.googleapis.com')}", SETUP_FIX
+            )
+        missing = [s for s in SECRETS if gcloud(["secrets", "describe", s]).returncode != 0]
+        return Check(name, "PASS" if not missing else "MISSING", ", ".join(missing), SETUP_FIX)
+
+    def artifact_repo() -> Check:
+        name = f"Artifact Registry repository {REPO}"
+        if "artifactregistry.googleapis.com" not in state["apis"]:
+            return Check(name, "MISSING", missing_api("artifactregistry.googleapis.com"), SETUP_FIX)
+        res = gcloud(["artifacts", "repositories", "describe", REPO, f"--location={config.region}", "--format=json"])
+        return Check(name, "PASS" if res.returncode == 0 else "MISSING", config.region, SETUP_FIX)
 
     def job() -> Check:
-        res = _gcloud(["run", "jobs", "describe", JOB, f"--region={config.region}", "--format=json"], p)
+        if "run.googleapis.com" not in state["apis"]:
+            return Check(f"Cloud Run Job {JOB}", "MISSING", missing_api("run.googleapis.com"), SETUP_FIX)
+        res = gcloud(["run", "jobs", "describe", JOB, f"--region={config.region}", "--format=json"])
         if res.returncode != 0:
-            return Check("Cloud Run Job", "MISSING", JOB, "npm run setup:prod -- --only gcp")
+            return Check(f"Cloud Run Job {JOB}", "MISSING", config.region, SETUP_FIX)
+        state["job"] = True
         labels = json.loads(res.stdout).get("metadata", {}).get("labels", {})
         head = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=repo_root(), capture_output=True, text=True
@@ -240,7 +382,9 @@ def doctor(prod_dir: Path | None = None) -> list[Check]:
         )
 
     def last_execution() -> Check:
-        res = _gcloud(
+        if not state["job"]:
+            return Check("last runner execution", "INFO", "checked once the job exists")
+        res = gcloud(
             [
                 "run",
                 "jobs",
@@ -250,12 +394,13 @@ def doctor(prod_dir: Path | None = None) -> list[Check]:
                 f"--region={config.region}",
                 "--limit=1",
                 "--format=json",
-            ],
-            p,
+            ]
         )
         rows = json.loads(res.stdout or "[]")
         if not rows:
-            return Check("last runner execution", "UNKNOWN", "no executions yet", "npm run prod:e2e")
+            return Check(
+                "last runner execution", "INFO", "no executions yet (the first one comes with npm run prod:e2e)"
+            )
         conditions = {c.get("type"): c.get("status") for c in rows[0].get("status", {}).get("conditions", [])}
         return Check(
             "last runner execution",
@@ -265,12 +410,13 @@ def doctor(prod_dir: Path | None = None) -> list[Check]:
         )
 
     def billed() -> Check:
-        from ..warehouse.bigquery_wh import bigquery_client
-
-        b = month_bytes_billed(bigquery_client(p, config.bq_location))
+        name = "BigQuery bytes billed this month by peoplelake-* service accounts"
+        if not state["service_accounts"]:
+            return Check(name, "PASS", "0 bytes: no peoplelake-* service account exists yet (no query run)")
+        b = read.month_billed()
         share = b / BQ_MONTHLY_BYTES_CAP
         return Check(
-            "BigQuery bytes billed this month by peoplelake-* service accounts",
+            name,
             "PASS" if share < 0.9 else "WARN",
             f"{b:,} bytes ({share:.1%} of the 275 GB monthly guard)",
             "the guard skips transforms past 275 GB; drills resume next month with --scenarios",
@@ -289,15 +435,16 @@ def doctor(prod_dir: Path | None = None) -> list[Check]:
         prod_fresh = list(results.glob("freshness-prod-*.json"))
         drill = list(results.glob("scenarios-*-bigquery-*.json"))
         missing = ([] if prod_fresh else ["prod:e2e freshness"]) + ([] if drill else ["BigQuery drill"])
+        # Reported, not failed: the doctor must pass before the go-live that produces this evidence.
         return Check(
             "go-live evidence",
-            "PASS" if not missing else "MISSING",
+            "PASS" if not missing else "WARN",
             ", ".join(missing),
-            "npm run prod:e2e; uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10 --target prod-drill",
+            f"README production setup step {README_STEP['go_live']}: npm run prod:e2e, then the BigQuery drill "
+            "(eval scenarios --target prod-drill)",
         )
 
     for name, fn in (
-        ("gcloud login", login),
         ("ADC", adc),
         ("project", project),
         ("billing", billing),
@@ -309,6 +456,7 @@ def doctor(prod_dir: Path | None = None) -> list[Check]:
         ("datasets", datasets),
         ("taxonomy", taxonomy),
         ("secrets", secrets),
+        ("artifact registry", artifact_repo),
         ("job", job),
         ("execution", last_execution),
         ("billed bytes", billed),

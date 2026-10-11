@@ -2,7 +2,25 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { format, freePlanChecks, opsBudgetChecks, prodFileChecks, scriptsMissingTz, versionAtLeast } from "../../scripts/doctor.ts";
+import {
+  type Check,
+  cloudflareChecks,
+  type DoctorDeps,
+  doctorCommandAllowed,
+  failed,
+  format,
+  freePlanChecks,
+  listsName,
+  opsBudgetChecks,
+  PROD_FILES_FIX,
+  prodFileChecks,
+  README_STEP,
+  readOnly,
+  SETUP_FIX,
+  scriptsMissingTz,
+  summary,
+  versionAtLeast,
+} from "../../scripts/doctor.ts";
 import { parsePersonaEmails } from "../../scripts/lib/free-plan.ts";
 import { buildRoleMap, type Exec, finalRunsEnabled, readEnvFile, redact, SERVICE_TOKENS, Setup, upsertEnv } from "../../scripts/setup-prod.ts";
 
@@ -153,5 +171,227 @@ describe("doctor on the Workers Free plan", () => {
     expect(by["Durable Object rows read today"]?.status).toBe("PASS");
     expect(by["failure backoff"]).toMatchObject({ status: "WARN" });
     expect(by["BigQuery bytes billed this month (2026-10)"]?.status).toBe("PASS");
+  });
+});
+
+describe("doctor: read only, before and after setup", () => {
+  const ACCOUNT = "0123456789abcdef0123456789abcdef";
+
+  interface World {
+    loggedIn?: boolean;
+    r2Enabled?: boolean;
+    buckets?: string[];
+    catalog?: boolean;
+    queues?: string[];
+    deployed?: boolean;
+    idps?: string[] | "forbidden";
+    tokens?: string[];
+    gateway?: boolean;
+    app?: boolean;
+  }
+
+  function fakeDeps(w: World) {
+    const commands: string[][] = [];
+    const accounts: (string | undefined)[] = [];
+    const requests: { method: string; url: string }[] = [];
+    const probes: string[] = [];
+    const deps: DoctorDeps = {
+      exec: (argv, opts) => {
+        commands.push(argv);
+        accounts.push(opts.env?.["CLOUDFLARE_ACCOUNT_ID"]);
+        const cmd = argv.slice(1).join(" ");
+        const ok = (stdout: string) => ({ ok: true, stdout, stderr: "" });
+        const fail = (stderr: string) => ({ ok: false, stdout: "", stderr });
+        if (cmd.startsWith("whoami")) return w.loggedIn === false ? fail("not authenticated") : ok(JSON.stringify({ loggedIn: true, accounts: [{ id: ACCOUNT }] }));
+        if (cmd.startsWith("auth token")) return ok(JSON.stringify({ type: "oauth", token: "oauth-token-value" }));
+        if (cmd.startsWith("r2 bucket list")) return w.r2Enabled === false ? fail("Please enable R2 through the Cloudflare Dashboard. [code: 10042]") : ok((w.buckets ?? []).map((b) => `name:           ${b}\ncreation_date:  2026-10-11`).join("\n\n"));
+        if (cmd.startsWith("basin catalog get")) return w.catalog ? ok("Catalog URI: https://catalog.example/x\nWarehouse: acct_peoplelake-lake\nStatus: active") : fail("not enabled");
+        if (cmd.startsWith("queues list")) return ok((w.queues ?? []).map((q) => `| ${q} | 1 |`).join("\n"));
+        if (cmd.startsWith("deployments list")) return w.deployed ? ok("Created: 2026-10-11") : fail("This Worker does not exist on your account. [code: 10007]");
+        if (cmd.startsWith("secret list")) return ok(JSON.stringify([{ name: "GCP_DISPATCHER_KEY", type: "secret_text" }]));
+        if (argv.includes("lake")) return ok(JSON.stringify({ table: "peoplelake.raw_events", exists: true, landing_cursor: null }));
+        return fail("unexpected");
+      },
+      http: async (method, url) => {
+        requests.push({ method, url });
+        if (url.endsWith("/workers/subdomain")) return { ok: true, status: 200, json: { result: { subdomain: "example-sub" } } };
+        if (url.endsWith("/user/tokens/verify")) return { ok: true, status: 200, json: { result: { status: "active" } } };
+        if (url.endsWith("/access/identity_providers")) return w.idps === "forbidden" ? { ok: false, status: 403, json: {} } : { ok: true, status: 200, json: { result: (w.idps ?? []).map((type) => ({ type })) } };
+        if (url.endsWith("/access/service_tokens")) return { ok: true, status: 200, json: { result: (w.tokens ?? []).map((name) => ({ name, id: name })) } };
+        if (url.includes("/ai-gateway/gateways/")) return w.gateway ? { ok: true, status: 200, json: { result: {} } } : { ok: false, status: 404, json: {} };
+        if (url.endsWith("/access/apps")) return { ok: true, status: 200, json: { result: w.app ? [{ name: "peoplelake", aud: "aud-1" }] : [] } };
+        return { ok: false, status: 500, json: {} };
+      },
+      probe: async (url, headers) => {
+        probes.push(url);
+        if (url.endsWith("/cdn-cgi/access/certs")) return { status: 200, json: { keys: [{ kid: "a" }, { kid: "b" }] } };
+        if (url.endsWith("/v1/health")) return { status: 302, json: null };
+        if (url.endsWith("/v1/health/auth")) {
+          const id = headers?.["CF-Access-Client-Id"] ?? "";
+          if (headers?.["CF-Access-Client-Secret"] === "wrong-secret") return { status: 403, json: null };
+          const role = Object.values(SERVICE_TOKENS).find((t) => id === `${t.env}-id`)?.role;
+          return { status: 200, json: { roles: role ? [role] : [] } };
+        }
+        if (url.endsWith("/api/ops/lake")) return { status: 200, json: { landing: { landed_through: null } } };
+        if (url.endsWith("/api/ops/budget")) return { status: 200, json: {} };
+        if (url.endsWith("/api/ops/ai")) return { status: 200, json: { gateway_log_id_present: true } };
+        if (url.includes("/api/ops/dispatch")) return { status: 200, json: { ok: true } };
+        return { status: 0, json: null };
+      },
+    };
+    return { deps, commands, accounts, requests, probes };
+  }
+
+  function root(files: Record<string, string> = {}): string {
+    const dir = mkdtempSync(join(tmpdir(), "pl-doctor-"));
+    mkdirSync(join(dir, ".prod"));
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, ".prod", name), text, { mode: 0o600 });
+    return dir;
+  }
+
+  const byName = (checks: Check[]) => Object.fromEntries(checks.map((c) => [c.name, c]));
+
+  it("allows only read commands and GET requests", async () => {
+    for (const ok of [["/x/node_modules/.bin/wrangler", "whoami", "--json"], ["wrangler", "r2", "bucket", "list"], ["wrangler", "basin", "catalog", "get", "b"], ["uv", "run", "--project", "pipeline", "peoplelake", "prod", "doctor-gcp", "--json"]]) {
+      expect(doctorCommandAllowed(ok)).toBe(true);
+    }
+    for (const no of [
+      ["wrangler", "r2", "bucket", "create", "peoplelake-lake"],
+      ["wrangler", "queues", "create", "q"],
+      ["wrangler", "basin", "catalog", "enable", "b"],
+      ["wrangler", "deploy"],
+      ["wrangler", "secret", "put", "X"],
+      ["uv", "run", "--project", "pipeline", "peoplelake", "prod", "bootstrap-gcp"],
+      ["uv", "run", "--project", "pipeline", "peoplelake", "lake", "init", "--target", "prod"],
+      ["gcloud", "services", "enable", "run.googleapis.com"],
+    ]) {
+      expect(doctorCommandAllowed(no)).toBe(false);
+    }
+    const guarded = readOnly(fakeDeps({}).deps);
+    expect(() => guarded.exec(["wrangler", "r2", "bucket", "create", "x"], {})).toThrow(/read-only/);
+    expect(() => guarded.http("POST", "https://api.cloudflare.com/client/v4/x", "t")).toThrow(/only sends GET/);
+  });
+
+  it("before setup, reports exactly what is missing on the real account, read only", async () => {
+    const fake = fakeDeps({ buckets: ["someone-elses-bucket"], queues: ["peoplelake-lake-events-dlq-old"] });
+    const checks = await cloudflareChecks(root(), readOnly(fake.deps), { env: {} });
+    const by = byName(checks);
+    expect(by["wrangler login (OAuth)"]?.status).toBe("PASS");
+    expect(by["Cloudflare account"]).toMatchObject({ status: "INFO" });
+    expect(by["workers.dev subdomain"]).toMatchObject({ status: "PASS", detail: "example-sub.workers.dev" });
+    expect(by["R2 bucket peoplelake-lake"]?.status).toBe("MISSING");
+    expect(by["R2 bucket peoplelake-reports"]?.status).toBe("MISSING");
+    expect(by["Basin Catalog on peoplelake-lake"]).toMatchObject({ status: "MISSING", detail: "the bucket does not exist yet" });
+    expect(by["Iceberg table peoplelake.raw_events"]?.detail).toContain("PL_R2_CATALOG_TOKEN");
+    expect(by["queue peoplelake-lake-events"]?.status).toBe("MISSING");
+    expect(by["queue peoplelake-lake-events-dlq"]?.status).toBe("MISSING");
+    expect(by["Zero Trust team domain"]).toMatchObject({ status: "MISSING", detail: "PL_ACCESS_TEAM_DOMAIN is not set" });
+    expect(by["One-time PIN login method"]).toMatchObject({ status: "UNKNOWN", detail: "not checkable without PL_CF_SETUP_TOKEN" });
+    expect(by["One-time PIN login method"]?.fix).toContain(`step ${README_STEP.onetimePin}`);
+    expect(by["Access service tokens, AI Gateway and the Access application"]?.status).toBe("UNKNOWN");
+    expect(by["Worker peoplelake deployed"]?.status).toBe("MISSING");
+    expect(checks.at(-1)?.status).toBe("INFO");
+    expect(checks.filter((c) => c.status === "UNKNOWN").map((c) => c.name)).toEqual(["One-time PIN login method", "Access service tokens, AI Gateway and the Access application"]);
+    for (const argv of fake.commands) expect(doctorCommandAllowed(argv)).toBe(true);
+    expect(fake.requests.every((r) => r.method === "GET")).toBe(true);
+    const printed = checks.map(format).join("\n");
+    expect(printed).not.toContain("oauth-token-value");
+    expect(printed).not.toContain(ACCOUNT);
+    // every wrangler call after the login is pinned to the account it checks
+    expect(fake.accounts.slice(1).every((a) => a === ACCOUNT)).toBe(true);
+    expect(fake.accounts.length).toBeGreaterThan(4);
+  });
+
+  it("names R2 itself when it is not enabled", async () => {
+    const checks = await cloudflareChecks(root(), readOnly(fakeDeps({ r2Enabled: false }).deps), { env: {} });
+    expect(byName(checks)["R2"]).toMatchObject({ status: "MISSING", detail: "R2 is not enabled on the account" });
+  });
+
+  it("stops at the login when wrangler is not logged in", async () => {
+    const checks = await cloudflareChecks(root(), readOnly(fakeDeps({ loggedIn: false }).deps), { env: {} });
+    expect(checks).toEqual([{ name: "wrangler login", status: "MISSING", fix: "npx wrangler login" }]);
+  });
+
+  it("with the setup token, checks One-time PIN, service tokens, AI Gateway and the Access application", async () => {
+    const dir = root({ "secrets.env": "PL_CF_SETUP_TOKEN=setup-token-value\n" });
+    const env = { PL_ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com", PL_CF_ACCOUNT_ID: ACCOUNT };
+    const none = byName(await cloudflareChecks(dir, readOnly(fakeDeps({ idps: [] }).deps), { env }));
+    expect(none["Zero Trust team domain"]).toMatchObject({ status: "PASS", detail: "2 signing keys published" });
+    expect(none["Cloudflare account (PL_CF_ACCOUNT_ID) in the wrangler login"]?.status).toBe("PASS");
+    expect(none["PL_CF_SETUP_TOKEN active"]?.status).toBe("PASS");
+    expect(none["One-time PIN login method"]).toMatchObject({ status: "MISSING" });
+    expect(none["One-time PIN login method"]?.fix).toContain(`step ${README_STEP.onetimePin}`);
+    expect(none["Access service tokens"]?.detail).toBe(Object.keys(SERVICE_TOKENS).join(", "));
+    expect(none["AI Gateway peoplelake"]?.status).toBe("MISSING");
+    expect(none["Access application peoplelake"]?.status).toBe("MISSING");
+    const forbidden = byName(await cloudflareChecks(dir, readOnly(fakeDeps({ idps: "forbidden" }).deps), { env }));
+    expect(forbidden["One-time PIN login method"]?.status).toBe("WARN");
+    const otp = byName(await cloudflareChecks(dir, readOnly(fakeDeps({ idps: ["onetimepin"] }).deps), { env }));
+    expect(otp["One-time PIN login method"]?.status).toBe("PASS");
+  });
+
+  it("after setup, every check passes, live checks included", async () => {
+    const tokenSecrets = Object.values(SERVICE_TOKENS).flatMap((t) => [`${t.env}_CLIENT_ID=${t.env}-id`, `${t.env}_CLIENT_SECRET=${t.env}-secret`]);
+    const state = JSON.parse(readFileSync("scripts/fixtures/prod-state.example.json", "utf8")) as { account_id: string; access: { aud: string } };
+    state.account_id = ACCOUNT;
+    state.access.aud = "aud-1";
+    const dir = root({
+      "config.env": `PL_CF_ACCOUNT_ID=${ACCOUNT}\n`,
+      "secrets.env": ["PL_CF_SETUP_TOKEN=setup-token-value", "PL_R2_CATALOG_TOKEN=catalog-token-value", ...tokenSecrets].join("\n"),
+      "state.json": JSON.stringify(state),
+    });
+    const fake = fakeDeps({ buckets: ["peoplelake-lake", "peoplelake-reports"], catalog: true, queues: ["peoplelake-lake-events", "peoplelake-lake-events-dlq"], deployed: true, idps: ["onetimepin"], tokens: Object.keys(SERVICE_TOKENS), gateway: true, app: true });
+    const checks = await cloudflareChecks(dir, readOnly(fake.deps), { env: {} });
+    expect(checks.filter((c) => c.status !== "PASS").map((c) => `${c.name}: ${c.status}`)).toEqual([]);
+    expect(fake.probes).toContain("https://peoplelake.example-sub.workers.dev/api/ops/dispatch");
+    expect(failed([...checks, ...prodFileChecks(dir).filter((c) => c.status !== "INFO")])).toBe(false);
+  });
+
+  it("matches whole names only and summarizes by fix", () => {
+    expect(listsName("| peoplelake-lake-events-dlq | 0 |", "peoplelake-lake-events")).toBe(false);
+    expect(listsName("| peoplelake-lake-events | 0 |", "peoplelake-lake-events")).toBe(true);
+    const lines = summary([
+      { name: "a", status: "PASS" },
+      { name: "b", status: "MISSING", fix: "npm run setup:prod (README production setup step 8)" },
+      { name: "c", status: "FAIL", fix: "README production setup step 4: link billing" },
+      { name: "d", status: "INFO" },
+      { name: "e", status: "WARN", fix: "chmod 600" },
+      { name: "f", status: "MISSING", fix: "npm run setup:prod (README production setup step 8)" },
+    ]);
+    expect(lines).toEqual([
+      "6 checks: 1 pass, 1 fail, 2 missing, 1 warn, 1 info",
+      "Not passing, grouped by fix in README step order:",
+      "  README production setup step 4: link billing",
+      "    - c (FAIL)",
+      "  npm run setup:prod (README production setup step 8)",
+      "    - b (MISSING)",
+      "    - f (MISSING)",
+      "  chmod 600",
+      "    - e (WARN)",
+    ]);
+  });
+
+  it("cites the same README steps and setup fix as doctor-gcp, so the merged summary groups them", () => {
+    const py = readFileSync("pipeline/src/peoplelake/prod/doctor_gcp.py", "utf8");
+    const pySteps = Object.fromEntries([...(/README_STEP = \{([^}]+)\}/.exec(py)?.[1] ?? "").matchAll(/"(\w+)": (\d+)/g)].map((m) => [m[1], Number(m[2])]));
+    expect(pySteps).toEqual({ billing: README_STEP.billing, quota_project: README_STEP.quotaProject, prod_files: README_STEP.prodFiles, setup: README_STEP.setup, go_live: README_STEP.goLive });
+    expect(py).toContain(`SETUP_FIX = f"npm run setup:prod (README production setup step {README_STEP['setup']})"`);
+    expect(SETUP_FIX).toBe(`npm run setup:prod (README production setup step ${README_STEP.setup})`);
+    expect(py).toContain(`PROD_FILES_FIX = f"README production setup step {README_STEP['prod_files']}: .prod/config.env and .prod/secrets.env"`);
+    expect(PROD_FILES_FIX).toBe(`README production setup step ${README_STEP.prodFiles}: .prod/config.env and .prod/secrets.env`);
+  });
+
+  it("cites the right README production setup steps", () => {
+    const readme = readFileSync("README.md", "utf8");
+    const section = readme.split("### Steps only a person can do")[1]?.split("\n### ")[0] ?? "";
+    const steps = new Map([...section.matchAll(/^\s*(\d+)\. (.+)$/gm)].map((m) => [Number(m[1]), m[2] ?? ""]));
+    expect(steps.get(README_STEP.onetimePin)).toContain("One-time PIN");
+    expect(steps.get(README_STEP.catalogToken)).toContain("Admin Read & Write");
+    expect(steps.get(README_STEP.setupToken)).toContain("peoplelake-setup");
+    expect(steps.get(README_STEP.billing)?.toLowerCase()).toContain("billing");
+    expect(steps.get(README_STEP.quotaProject)).toContain("set-quota-project");
+    expect(steps.get(README_STEP.prodFiles)).toContain(".prod/config.env");
+    expect(steps.get(README_STEP.setup)).toContain("setup:prod");
+    expect(steps.get(README_STEP.goLive)).toContain("Go live");
   });
 });
