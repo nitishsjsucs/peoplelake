@@ -1,0 +1,136 @@
+{
+  "records": [
+    {
+      "id": "6b57484b-c0b0-58e9-964d-c37a19962c22",
+      "type": "requisition.opened",
+      "object": {
+        "kind": "requisition",
+        "id": "Q000001"
+      },
+      "seq": 1,
+      "occurred_at": "2023-01-01T12:00:06Z",
+      "effective_on": "2023-01-01",
+      "v": 1,
+      "attributes": {
+        "requisition_id": "Q000001",
+        "department_id": "D04",
+        "job_code": "J01"
+      }
+    },
+    {
+      "id": "01d81b95-3c4b-532b-9021-af23028f216e",
+      "type": "application.submitted",
+      "object": {
+        "kind": "application",
+        "id": "A000002"
+      },
+      "seq": 2,
+      "occurred_at": "2023-01-02T10:17:45Z",
+      "effective_on": "2023-01-02",
+      "v": 1,
+      "attributes": {
+        "application_id": "A000002",
+        "requisition_id": "Q000001",
+        "candidate_id": "C000002"
+      }
+    },
+    {
+      "id": "71b13ad7-7f4b-57b7-9d63-13d040d20cc6",
+      "type": "application.stage_changed",
+      "object": {
+        "kind": "application",
+        "id": "A000006"
+      },
+      "seq": 20,
+      "occurred_at": "2023-01-05T16:26:25Z",
+      "effective_on": "2023-01-05",
+      "v": 1,
+      "attributes": {
+        "application_id": "A000006",
+        "from_stage": "applied",
+        "to_stage": "screen"
+      }
+    },
+    {
+      "id": "e1bb2b0a-925d-541c-8e14-b03e48b5fcf4",
+      "type": "offer.extended",
+      "object": {
+        "kind": "offer",
+        "id": "O000001"
+      },
+      "seq": 74,
+      "occurred_at": "2023-01-13T09:48:40Z",
+      "effective_on": "2023-01-13",
+      "v": 1,
+      "attributes": {
+        "offer_id": "O000001",
+        "application_id": "A000001",
+        "requisition_id": "Q000001",
+        "candidate_id": "C000001",
+        "proposed_start_date": "2023-02-12"
+      }
+    },
+    {
+      "id": "21ec65e4-14c7-5f14-bf1e-9eb585ddc06f",
+      "type": "offer.accepted",
+      "object": {
+        "kind": "offer",
+        "id": "O000001"
+      },
+      "seq": 105,
+      "occurred_at": "2023-01-18T08:05:34Z",
+      "effective_on": "2023-01-18",
+      "v": 1,
+      "attributes": {
+        "offer_id": "O000001",
+        "start_date": "2023-02-12"
+      }
+    },
+    {
+      "id": "f63b0106-8d58-5ccc-8a6b-19b4778b77ff",
+      "type": "requisition.closed",
+      "object": {
+        "kind": "requisition",
+        "id": "Q000001"
+      },
+      "seq": 106,
+      "occurred_at": "2023-01-18T08:12:16Z",
+      "effective_on": "2023-01-18",
+      "v": 1,
+      "attributes": {
+        "requisition_id": "Q000001",
+        "close_reason": "filled"
+      }
+    },
+    {
+      "id": "dcf854b7-9ea6-5162-a514-ca72794c3508",
+      "type": "offer.declined",
+      "object": {
+        "kind": "offer",
+        "id": "O000006"
+      },
+      "seq": 163,
+      "occurred_at": "2023-01-27T16:00:45Z",
+      "effective_on": "2023-01-27",
+      "v": 1,
+      "attributes": {
+        "offer_id": "O000006"
+      }
+    },
+    {
+      "id": "d4ab87d6-2e70-59ef-8336-6e93f2950a09",
+      "type": "offer.rescinded",
+      "object": {
+        "kind": "offer",
+        "id": "O000076"
+      },
+      "seq": 1312,
+      "occurred_at": "2023-09-20T11:32:39Z",
+      "effective_on": "2023-09-20",
+      "v": 1,
+      "attributes": {
+        "offer_id": "O000076"
+      }
+    }
+  ]
+}

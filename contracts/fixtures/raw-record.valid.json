@@ -1,0 +1,16 @@
+{
+  "event_id": "651c29db-7927-534f-a108-40967d0a1b21",
+  "source": "hris",
+  "event_type": "worker.hired",
+  "entity_id": "E000261",
+  "source_sequence": 1,
+  "source_updated_at": "2012-01-13T18:29:26Z",
+  "effective_date": "2012-01-10",
+  "schema_version": 1,
+  "payload": "{\"ats_candidate_id\":null,\"department_id\":\"D08\",\"fte_bp\":10000,\"hire_source\":\"initial_load\",\"job_code\":\"J15\",\"location_id\":\"L1\",\"spell_no\":1}",
+  "payload_sha256": "b59a702ac46c7944755ff302cc83017243b78beb8652b872ba5a215d82036c95",
+  "received_at": "2026-10-10T17:00:00.123Z",
+  "delivery_id": "0f5c9a52-3d7e-4b1a-9c2d-6e8f7a1b2c3d",
+  "ingest_request_id": "req-0001",
+  "producer": "peoplelake-ingest/0.1.0"
+}

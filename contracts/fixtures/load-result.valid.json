@@ -1,0 +1,31 @@
+{
+  "job_id": "r-mgk3x2-000042-load-a1",
+  "run_id": "r-mgk3x2-000042",
+  "attempt": 1,
+  "status": "succeeded",
+  "lake": {
+    "table": "peoplelake.raw_events",
+    "from_snapshot": "6917324011837466517",
+    "to_snapshot": "1835624018375013310",
+    "snapshots_read": 3,
+    "fallback_full_scan": false
+  },
+  "rows_read": 1500,
+  "rows_inserted": 1500,
+  "duplicate_deliveries_skipped": 0,
+  "unique_new_events": 1480,
+  "raw_max_load_seq": 1760100000000042,
+  "min_effective_date_new": "2012-01-10",
+  "received_histogram_10s": [
+    [
+      1760117000,
+      500
+    ],
+    [
+      1760117010,
+      1000
+    ]
+  ],
+  "warehouse": "duckdb",
+  "duration_ms": 812
+}

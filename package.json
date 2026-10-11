@@ -15,7 +15,9 @@
     "typecheck": "tsc -p tsconfig.worker.json && tsc -p tsconfig.worker-test.json && tsc -p tsconfig.node.json",
     "test": "TZ=UTC vitest run",
     "test:py": "TZ=UTC uv run --project pipeline pytest",
-    "check:prose": "TZ=UTC node scripts/check-prose.ts"
+    "check:prose": "TZ=UTC node scripts/check-prose.ts",
+    "contracts:gen": "TZ=UTC node scripts/gen-contracts.ts",
+    "contracts:check": "TZ=UTC node scripts/gen-contracts.ts --check"
   },
   "dependencies": {
     "hono": "4.13.13",

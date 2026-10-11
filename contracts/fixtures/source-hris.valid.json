@@ -1,0 +1,120 @@
+{
+  "events": [
+    {
+      "eventId": "651c29db-7927-534f-a108-40967d0a1b21",
+      "eventType": "worker.hired",
+      "workerId": "E000261",
+      "sequence": 1,
+      "recordedAt": "2012-01-13T18:29:26Z",
+      "effectiveDate": "2012-01-10",
+      "schemaVersion": 1,
+      "data": {
+        "spell_no": 1,
+        "department_id": "D08",
+        "job_code": "J15",
+        "location_id": "L1",
+        "fte_bp": 10000,
+        "ats_candidate_id": null,
+        "hire_source": "initial_load"
+      }
+    },
+    {
+      "eventId": "150a6881-4943-5d2d-b1d8-5496e6c43cc8",
+      "eventType": "worker.job_changed",
+      "workerId": "E000268",
+      "sequence": 401,
+      "recordedAt": "2023-01-04T10:44:56Z",
+      "effectiveDate": "2023-01-04",
+      "schemaVersion": 1,
+      "data": {
+        "from_job_code": "J09",
+        "to_job_code": "J13",
+        "change_type": "promotion"
+      }
+    },
+    {
+      "eventId": "a77a2912-a312-5acd-b3e4-30fd36b5d42f",
+      "eventType": "worker.terminated",
+      "workerId": "E000351",
+      "sequence": 402,
+      "recordedAt": "2023-01-05T10:14:27Z",
+      "effectiveDate": "2023-01-02",
+      "schemaVersion": 1,
+      "data": {
+        "termination_type": "involuntary",
+        "reason_code": "RESTRUCTURE"
+      }
+    },
+    {
+      "eventId": "afa7e044-9604-592a-acbc-5b3ad3eabf0c",
+      "eventType": "worker.fte_changed",
+      "workerId": "E000323",
+      "sequence": 407,
+      "recordedAt": "2023-01-11T19:09:13Z",
+      "effectiveDate": "2023-01-09",
+      "schemaVersion": 1,
+      "data": {
+        "from_fte_bp": 10000,
+        "to_fte_bp": 6000
+      }
+    },
+    {
+      "eventId": "9f966b2a-9644-5c16-9465-492431528b4e",
+      "eventType": "worker.transferred",
+      "workerId": "E000021",
+      "sequence": 410,
+      "recordedAt": "2023-01-18T11:13:16Z",
+      "effectiveDate": "2023-01-17",
+      "schemaVersion": 1,
+      "data": {
+        "from_department_id": "D09",
+        "to_department_id": "D04"
+      }
+    },
+    {
+      "eventId": "6b179aca-6a89-5b48-b011-f41ea17097d8",
+      "eventType": "worker.event_corrected",
+      "workerId": "E000220",
+      "sequence": 453,
+      "recordedAt": "2023-03-11T18:36:55Z",
+      "effectiveDate": "2023-01-18",
+      "schemaVersion": 1,
+      "data": {
+        "corrects_event_id": "94691b21-e6b5-552e-b2a7-bced3a700f19",
+        "corrected_fields": {
+          "effective_date": "2023-01-18"
+        }
+      }
+    },
+    {
+      "eventId": "47522757-5487-582c-befe-ce123745a8b5",
+      "eventType": "worker.event_rescinded",
+      "workerId": "E000300",
+      "sequence": 631,
+      "recordedAt": "2023-10-13T18:23:34Z",
+      "effectiveDate": "2023-10-04",
+      "schemaVersion": 1,
+      "data": {
+        "rescinds_event_id": "df775022-7299-5547-a6bf-8e4a82c70f0b"
+      }
+    },
+    {
+      "eventId": "3a84e059-4244-5514-9f0d-c8440d88c92a",
+      "eventType": "worker.rehired",
+      "workerId": "E000015",
+      "sequence": 847,
+      "recordedAt": "2024-05-27T16:08:09Z",
+      "effectiveDate": "2024-05-25",
+      "schemaVersion": 1,
+      "data": {
+        "spell_no": 2,
+        "department_id": "D05",
+        "job_code": "J10",
+        "location_id": "L4",
+        "fte_bp": 10000,
+        "ats_candidate_id": "C001115",
+        "hire_source": "rehire"
+      }
+    }
+  ]
+}

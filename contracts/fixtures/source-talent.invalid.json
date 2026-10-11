@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "uuid": "bdb00f37-2151-5e4b-a73d-d7d9e1992e70",
+      "kind": "review.submitted",
+      "subject": "E000253",
+      "revision": 896,
+      "updated": "2023-12-15T08:14:24Z",
+      "asOf": "2023-12-15",
+      "version": 1,
+      "body": {
+        "review_id": "V000207",
+        "cycle": "2023",
+        "rating": 6,
+        "reviewer_id": "E000588"
+      }
+    }
+  ]
+}

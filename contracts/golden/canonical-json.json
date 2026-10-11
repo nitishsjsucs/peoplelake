@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "description": "Canonical JSON cases asserted byte for byte by vitest (src/worker/ingest/canonical-json.ts) and pytest (peoplelake/canonical.py).",
+  "cases": [
+    {
+      "name": "hris hire payload",
+      "value": {
+        "spell_no": 1,
+        "department_id": "D04",
+        "job_code": "J12",
+        "location_id": "L2",
+        "fte_bp": 10000,
+        "ats_candidate_id": "C001777",
+        "hire_source": "external"
+      },
+      "canonical": "{\"ats_candidate_id\":\"C001777\",\"department_id\":\"D04\",\"fte_bp\":10000,\"hire_source\":\"external\",\"job_code\":\"J12\",\"location_id\":\"L2\",\"spell_no\":1}",
+      "sha256": "acc85c9631a7d3c98b78ee0d784b5e03bd41a34938899b06a6f5815d5335fb03"
+    },
+    {
+      "name": "nested unsorted keys",
+      "value": {
+        "b": {
+          "z": 1,
+          "a": [
+            3,
+            2,
+            1
+          ],
+          "m": {
+            "y": null,
+            "x": true
+          }
+        },
+        "a": false,
+        "c": []
+      },
+      "canonical": "{\"a\":false,\"b\":{\"a\":[3,2,1],\"m\":{\"x\":true,\"y\":null},\"z\":1},\"c\":[]}",
+      "sha256": "99320e35432f4c987595c6cb90952f7f9b463956c6a9d99b126a8723f8486e0d"
+    },
+    {
+      "name": "empty object and array",
+      "value": {
+        "e": {},
+        "f": []
+      },
+      "canonical": "{\"e\":{},\"f\":[]}",
+      "sha256": "718e8be3db7d34e913bff743f6ea07ec6910fef6f1ee22985b8c0ee8d6b1a032"
+    },
+    {
+      "name": "integers",
+      "value": {
+        "zero": 0,
+        "neg": -42,
+        "max_safe": 9007199254740991,
+        "min_safe": -9007199254740991,
+        "bp": 8000
+      },
+      "canonical": "{\"bp\":8000,\"max_safe\":9007199254740991,\"min_safe\":-9007199254740991,\"neg\":-42,\"zero\":0}",
+      "sha256": "1c657c34a546db14c5b3095a29ff605946631e84932af2d25f1751ce93e91014"
+    },
+    {
+      "name": "escapes",
+      "value": {
+        "quote": "say \"hi\"",
+        "backslash": "a\\b",
+        "slash": "a/b",
+        "controls": "\b\f\n\r\t\u0001\u001f",
+        "del": "x\u007fy"
+      },
+      "canonical": "{\"backslash\":\"a\\\\b\",\"controls\":\"\\b\\f\\n\\r\\t\\u0001\\u001f\",\"del\":\"x\\u007fy\",\"quote\":\"say \\\"hi\\\"\",\"slash\":\"a/b\"}",
+      "sha256": "ef24418fabc24c92919eb6dea7979f0bd986bb97145b0a427afe802b1f213153"
+    },
+    {
+      "name": "non-ascii",
+      "value": {
+        "latin": "caf\u00e9",
+        "cjk": "\u4eba\u4e8b",
+        "emoji": "\ud83d\ude00",
+        "nbsp": "a\u00a0b"
+      },
+      "canonical": "{\"cjk\":\"\\u4eba\\u4e8b\",\"emoji\":\"\\ud83d\\ude00\",\"latin\":\"caf\\u00e9\",\"nbsp\":\"a\\u00a0b\"}",
+      "sha256": "6acb37201d25c39d2d3fc2820995d9c57be33171807bec2f4287e8dd19e64691"
+    },
+    {
+      "name": "code point key order",
+      "value": {
+        "\uff5e": "fullwidth tilde",
+        "\ud83d\ude00": "grinning face",
+        "z": 1,
+        "Z": 2,
+        "_": 3
+      },
+      "canonical": "{\"Z\":2,\"_\":3,\"z\":1,\"\\uff5e\":\"fullwidth tilde\",\"\\ud83d\\ude00\":\"grinning face\"}",
+      "sha256": "378d25d16b2f54212bd3028147032bea66cf7d357c27b57491d0005fb788d46d"
+    },
+    {
+      "name": "talent comp body",
+      "value": {
+        "change_id": "K004567",
+        "reason": "merit",
+        "base_salary": 123400,
+        "currency": "USD",
+        "bonus_target_bp": 1000
+      },
+      "canonical": "{\"base_salary\":123400,\"bonus_target_bp\":1000,\"change_id\":\"K004567\",\"currency\":\"USD\",\"reason\":\"merit\"}",
+      "sha256": "5c688d43e6fc419dca4f27f58b7d2a63f245f19cc29eea0c63f0ec32102090ba"
+    },
+    {
+      "name": "array of mixed",
+      "value": [
+        1,
+        "two",
+        null,
+        true,
+        {
+          "k": "v"
+        },
+        [
+          []
+        ]
+      ],
+      "canonical": "[1,\"two\",null,true,{\"k\":\"v\"},[[]]]",
+      "sha256": "6b928186c27d5e5e12c2eee4a210f5e64b72966f00700f60e8d90765eb287867"
+    },
+    {
+      "name": "plain string",
+      "value": "workforce",
+      "canonical": "\"workforce\"",
+      "sha256": "668fd952377dfc17dcf3d98d72ccb65405f61c98de8b1bf58dafe2752fef534c"
+    },
+    {
+      "name": "null",
+      "value": null,
+      "canonical": "null",
+      "sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    }
+  ],
+  "rejected": [
+    {
+      "name": "non-integer number",
+      "json": "{\"fte\":0.8}"
+    },
+    {
+      "name": "unsafe integer",
+      "json": "{\"n\":9007199254740993}"
+    },
+    {
+      "name": "fractional exponent",
+      "json": "{\"n\":2.5e-1}"
+    }
+  ],
+  "note": "Rejected cases are ones both implementations reject after parsing. JSON.parse cannot tell 1.0 or 1e3 from an integer, so the sources never send them (payload numbers are integers by contract)."
+}

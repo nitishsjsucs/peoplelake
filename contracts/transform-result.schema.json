@@ -1,0 +1,258 @@
+{
+  "$id": "https://github.com/nitishsjsucs/peoplelake/contracts/transform-result.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "status": {
+          "type": "string",
+          "const": "succeeded"
+        },
+        "dbt": {
+          "type": "object",
+          "properties": {
+            "success": {
+              "type": "boolean"
+            },
+            "models_ok": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "models_error": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "tests_pass": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "tests_warn": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "tests_error": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "elapsed_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "bytes_billed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "success",
+            "models_ok",
+            "models_error",
+            "tests_pass",
+            "tests_warn",
+            "tests_error",
+            "elapsed_ms"
+          ],
+          "additionalProperties": false
+        },
+        "checks": {
+          "type": "object",
+          "properties": {
+            "error": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "warn": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            }
+          },
+          "required": [
+            "error",
+            "warn"
+          ],
+          "additionalProperties": false
+        },
+        "digests": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "enum": [
+              "dim_department",
+              "dim_job",
+              "dim_employee_history",
+              "dim_employee",
+              "fct_employment_events",
+              "fct_offers",
+              "fct_workforce_monthly",
+              "metrics_workforce_monthly",
+              "fct_compensation_history",
+              "fct_performance_reviews"
+            ]
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "digest_version": {
+          "type": "number",
+          "const": 1
+        },
+        "engine": {
+          "type": "string",
+          "enum": [
+            "duckdb",
+            "bigquery"
+          ]
+        },
+        "transformed_through_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "ops_freshness_histogram_10s": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            ],
+            "items": false,
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "metrics_artifact": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "key",
+            "sha256",
+            "rows"
+          ],
+          "additionalProperties": false
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "job_id",
+        "run_id",
+        "attempt",
+        "status",
+        "dbt",
+        "checks",
+        "digests",
+        "digest_version",
+        "engine",
+        "transformed_through_seq",
+        "ops_freshness_histogram_10s",
+        "metrics_artifact",
+        "duration_ms"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "failed",
+            "expired"
+          ]
+        },
+        "error": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "job_id",
+        "run_id",
+        "attempt",
+        "status",
+        "error"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "events": [
+    {
+      "eventId": "651c29db-7927-534f-a108-40967d0a1b21",
+      "eventType": "worker.hired",
+      "workerId": "E000261",
+      "sequence": 1,
+      "recordedAt": "2012-01-13T18:29:26Z",
+      "effectiveDate": "2012-01-10",
+      "schemaVersion": 1,
+      "data": {
+        "spell_no": 1,
+        "department_id": "D08",
+        "job_code": "J15",
+        "location_id": "L1",
+        "fte_bp": 0.8,
+        "ats_candidate_id": null,
+        "hire_source": "initial_load"
+      }
+    }
+  ]
+}

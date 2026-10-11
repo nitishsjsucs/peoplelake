@@ -1,0 +1,133 @@
+{
+  "$id": "https://github.com/nitishsjsucs/peoplelake/contracts/job.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "load_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "load",
+        "transform"
+      ]
+    },
+    "attempt": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "incremental",
+        "replay"
+      ]
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "from_snapshot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to_snapshot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "full_refresh": {
+          "type": "boolean"
+        },
+        "dataset_suffix": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$"
+        }
+      },
+      "required": [
+        "from_snapshot",
+        "full_refresh"
+      ],
+      "additionalProperties": false
+    },
+    "lease_seconds": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "faults": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "run_seq": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "crash_after_load",
+              "fail_transform_model",
+              "duplicate_result",
+              "skip_claim",
+              "commit_step_error",
+              "rewind_watermark",
+              "recommit_sink_files"
+            ]
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "snapshots": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "count": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "attempt": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "run_seq",
+          "kind"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "job_id",
+    "run_id",
+    "load_seq",
+    "kind",
+    "attempt",
+    "mode",
+    "input",
+    "lease_seconds"
+  ],
+  "additionalProperties": false
+}

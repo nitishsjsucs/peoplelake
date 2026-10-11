@@ -12,7 +12,7 @@ v1 is under construction and this repository is published while it is built. Thi
 |---|---|
 | Repo scaffold, TypeScript configs, generated Worker types, prose check | done |
 | Synthetic generator with exact counts and oracle | done: 100,000 events (full) and 10,000 (small) from `hris`, `ats`, `talent`, pinned sha256, committed oracle seeds |
-| Contracts and canonical JSON golden | not started |
+| Contracts and canonical JSON golden | done: zod contracts generate `contracts/*.schema.json`; pydantic mirrors; fixtures and a canonical JSON golden asserted by vitest (in workerd) and pytest |
 | DuckDB loader and output digests | not started |
 | dbt models, five metrics, reconciliation checks | not started |
 | BigQuery configs and offline compile | not started |

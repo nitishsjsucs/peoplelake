@@ -1,0 +1,21 @@
+{
+  "records": [
+    {
+      "id": "6b57484b-c0b0-58e9-964d-c37a19962c22",
+      "type": "requisition.opened",
+      "object": {
+        "kind": "offer",
+        "id": "Q000001"
+      },
+      "seq": 1,
+      "occurred_at": "2023-01-01T12:00:06Z",
+      "effective_on": "2023-01-01",
+      "v": 1,
+      "attributes": {
+        "requisition_id": "Q000001",
+        "department_id": "D04",
+        "job_code": "J01"
+      }
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "job_id": "r-mgk3x2-000042-transform-a1",
+  "run_id": "r-mgk3x2-000042",
+  "attempt": 1,
+  "status": "succeeded",
+  "dbt": {
+    "success": true,
+    "models_ok": 30,
+    "models_error": 0,
+    "tests_pass": 120,
+    "tests_warn": 0,
+    "tests_error": 0,
+    "elapsed_ms": 15000
+  },
+  "checks": {
+    "error": {
+      "recon_headcount_roll_forward_company": 0
+    },
+    "warn": {
+      "recon_metrics_vs_oracle": 0
+    }
+  },
+  "digests": {
+    "dim_department": "9a758339f7fe0da0274620b859cfaa9dee47a0c396c17f33c960342a82e00da5",
+    "dim_job": "c6d925b7452e234c5659cfc24937b7b935e931d75f2fddb7564900f84e1bb11d",
+    "dim_employee_history": "07c9b3840c41e442970107d229f96216cdbfdc237475edb3db855f67888c5d4c",
+    "dim_employee": "6a81c7a3d1a199619a520b0ec99d0d84fa0fbd066596adc572b45326809c0e60",
+    "fct_employment_events": "9a9f2e900f8a902b403edd82d1cad2a7097c69e3b17a6db0981f4860baaa9e45",
+    "fct_offers": "cb56e5cb0234964b8b1fd895df4ae18ae314d50c51da03af87b79129102e5827",
+    "fct_workforce_monthly": "e41ae6c152eb4e1c6d486d197e36ddea6a72ce7a95fe92d9d8b29a3ebe06b136",
+    "metrics_workforce_monthly": "60c3d008e294becb28ac09dcecca976ddbaacc88ab3c48b6ab56a1b4684f4ea0",
+    "fct_compensation_history": "c4830cfebb419dc2d47b840b078273bd77842d356577b476edbaab470aa7aa4c",
+    "fct_performance_reviews": "7bf83ea5042af20e4ed80fe5654844765b68d356092b9e029a1ed2d6f9c2b7e8"
+  },
+  "digest_version": 1,
+  "engine": "duckdb",
+  "transformed_through_seq": 1760100000000042,
+  "ops_freshness_histogram_10s": [
+    [
+      60,
+      1200
+    ],
+    [
+      70,
+      300
+    ]
+  ],
+  "metrics_artifact": {
+    "key": "reports/metrics/r-mgk3x2-000042.json",
+    "sha256": "62c66a7a5dd70c3146618063c344e531e6d4b59e379808443ce962b3abd63c5a",
+    "rows": 468
+  },
+  "duration_ms": 16000
+}
