@@ -12,7 +12,7 @@ export const COORDINATOR_DDL = [
     requested_at INTEGER, started_at INTEGER, finished_at INTEGER, published_at INTEGER,
     from_snapshot TEXT, to_snapshot TEXT, rows_inserted INTEGER, duplicates_skipped INTEGER,
     transform_skipped INTEGER DEFAULT 0, load_attempts INTEGER DEFAULT 0, transform_attempts INTEGER DEFAULT 0,
-    digests_json TEXT, checks_json TEXT, metrics_key TEXT, error TEXT
+    digests_json TEXT, checks_json TEXT, metrics_key TEXT, error TEXT, options_json TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS jobs (
     job_id TEXT PRIMARY KEY,
@@ -57,6 +57,7 @@ export type RunRow = {
   checks_json: string | null;
   metrics_key: string | null;
   error: string | null;
+  options_json: string | null;
 };
 
 export type JobRow = {

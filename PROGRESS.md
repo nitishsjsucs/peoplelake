@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Commit 12 of 18 (core) done: runner and local stack.
+Commit 13 of 18 (core) done: scenario equivalence eval.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -30,15 +30,17 @@ Commit 12 of 18 (core) done: runner and local stack.
 
 12. Runner and stack: `WorkerClient`, `WorkerSinkSource`, `warehouse/loader.py` (commit pending sink files locally, read appends, load, LoadResult), `runner/jobs.py` (seed when checksums change or on replay, dbt build without unit tests, checks bucketed by manifest severity, digests, ops freshness histogram, canonical metrics artifact, fault hooks), `runner/main.py` (poll and until-idle loops, heartbeats every lease/3, SIGTERM reports failure, restart after 200 jobs), `stack.py` (`LocalStack` with process groups, persisted wrangler state per stack, health wait, ticker, `stack down` from recorded pids, port checks), `sim/client.py` (per-source tokens, batching), CLI `runner poll|run`, `stack up|down|status|ticker`. Measured in this session: a hand-driven run of the whole local loop (stack up, small profile in 5 chunks through the Worker, SinkRoller, local Iceberg, runner and in-process dbt) took 20.0 s, every reconciliation check was 0 and the 10 digests were identical to the reference; ports free afterwards.
 
+13. Scenario equivalence: `sim/plan.py` (exact, deterministic perturbations for B and S1 to S5; per-source batches of up to 500), `evals/scenarios.py` (empty state per scenario, chunked delivery through the local stack, settle on the run that loads each forced roll, quiescence run, S5 rebuild and point-in-time replay into a separate DuckDB file, digests from the ledger and from the file after `stack down`, independent oracle comparison, observed perturbations), replay options on runs (`to_snapshot`, `dataset_suffix`: scratch runs never move the watermark), `faults_fired` in Coordinator status, README results renderer (`npm run results:readme`). Measured in this session (`evals/results/scenarios-small-duckdb-2026-10-11.json`): all six scenarios identical to the reference digests on all 10 models, oracle mismatches 0, warn checks 0, ports free after every leg; durations 72.7 s to 342.2 s (S5 slowest) at load average 8 to 27 from parallel builds on this Mac.
+
 ## Next
-13. Evals: scenario planner and equivalence eval for five scenarios.
+14. CI: node, python, dbt, clean clone, runner image and scenario matrix workflows (timeouts from measured legs: small measured, full still to measure).
 
 ## Check status (last run at this commit)
 | Check | Result |
 |---|---|
 | `npm run typecheck` | pass |
 | `npm run typegen:check` | pass |
-| `npm test` | pass (13 files, 145 tests) |
+| `npm test` | pass (worker 12 files and node 6 files) |
 | `npm run check:prose` | pass |
 | `npm run test:py` (pytest) | pass (186 tests incl. 1 e2e stack test; about 50 s on an idle machine, 287 s at load average 27) |
 | `peoplelake dev bq-compile` | pass (both branches) |
@@ -74,4 +76,6 @@ Commit 12 of 18 (core) done: runner and local stack.
 - Extra route `GET /api/status` (viewer) exposes the Coordinator state the eval driver needs.
 - `read_appends` reports `fallback_full_scan` only when a watermark snapshot was given but no longer exists; a first load or replay is a planned full read.
 - The ticker calls `/cdn-cgi/handler/scheduled?cron=...` and falls back to `/__scheduled`.
+- The README results renderer landed with commit 13 (planned for 15) so the scenario results could be rendered when they were recorded.
+- Scenario plans send each source's events in its own requests of up to 500 (canonical order within a source), alternating sources inside a chunk; strictly canonical cross-source order made thousands of tiny requests.
 - Correction events carry `effectiveDate` = the corrected date for date corrections and the target's date for value corrections; rescinds carry the target's date. The one-event-per-day rule is asserted on business events (hire, rehire, termination, transfer, job and FTE change) for both original and corrected dates.

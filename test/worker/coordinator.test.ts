@@ -215,6 +215,7 @@ describe("Coordinator dispatch window and faults", () => {
     const runId = await newRun();
     expect(await c().consumeCommitFault(runId)).toBe(true);
     expect(await c().consumeCommitFault(runId)).toBe(false);
+    expect((await c().status())["faults_fired"]).toBe("1");
   });
 
   it("starts cron runs until one starts late enough to include the last roll after the last ingest", async () => {

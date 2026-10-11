@@ -278,6 +278,56 @@ def _cmd_stack(args: argparse.Namespace) -> int:
     return 0
 
 
+
+
+def _cmd_eval_scenarios(args: argparse.Namespace) -> int:
+    import logging
+    from datetime import UTC, datetime
+
+    from .devtools.reference import reference_digests
+    from .evals.scenarios import EvalError, run_scenario, scenarios_report, write_report
+    from .paths import data_dir, repo_root
+    from .sim.plan import SCENARIOS
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    chunks = args.chunks or (20 if args.profile == "full" else 10)
+    wanted = [s.strip() for s in args.scenarios.split(",")] if args.scenarios else list(SCENARIOS)
+    workdir = data_dir() / "eval" / f"scenarios-{args.profile}"
+    if args.reference:
+        reference = json.loads(Path(args.reference).read_text())["digests"]
+    else:
+        reference = reference_digests(args.profile, workdir / "reference")["digests"]
+    results = []
+    for scenario in wanted:
+        print(f"scenario {scenario}: running", flush=True)
+        try:
+            result = run_scenario(scenario, args.profile, chunks, reference, workdir=workdir, target=args.target)
+        except EvalError as exc:
+            print(f"scenario {scenario}: {exc}", file=sys.stderr)
+            return 2
+        print(f"scenario {scenario}: passed={result['passed']} in {result['duration_s']} s", flush=True)
+        results.append(result)
+    command = "peoplelake eval scenarios " + " ".join(sys.argv[3:])
+    report = scenarios_report(results, profile=args.profile, reference=reference, command=command.strip())
+    date = datetime.now(UTC).strftime("%Y-%m-%d")
+    suffix = "" if len(wanted) == len(SCENARIOS) else "-" + "-".join(wanted)
+    out = (
+        Path(args.out)
+        if args.out
+        else repo_root() / "evals" / "results" / f"scenarios-{args.profile}-duckdb-{date}{suffix}.json"
+    )
+    write_report(report, out)
+    print(json.dumps({"passed": report["passed"], "out": str(out)}))
+    return 0 if report["passed"] else 1
+
+
+
+
+
+
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="peoplelake", description="PeopleLake pipelines")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -362,6 +412,17 @@ def build_parser() -> argparse.ArgumentParser:
     tick.add_argument("--worker-url", default="http://127.0.0.1:8791")
     tick.add_argument("--interval", type=float, default=60.0)
     tick.set_defaults(func=_cmd_stack)
+
+    ev = sub.add_parser("eval", help="evals whose numbers may appear in the README")
+    ev_sub = ev.add_subparsers(dest="eval_command", required=True)
+    sc = ev_sub.add_parser("scenarios", help="scenario equivalence: B, S1..S5 must equal the reference digests")
+    sc.add_argument("--profile", choices=["small", "full"], default="small")
+    sc.add_argument("--chunks", type=int)
+    sc.add_argument("--scenarios", help="comma separated, for example B,S1 (default: all six)")
+    sc.add_argument("--target", choices=["local", "prod-drill"], default="local")
+    sc.add_argument("--reference", help="reference digests JSON (default: computed now)")
+    sc.add_argument("--out")
+    sc.set_defaults(func=_cmd_eval_scenarios)
 
     dev = sub.add_parser("dev", help="developer and CI tools")
     dev_sub = dev.add_subparsers(dest="dev_command", required=True)

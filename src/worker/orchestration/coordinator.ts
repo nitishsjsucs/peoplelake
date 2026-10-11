@@ -16,6 +16,12 @@ export interface RunParams {
   reason: string;
 }
 
+/** Replay options: read only up to a snapshot and build into a scratch dataset (S5 point-in-time replay). */
+export interface RunOptions {
+  to_snapshot?: string;
+  dataset_suffix?: string;
+}
+
 export interface RunPlan {
   run_id: string;
   seq: number;
@@ -25,6 +31,7 @@ export interface RunPlan {
   from_snapshot: string | null;
   transformed_through_seq: number | null;
   previous: { digests: Record<string, string> | null; metrics_key: string | null; to_snapshot: string | null };
+  options: RunOptions;
   lease_seconds: number;
   claim_timeout_seconds: number;
   max_attempts: number;
@@ -189,7 +196,12 @@ export class Coordinator extends DurableObject<Env> {
     return runIdFor(this.generation(), Number(this.#get("run_seq") ?? "0") + 1);
   }
 
-  async requestRun(reason: string, mode: RunMode = "incremental", now: number = Date.now()): Promise<RequestRunResult> {
+  async requestRun(
+    reason: string,
+    mode: RunMode = "incremental",
+    now: number = Date.now(),
+    options: RunOptions = {},
+  ): Promise<RequestRunResult> {
     const cfg = this.#config();
     if (!cfg.runsEnabled) return { run_id: null, started: false, reason: "runs_disabled" };
     const active = this.#get("active_run_id");
@@ -205,8 +217,8 @@ export class Coordinator extends DurableObject<Env> {
       this.#set("run_seq", String(seq));
       this.#set("active_run_id", runId);
       this.#sql.exec(
-        `INSERT INTO runs (run_id, seq, load_seq, mode, reason, status, requested_at, started_at)
-         VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`,
+        `INSERT INTO runs (run_id, seq, load_seq, mode, reason, status, requested_at, started_at, options_json)
+         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
         runId,
         seq,
         generation * 1_000_000 + seq,
@@ -214,6 +226,7 @@ export class Coordinator extends DurableObject<Env> {
         reason,
         now,
         now,
+        Object.keys(options).length > 0 ? JSON.stringify(options) : null,
       );
     });
     try {
@@ -231,12 +244,13 @@ export class Coordinator extends DurableObject<Env> {
     const run = this.#run(runId);
     if (run === null) throw new Error(`unknown run ${runId}`);
     const cfg = this.#config();
+    const options = run.options_json ? (JSON.parse(run.options_json) as RunOptions) : {};
     let from = run.mode === "replay" ? null : this.#watermark("raw_events");
     const rewind = this.#faults().find((f) => f.kind === "rewind_watermark" && f.run_seq === run.seq);
     if (rewind && cfg.evalFaultsEnabled && run.mode === "incremental") {
       const committed = this.#sql
         .exec<{ to_snapshot: string | null }>(
-          "SELECT to_snapshot FROM runs WHERE status = 'committed' AND to_snapshot IS NOT NULL ORDER BY seq DESC",
+          "SELECT to_snapshot FROM runs WHERE status = 'committed' AND to_snapshot IS NOT NULL AND options_json IS NULL ORDER BY seq DESC",
         )
         .toArray();
       from = committed[rewind.snapshots ?? 1]?.to_snapshot ?? null;
@@ -244,7 +258,7 @@ export class Coordinator extends DurableObject<Env> {
     const transformed = this.#watermark("transformed_through_seq");
     const previous = this.#sql
       .exec<{ digests_json: string | null; metrics_key: string | null; to_snapshot: string | null }>(
-        "SELECT digests_json, metrics_key, to_snapshot FROM runs WHERE status = 'committed' AND digests_json IS NOT NULL ORDER BY seq DESC LIMIT 1",
+        "SELECT digests_json, metrics_key, to_snapshot FROM runs WHERE status = 'committed' AND digests_json IS NOT NULL AND options_json IS NULL ORDER BY seq DESC LIMIT 1",
       )
       .toArray()[0];
     this.#sql.exec("UPDATE runs SET from_snapshot = ? WHERE run_id = ?", from, runId);
@@ -261,6 +275,7 @@ export class Coordinator extends DurableObject<Env> {
         metrics_key: previous?.metrics_key ?? null,
         to_snapshot: previous?.to_snapshot ?? null,
       },
+      options,
       lease_seconds: cfg.jobs.leaseSeconds,
       claim_timeout_seconds: cfg.jobs.claimTimeoutSeconds,
       max_attempts: cfg.jobs.maxAttempts,
@@ -273,9 +288,11 @@ export class Coordinator extends DurableObject<Env> {
     if (run === null) throw new Error(`unknown run ${runId}`);
     if (run.status === "committed") return { committed: true, duplicate: true };
     if (run.status !== "active") return { committed: false, duplicate: false };
+    // A scratch replay (dataset_suffix) records its digests but never moves the published state.
+    const scratch = run.options_json !== null && (JSON.parse(run.options_json) as RunOptions).dataset_suffix !== undefined;
     this.ctx.storage.transactionSync(() => {
-      if (c.to_snapshot !== null) this.#setWatermark("raw_events", c.to_snapshot, runId, now);
-      if (c.transformed_through_seq !== null) {
+      if (!scratch && c.to_snapshot !== null) this.#setWatermark("raw_events", c.to_snapshot, runId, now);
+      if (!scratch && c.transformed_through_seq !== null) {
         this.#setWatermark("transformed_through_seq", String(c.transformed_through_seq), runId, now);
       }
       this.#sql.exec(
@@ -294,13 +311,15 @@ export class Coordinator extends DurableObject<Env> {
         c.metrics_key,
         runId,
       );
-      this.#sql.exec(
-        `UPDATE run_freshness SET published_by = ?, published_at = ?
-         WHERE published_by IS NULL AND run_id IN (SELECT run_id FROM runs WHERE seq <= ?)`,
-        runId,
-        now,
-        run.seq,
-      );
+      if (!scratch) {
+        this.#sql.exec(
+          `UPDATE run_freshness SET published_by = ?, published_at = ?
+           WHERE published_by IS NULL AND run_id IN (SELECT run_id FROM runs WHERE seq <= ?)`,
+          runId,
+          now,
+          run.seq,
+        );
+      }
     });
     return { committed: true, duplicate: false };
   }
@@ -596,6 +615,7 @@ export class Coordinator extends DurableObject<Env> {
       "duplicate_results",
       "lease_expirations",
       "malformed_lake_events",
+      "faults_fired",
     ];
     const out: Record<string, unknown> = {};
     for (const k of keys) out[k] = this.#get(k);

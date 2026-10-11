@@ -88,6 +88,10 @@ class WorkerClient:
     def request_run(self, mode: str = "incremental") -> dict:
         return self._json("POST", "/api/replay" if mode == "replay" else "/api/runs")
 
+    def replay(self, *, to_snapshot: str | None = None, dataset_suffix: str | None = None) -> dict:
+        body = {k: v for k, v in (("to_snapshot", to_snapshot), ("dataset_suffix", dataset_suffix)) if v is not None}
+        return self._json("POST", "/api/replay", json=body)
+
     def runs(self, limit: int = 200, fmt: str = "full") -> list[dict]:
         return self._json("GET", f"/api/runs?limit={limit}&format={fmt}")["runs"]
 

@@ -194,6 +194,32 @@ describe("WarehouseRunWorkflow", () => {
     await two.instance.dispose();
   });
 
+  it("a scratch point-in-time replay passes its options to both jobs and never moves the watermark", async () => {
+    const seen: Record<string, unknown>[] = [];
+    const runner = startRunner(async (job) => {
+      seen.push({ kind: job.kind, input: job.input, mode: job.mode });
+      return happy(job);
+    });
+    const one = await startRun();
+    await one.instance.waitForStatus("complete");
+    const watermark = (await coordinator().status())["watermark"];
+    const runId = await coordinator().nextRunId();
+    const instance = await introspectWorkflowInstance(env.WAREHOUSE_RUN, runId);
+    await coordinator().requestRun("replay-scratch", "replay", Date.now(), { to_snapshot: "123", dataset_suffix: "pit" });
+    await instance.waitForStatus("complete");
+    await runner.stop();
+    expect(seen.slice(2)).toEqual([
+      { kind: "load", mode: "replay", input: { from_snapshot: null, full_refresh: false, to_snapshot: "123", dataset_suffix: "pit" } },
+      { kind: "transform", mode: "replay", input: { from_snapshot: null, full_refresh: true, to_snapshot: "123", dataset_suffix: "pit" } },
+    ]);
+    expect((await coordinator().status())["watermark"]).toBe(watermark);
+    const scratch = await coordinator().getRun(runId);
+    expect(scratch?.run.status).toBe("committed");
+    expect(scratch?.run.digests_json).not.toBeNull();
+    await one.instance.dispose();
+    await instance.dispose();
+  });
+
   it("transform skip rule", () => {
     const plan = { mode: "incremental" as const, transformed_through_seq: 100 };
     expect(shouldSkipTransform(plan, { rows_inserted: 0, raw_max_load_seq: 100 })).toBe(true);

@@ -1,7 +1,7 @@
 // Read and control interface for people and the runner (SPEC 7.3).
 import type { App } from "../app.ts";
 import { requireRole } from "../app.ts";
-import { coordinatorStub } from "../orchestration/coordinator.ts";
+import { coordinatorStub, type RunOptions } from "../orchestration/coordinator.ts";
 import type { RunRow } from "../orchestration/coordinator-sql.ts";
 import { LATEST_METRICS_KEY } from "../reports.ts";
 import { parseWindow, summarizeFreshness } from "./freshness.ts";
@@ -35,6 +35,7 @@ function full(r: RunRow): Record<string, unknown> {
     digests: r.digests_json ? JSON.parse(r.digests_json) : null,
     checks: r.checks_json ? JSON.parse(r.checks_json) : null,
     metrics_key: r.metrics_key,
+    options: r.options_json ? JSON.parse(r.options_json) : null,
   };
 }
 
@@ -60,7 +61,14 @@ export function mountPublicApi(app: App): void {
   });
 
   app.post("/api/replay", requireRole("operator"), async (c) => {
-    return c.json(await coordinatorStub(c.env).requestRun("replay", "replay"), 202);
+    const body = (await c.req.json().catch(() => ({}))) as { to_snapshot?: unknown; dataset_suffix?: unknown };
+    const options: RunOptions = {};
+    if (typeof body.to_snapshot === "string" && /^\d+$/.test(body.to_snapshot)) options.to_snapshot = body.to_snapshot;
+    if (typeof body.dataset_suffix === "string") {
+      if (!/^[a-z0-9_]{1,20}$/.test(body.dataset_suffix)) return c.json({ error: "invalid_dataset_suffix" }, 422);
+      options.dataset_suffix = body.dataset_suffix;
+    }
+    return c.json(await coordinatorStub(c.env).requestRun(options.dataset_suffix ? "replay-scratch" : "replay", "replay", Date.now(), options), 202);
   });
 
   app.get("/api/status", requireRole("viewer", "runner", "operator"), async (c) => {

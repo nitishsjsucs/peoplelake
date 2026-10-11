@@ -60,14 +60,23 @@ export class WarehouseRunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
     try {
       const plan = await step.do("open-run", async () => coordinator.openRun(runId));
 
-      const loadRun = await this.#job(step, plan, "load", { from_snapshot: plan.from_snapshot, full_refresh: false });
+      const scratch = plan.options.dataset_suffix !== undefined;
+      const extra = {
+        ...(plan.options.to_snapshot !== undefined ? { to_snapshot: plan.options.to_snapshot } : {}),
+        ...(plan.options.dataset_suffix !== undefined ? { dataset_suffix: plan.options.dataset_suffix } : {}),
+      };
+      const loadRun = await this.#job(step, plan, "load", { from_snapshot: plan.from_snapshot, full_refresh: false, ...extra });
       const load = loadRun.result as LoadOk;
 
       const skip = shouldSkipTransform(plan, load);
       let transform: TransformOk | null = null;
       let transformAttempts = 0;
       if (!skip) {
-        const t = await this.#job(step, plan, "transform", { from_snapshot: plan.from_snapshot, full_refresh: plan.mode === "replay" });
+        const t = await this.#job(step, plan, "transform", {
+          from_snapshot: plan.from_snapshot,
+          full_refresh: plan.mode === "replay",
+          ...extra,
+        });
         transform = t.result as TransformOk;
         transformAttempts = t.attempts;
       }
@@ -92,7 +101,7 @@ export class WarehouseRunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
         if (await coordinator.consumeCommitFault(runId)) throw new Error("eval fault: commit_step_error");
         const result = await coordinator.commitRun(runId, commit);
         await writeRunReport(this.env, runId, { run_id: runId, plan, load, transform, commit, committed: result });
-        if (transform) await publishLatestMetrics(this.env, transform.metrics_artifact.key);
+        if (transform && !scratch) await publishLatestMetrics(this.env, transform.metrics_artifact.key);
         return result;
       });
       await step.do("release", async () => {
@@ -122,7 +131,7 @@ export class WarehouseRunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
     step: WorkflowStep,
     plan: RunPlan,
     kind: "load" | "transform",
-    input: { from_snapshot: string | null; full_refresh: boolean },
+    input: { from_snapshot: string | null; full_refresh: boolean; to_snapshot?: string; dataset_suffix?: string },
   ): Promise<{ result: JobResult; attempts: number }> {
     const coordinator = coordinatorStub(this.env);
     for (let attempt = 1; attempt <= plan.max_attempts; attempt++) {

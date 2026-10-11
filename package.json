@@ -17,7 +17,9 @@
     "test:py": "TZ=UTC uv run --project pipeline pytest",
     "check:prose": "TZ=UTC node scripts/check-prose.ts",
     "contracts:gen": "TZ=UTC node scripts/gen-contracts.ts",
-    "contracts:check": "TZ=UTC node scripts/gen-contracts.ts --check"
+    "contracts:check": "TZ=UTC node scripts/gen-contracts.ts --check",
+    "results:readme": "TZ=UTC node scripts/results-to-readme.ts",
+    "results:check": "TZ=UTC node scripts/results-to-readme.ts --check"
   },
   "dependencies": {
     "hono": "4.13.13",

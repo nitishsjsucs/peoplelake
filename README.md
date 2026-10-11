@@ -20,13 +20,13 @@ v1 is under construction and this repository is published while it is built. Thi
 | Worker: auth, ingest, sinks | done locally: fail-closed config, Access JWT verification (RS256, iss, aud, exp) with locally generated dev keys, role gates, `POST /v1/ingest/:source` for three envelopes (zod, all-or-nothing), RawRecord normalization shared with Python through a golden, Basin stream sink (production) and the SinkRoller stand-in (local) |
 | Orchestration: Coordinator, Workflow, dispatchers | done locally (Miniflare Workflows): Coordinator ledger with single-flight runs, attempt-scoped jobs and leases, `WarehouseRunWorkflow` (load, transform or skip, verify, commit, release), poll and Cloud Run dispatchers, Basin Catalog poll, lake-events queue consumer, per-minute cron, eval faults; production Workflows not exercised yet |
 | Runner and local stack | done locally: `peoplelake runner poll` (in-process dbt, heartbeats, eval fault hooks) and `peoplelake stack up/down` (wrangler dev, runner, ticker in their own process groups, ports checked free) |
-| Scenario and freshness evals | not started |
+| Scenario and freshness evals | scenario equivalence done on DuckDB (B and S1 to S5 identical to the reference digests on the small profile, see Results); freshness eval next |
 | CI | not started |
 | Workers AI and `/api/ask` | not started |
 | Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | not started |
 | Front end | none in v1 (the dashboard is below the core cut line); `/api/*` is the read interface |
 
-Identical outputs across scenarios: not yet measured on any engine. BigQuery: pending (needs the production setup below).
+Identical outputs across the five scenarios: proven on DuckDB (small profile, local stack); BigQuery pending (needs the production setup below and the BigQuery drill).
 
 ## Architecture
 
@@ -157,7 +157,24 @@ While the stack is up, only the runner process opens the local DuckDB file (ADR 
 
 The generator (`pipeline/src/peoplelake/generator`) keeps the true world state and computes the expected value of every metric for every month and department from it (the oracle), never from the events. Both profiles' oracle rows are committed as dbt seeds in `warehouse/seeds/oracle/` and a test regenerates and diffs them. True-world totals on the full profile: headcount 4,000 at 2022-12-31 and 4,650 at 2025-12-31, 2,550 hires (150 of them rehires) and 1,900 departures in 2023 to 2025, offer acceptance 2,600 / 3,120 = 0.833333.
 
-More commands are added here as each part lands (see Status).
+### Scenario equivalence
+
+`peoplelake eval scenarios` starts every scenario from empty state (Worker storage, local lake, warehouse), delivers the same dataset through the local stack in chunks (each chunk: deliver, force a sink roll, wait for the run that loads it), ends at quiescence, and requires the 10 published digests to equal the reference digests of a straight load built with `--full-refresh`, the metrics to match the oracle on all 468 rows, and every warn-level check to be 0. Every result records its engine, orchestration, lake and runner.
+
+| Id | Scenario | Perturbation (full profile; the small profile scales event counts by 1/10) |
+|---|---|---|
+| B | baseline | each event once, canonical order, batches of 500 per source |
+| S1 | duplicate-client-retries | 10,000 events delivered twice and 1,000 of them three times (111,000 deliveries); 30% of duplicates in the same request, the rest in a later chunk |
+| S2 | duplicate-lake-redelivery | the watermark rewound by two snapshots on runs 3, 6 and 9; 3 committed sink files appended again as new snapshots on run 5 |
+| S3 | late-arrival | 5,000 events withheld (300 corrections, 30 rescinds, 200 terminations, 100 hires, 50 accepted offers among them): 3,000 delivered 1 to 3 chunks late, 2,000 after everything else; every request shuffled |
+| S4 | recovery-step-failures | runner crash after load (run 2), a dbt model failure (run 4), a duplicate result (run 5), a claimed and dropped job (run 6), a commit step error (run 7) |
+| S5 | recovery-warehouse-rebuild | after a clean delivery: delete the warehouse and replay everything from the lake; replay up to the middle run's snapshot into a scratch warehouse and require that run's recorded digests |
+
+```bash
+uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10      # all six, about 15 minutes here
+uv run --project pipeline peoplelake eval scenarios --profile small --scenarios S4   # one scenario
+npm run results:readme                                                                 # renders evals/results into Results
+```
 
 ## Production setup
 
@@ -165,7 +182,24 @@ Production needs a Cloudflare account on Workers Paid with R2 and Zero Trust, an
 
 ## Results
 
-No results yet. This section only ever contains numbers produced by this repository's scripts, each with its command, date and engine.
+<!-- results:start -->
+Rendered by `npm run results:readme` from `evals/results/*.json`. Every number below was produced by the command shown, on the date shown, with the engine and stand-ins named; nothing is estimated.
+
+#### Scenario equivalence, small profile, duckdb (2026-10-11)
+
+Command: `peoplelake eval scenarios --profile small --chunks 10 --reference .data/reference/reference-digests-small.json` (the reference digests come from `peoplelake dev reference-digests --profile small`). Orchestration: local (wrangler dev / Miniflare Workflows). Lake: local stand-in (SinkRoller + pyiceberg SqlCatalog). Machine: Darwin arm64. Source: `evals/results/scenarios-small-duckdb-2026-10-11.json`.
+
+| Scenario | Identical models (of 10) | Oracle rows mismatched | Warn checks at quiescence | Deliveries | Runs | Duration |
+|---|---:|---:|---:|---:|---:|---:|
+| B baseline | 10 | 0 | 0 | 10000 | 11 | 75.5 s |
+| S1 duplicate-client-retries | 10 | 0 | 0 | 11100 | 11 | 72.7 s |
+| S2 duplicate-lake-redelivery | 10 | 0 | 0 | 10000 | 11 | 159.3 s |
+| S3 late-arrival | 10 | 0 | 0 | 10000 | 12 | 119 s |
+| S4 recovery-step-failures | 10 | 0 | 0 | 10000 | 11 | 162.9 s |
+| S5 recovery-warehouse-rebuild | 10 | 0 | 0 | 10000 | 13 | 342.2 s |
+
+All scenarios identical to the reference digests: **yes**.
+<!-- results:end -->
 
 ## License
 
