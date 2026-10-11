@@ -437,17 +437,23 @@ def _cmd_eval_parity(args: argparse.Namespace) -> int:
 def _cmd_eval_ask(args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
-    from .evals.ask import AskEvalError, load_questions, report, run_local, run_prod, write
+    from .evals.ask import AskEvalError, AskEvalIncomplete, load_questions, report, run_local, run_prod, write
     from .paths import repo_root
 
     questions = load_questions(Path(args.questions) if args.questions else None)
     if args.limit:
         questions = questions[: args.limit]
+    if args.resume and args.provider != "workers-ai":
+        print("eval ask: --resume applies to --provider workers-ai only", file=sys.stderr)
+        return 2
     try:
         if args.provider == "workers-ai":
-            outcome = run_prod(questions)
+            outcome = run_prod(questions, resume=args.resume)
         else:
             outcome = run_local(args.provider, questions, gguf=Path(args.gguf) if args.gguf else None)
+    except AskEvalIncomplete as exc:
+        print(f"eval ask: {exc}", file=sys.stderr)
+        return 3
     except AskEvalError as exc:
         print(f"eval ask: {exc}", file=sys.stderr)
         return 1
@@ -455,6 +461,8 @@ def _cmd_eval_ask(args: argparse.Namespace) -> int:
     date = datetime.now(UTC).strftime("%Y-%m-%d")
     out = Path(args.out) if args.out else repo_root() / "evals" / "results" / f"ask-{args.provider}-{date}.json"
     write(rep, out)
+    if "checkpoint" in outcome:
+        outcome["checkpoint"].unlink(missing_ok=True)  # the results file is the record now
     s = rep["summary"]
     print(
         json.dumps(
@@ -704,6 +712,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ask.add_argument("--questions", help="questions file (default: evals/ask/questions.jsonl)")
     ask.add_argument("--limit", type=int, help="only the first N questions (smoke runs; never for README numbers)")
+    ask.add_argument(
+        "--resume",
+        action="store_true",
+        help="workers-ai: continue from .data/eval/ask-workers-ai.checkpoint.json after the daily neuron cap stopped a run",
+    )
     ask.add_argument("--out")
     ask.set_defaults(func=_cmd_eval_ask)
 

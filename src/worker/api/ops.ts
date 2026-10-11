@@ -1,4 +1,5 @@
 // Operator checks used by `npm run doctor` (SPEC 7.3).
+import { AI_MODEL, aiReservation } from "../../shared/free-budget.ts";
 import type { AiBinding } from "../ai/providers.ts";
 import type { App } from "../app.ts";
 import { requireRole } from "../app.ts";
@@ -72,12 +73,12 @@ export function mountOpsApi(app: App): void {
     if (config.ai.provider !== "workers-ai" || !ai) {
       return c.json({ ok: false, provider: config.ai.provider, reason: "no Workers AI binding here (local: llama-server or the stub)" });
     }
+    const model = config.ai.model ?? AI_MODEL;
+    const content = "Reply with the word ok.";
+    const reserved = await coordinatorStub(c.env).reserveNeurons(aiReservation(model, content.length, 4));
+    if (!reserved.ok) return c.json({ ok: false, error: "ai_budget", used: reserved.used, cap: reserved.cap }, 429);
     try {
-      await ai.run(
-        config.ai.model ?? "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-        { messages: [{ role: "user", content: "Reply with the word ok." }], max_tokens: 4 },
-        { gateway: { id: config.ai.gatewayId ?? "peoplelake" } },
-      );
+      await ai.run(model, { messages: [{ role: "user", content }], max_tokens: 4 }, { gateway: { id: config.ai.gatewayId ?? "peoplelake" } });
       return c.json({ ok: true, gateway_log_id_present: Boolean(ai.aiGatewayLogId) });
     } catch (err) {
       return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 502);

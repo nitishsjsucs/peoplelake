@@ -1,8 +1,20 @@
 import { env, reset } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
+import questionsFile from "../../evals/ask/questions.jsonl?raw";
+import { AI_MODEL, aiNeurons, aiReservation } from "../../src/shared/free-budget.ts";
 import { answer, mountAsk } from "../../src/worker/ai/ask.ts";
-import { type AiBinding, AskError, OpenAiCompatibleProvider, StubProvider, WorkersAiProvider } from "../../src/worker/ai/providers.ts";
+import {
+  type AiBinding,
+  AskError,
+  METRIC_QUERY_SCHEMA,
+  OpenAiCompatibleProvider,
+  repairNote,
+  StubProvider,
+  SYSTEM_PROMPT,
+  WorkersAiProvider,
+} from "../../src/worker/ai/providers.ts";
 import { createApp } from "../../src/worker/app.ts";
+import { coordinatorStub } from "../../src/worker/orchestration/coordinator.ts";
 import { call, devToken } from "../helpers/tokens.ts";
 
 afterEach(async () => {
@@ -13,13 +25,14 @@ class MockAi implements AiBinding {
   calls: { model: string; inputs: any; options: any }[] = [];
   aiGatewayLogId: string | null = null;
   responses: unknown[];
+  usage: { prompt_tokens: number; completion_tokens: number } | null = null;
   constructor(...responses: unknown[]) {
     this.responses = responses;
   }
   async run(model: string, inputs: unknown, options?: unknown): Promise<unknown> {
     this.calls.push({ model, inputs, options });
     this.aiGatewayLogId = "log-123";
-    return { response: this.responses.shift() };
+    return { response: this.responses.shift(), ...(this.usage ? { usage: this.usage } : {}) };
   }
 }
 
@@ -65,6 +78,74 @@ describe("Workers AI provider", () => {
   it("rejects queries outside the window or with reversed months", async () => {
     const ai = new MockAi({ metric: "hires", department_id: "ALL", start_month: "2022-01", end_month: "2022-02" }, { metric: "hires", department_id: "ALL", start_month: "2025-05", end_month: "2025-01" });
     await expect(new WorkersAiProvider(ai, "m", "g").toQuery("x")).rejects.toBeInstanceOf(AskError);
+  });
+});
+
+describe("Workers AI on the Workers Free plan (SPEC 29.4.5)", () => {
+  const schemaChars = JSON.stringify({ type: "json_schema", json_schema: METRIC_QUERY_SCHEMA }).length;
+
+  it("sends max_tokens 96 on every call, the repair retry included", async () => {
+    const ai = new MockAi("not json", { metric: "fte", department_id: "ALL", start_month: "2025-01", end_month: "2025-02" });
+    await new WorkersAiProvider(ai, AI_MODEL, "peoplelake", { maxTokens: 96 }).toQuery("fte in early 2025");
+    expect(ai.calls.map((c) => c.inputs.max_tokens)).toEqual([96, 96]);
+  });
+
+  it("reserves 34 neurons at most for a first call and 35 for a repair, the SPEC arithmetic for llama-3.3-70b", () => {
+    // 534 input tokens and 96 output tokens: 534 x 0.026668 + 96 x 0.204805 = 14.2 + 19.7, rounded up.
+    expect(Math.ceil(aiNeurons(AI_MODEL, 534, 96))).toBe(34);
+    const questions = questionsFile.trim().split("\n").map((l) => (JSON.parse(l) as { question: string }).question);
+    const first = Math.max(...questions.map((q) => aiReservation(AI_MODEL, SYSTEM_PROMPT.length + q.length + schemaChars, 96)));
+    const repair = Math.max(...questions.map((q) => aiReservation(AI_MODEL, SYSTEM_PROMPT.length + q.length + schemaChars + repairNote("x".repeat(80)).length, 96)));
+    expect(first).toBe(34); // the longest question (85 characters) with the 767-character system prompt
+    expect(repair).toBe(35); // plus a repair note of at most 110 characters
+    expect(SYSTEM_PROMPT.length).toBe(767);
+    expect(aiReservation(AI_MODEL, SYSTEM_PROMPT.length + schemaChars + 10, 96)).toBeGreaterThanOrEqual(30);
+  });
+
+  it("answers 429 ai_budget once a reservation would pass the daily cap, without calling the model", async () => {
+    const ai = new MockAi({ metric: "fte", department_id: "ALL", start_month: "2025-01", end_month: "2025-12" });
+    const app = createApp(mountAsk);
+    const ask = async () =>
+      app.fetch(
+        new Request("http://127.0.0.1/api/ask/query", {
+          method: "POST",
+          headers: { "Cf-Access-Jwt-Assertion": await devToken("viewer") },
+          body: JSON.stringify({ question: "fte in 2025" }),
+        }),
+        { ...env, AI_PROVIDER: "workers-ai", AI_GATEWAY_ID: "peoplelake", AI: ai },
+      );
+    const first = await ask();
+    expect(first.status).toBe(200);
+    const usage = ((await first.json()) as { usage: { calls: number; neurons_reserved: number } }).usage;
+    expect(usage.calls).toBe(1);
+    expect(usage.neurons_reserved).toBeGreaterThanOrEqual(30);
+    expect((await coordinatorStub(env).budget()).workers_ai.neurons_today).toBe(usage.neurons_reserved);
+    await coordinatorStub(env).reserveNeurons(1_800 - usage.neurons_reserved - 10);
+    const refused = await ask();
+    expect(refused.status).toBe(429);
+    expect(await refused.json()).toMatchObject({ error: "ai_budget" });
+    expect(ai.calls).toHaveLength(1);
+  });
+
+  it("corrects the reservation to the neurons of the tokens Workers AI reports", async () => {
+    const ai = new MockAi({ metric: "hires", department_id: "ALL", start_month: "2024-01", end_month: "2024-12" });
+    ai.usage = { prompt_tokens: 500, completion_tokens: 30 };
+    const budget = { reserved: 0, reserve: async (n: number) => ({ ok: true, used: n, cap: 1800 }), adjust: async (d: number) => d };
+    const seen: number[] = [];
+    budget.reserve = async (n: number) => {
+      seen.push(n);
+      return { ok: true, used: n, cap: 1800 };
+    };
+    const adjusted: number[] = [];
+    budget.adjust = async (d: number) => {
+      adjusted.push(d);
+      return d;
+    };
+    const provider = new WorkersAiProvider(ai, AI_MODEL, "peoplelake", { maxTokens: 96, budget });
+    await provider.toQuery("hires in 2024");
+    const actual = Math.ceil(aiNeurons(AI_MODEL, 500, 30));
+    expect(adjusted).toEqual([actual - (seen[0] ?? 0)]);
+    expect(provider.usage()).toEqual({ calls: 1, neurons_reserved: actual });
   });
 });
 
@@ -196,7 +277,12 @@ describe("POST /api/ask/query (translation only, scored by peoplelake eval ask)"
         { ...env, AI_PROVIDER: "workers-ai", AI_MODEL: "@cf/test/model", AI_GATEWAY_ID: "peoplelake", AI: ai },
       );
     const ok = await ask(new MockAi({ metric: "fte", department_id: "ALL", start_month: "2025-01", end_month: "2025-12" }));
-    expect(await ok.json()).toEqual({ provider: "workers-ai", model: "@cf/test/model", query: { metric: "fte", department_id: "ALL", start_month: "2025-01", end_month: "2025-12" } });
+    expect(await ok.json()).toMatchObject({
+      provider: "workers-ai",
+      model: "@cf/test/model",
+      query: { metric: "fte", department_id: "ALL", start_month: "2025-01", end_month: "2025-12" },
+      usage: { calls: 1 },
+    });
     const bad = await ask(new MockAi("nope", "still nope"));
     expect(bad.status).toBe(422);
   });

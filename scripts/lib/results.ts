@@ -58,6 +58,10 @@ export interface AskReport {
   provider: string;
   provider_label: string;
   model: string | null;
+  /** workers-ai: the UTC days the resumable run used, the model calls and the neurons reserved. */
+  days?: string[];
+  calls?: number;
+  neurons_estimated?: number;
   target: string;
   route: string;
   questions_file: string;
@@ -171,7 +175,7 @@ export function renderAskReport(r: AskReport, file: string): string {
   return [
     `#### Ask accuracy, ${r.provider} (${r.date})`,
     "",
-    `Command: \`${r.command}\`. Provider: ${r.provider_label}${r.model ? `, model \`${r.model}\`` : ""}. Target: ${r.target}, route \`${r.route}\`. Questions: \`${r.questions_file}\` (sha256 \`${r.questions_sha256.slice(0, 12)}\`).${r.machine ? ` Machine: ${r.machine}.` : ""} Source: \`${file}\`.`,
+    `Command: \`${r.command}\`. Provider: ${r.provider_label}${r.model ? `, model \`${r.model}\`` : ""}. Target: ${r.target}, route \`${r.route}\`. Questions: \`${r.questions_file}\` (sha256 \`${r.questions_sha256.slice(0, 12)}\`).${r.days ? ` UTC days: ${r.days.join(", ")}; model calls: ${r.calls ?? "n/a"}; neurons reserved: ${r.neurons_estimated ?? "n/a"}.` : ""}${r.machine ? ` Machine: ${r.machine}.` : ""} Source: \`${file}\`.`,
     "",
     "| Questions | Exact match | Metric | Department | Start month | End month | Invalid answers | Latency p50 | Latency p95 |",
     "|---:|---:|---:|---:|---:|---:|---:|---:|---:|",

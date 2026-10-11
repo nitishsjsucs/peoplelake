@@ -1,10 +1,13 @@
 // AiProvider (SPEC 13): a question becomes a validated MetricQuery; numbers never come from the model.
-//   workers-ai         production: Workers AI through AI Gateway, JSON schema output, one repair retry
+//   workers-ai         production: Workers AI through AI Gateway, JSON schema output, one repair retry,
+//                      max_tokens on every call and a reservation against the daily neuron cap first
 //   openai-compatible  local: llama-server (Qwen3-1.7B) on 127.0.0.1:8150, JSON schema output
 //   stub               CI default: a deterministic rule parser, labeled as such in every answer
 import { z } from "zod";
+import { AI_MODEL, aiNeurons, aiReservation } from "../../shared/free-budget.ts";
 import { METRIC_IDS, type MetricId } from "../../shared/metrics.ts";
 import type { AppConfig } from "../config.ts";
+import { coordinatorStub } from "../orchestration/coordinator.ts";
 
 export const WINDOW_START = "2023-01";
 export const WINDOW_END = "2025-12";
@@ -60,11 +63,23 @@ export const SYSTEM_PROMPT = [
 
 export class AskError extends Error {
   override name = "AskError";
-  readonly status: 400 | 422 | 502;
-  constructor(status: 400 | 422 | 502, message: string) {
+  readonly status: 400 | 422 | 429 | 502;
+  constructor(status: 400 | 422 | 429 | 502, message: string) {
     super(message);
     this.status = status;
   }
+}
+
+/** This repo's share of the account's Workers AI neurons (SPEC 29.4.5), kept by the Coordinator. */
+export interface NeuronBudget {
+  reserve(neurons: number): Promise<{ ok: boolean; used: number; cap: number }>;
+  adjust(delta: number): Promise<unknown>;
+}
+
+/** Calls and reserved neurons of one question (the eval sums them). */
+export interface AiUsage {
+  calls: number;
+  neurons_reserved: number;
 }
 
 export interface AiProvider {
@@ -188,33 +203,71 @@ export interface AiBinding {
   aiGatewayLogId?: string | null;
 }
 
+/** The repair note names the rejection briefly, so the note stays near 100 characters. */
+export function repairNote(reason: string): string {
+  return `Your previous answer was rejected (${reason.slice(0, 40)}). Reply with the JSON object only.`;
+}
+
 export class WorkersAiProvider implements AiProvider {
   readonly name = "workers-ai" as const;
   readonly #ai: AiBinding;
   readonly #model: string;
   readonly #gatewayId: string;
-  constructor(ai: AiBinding, model: string, gatewayId: string) {
+  readonly #maxTokens: number;
+  readonly #budget: NeuronBudget | null;
+  #usage: AiUsage = { calls: 0, neurons_reserved: 0 };
+  constructor(ai: AiBinding, model: string, gatewayId: string, options: { maxTokens?: number; budget?: NeuronBudget | null } = {}) {
     this.#ai = ai;
     this.#model = model;
     this.#gatewayId = gatewayId;
+    this.#maxTokens = options.maxTokens ?? 96;
+    this.#budget = options.budget ?? null;
   }
+
+  /** Calls and neurons reserved by the last toQuery. */
+  usage(): AiUsage {
+    return { ...this.#usage };
+  }
+
   async #call(question: string, repair: string | null): Promise<unknown> {
     const messages = [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: question },
-      ...(repair ? [{ role: "user", content: `Your previous answer was rejected (${repair}). Reply with the JSON object only.` }] : []),
+      ...(repair ? [{ role: "user", content: repairNote(repair) }] : []),
     ];
+    const schema = { type: "json_schema", json_schema: METRIC_QUERY_SCHEMA };
+    const inputChars = messages.reduce((n, m) => n + m.content.length, 0) + JSON.stringify(schema).length;
+    const reserved = aiReservation(this.#model, inputChars, this.#maxTokens);
+    if (this.#budget) {
+      const r = await this.#budget.reserve(reserved);
+      if (!r.ok) throw new AskError(429, `ai_budget: ${r.used} of ${r.cap} neurons used today (UTC); try again tomorrow`);
+    }
+    this.#usage.calls++;
+    this.#usage.neurons_reserved += reserved;
     const out = (await this.#ai.run(
       this.#model,
-      { messages, response_format: { type: "json_schema", json_schema: METRIC_QUERY_SCHEMA } },
+      { messages, response_format: schema, max_tokens: this.#maxTokens },
       { gateway: { id: this.#gatewayId } },
-    )) as { response?: unknown };
+    )) as { response?: unknown; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } };
+    // If Workers AI reports token usage, correct the reservation to the neurons those tokens cost.
+    const prompt = out.usage?.prompt_tokens;
+    const completion = out.usage?.completion_tokens;
+    if (this.#budget && typeof prompt === "number" && typeof completion === "number") {
+      const actual = Math.ceil(aiNeurons(this.#model, prompt, completion));
+      if (actual !== reserved) {
+        await this.#budget.adjust(actual - reserved);
+        this.#usage.neurons_reserved += actual - reserved;
+      }
+    }
     return out.response ?? out;
   }
+
   async toQuery(question: string): Promise<MetricQuery> {
+    this.#usage = { calls: 0, neurons_reserved: 0 };
     try {
       return validated(await this.#call(question, null), this.name);
     } catch (first) {
+      if (first instanceof AskError && first.status === 429) throw first;
       // JSON mode can fail ("JSON Mode couldn't be met"): one repair retry, then 422.
       const reason = first instanceof Error ? first.message : String(first);
       try {
@@ -227,12 +280,23 @@ export class WorkersAiProvider implements AiProvider {
   }
 }
 
+/** The Coordinator-backed neuron ledger (one per UTC day, capped by AI_DAILY_NEURON_CAP). */
+export function coordinatorNeuronBudget(env: Env): NeuronBudget {
+  return {
+    reserve: (neurons) => coordinatorStub(env).reserveNeurons(neurons),
+    adjust: (delta) => coordinatorStub(env).adjustNeurons(delta),
+  };
+}
+
 export function makeProvider(config: AppConfig, env: Env, fetchImpl?: typeof fetch): AiProvider {
   switch (config.ai.provider) {
     case "workers-ai": {
       const ai = (env as unknown as { AI?: AiBinding }).AI;
       if (!ai) throw new AskError(502, "AI_PROVIDER=workers-ai needs the AI binding (production only)");
-      return new WorkersAiProvider(ai, config.ai.model ?? "@cf/meta/llama-3.3-70b-instruct-fp8-fast", config.ai.gatewayId ?? "peoplelake");
+      return new WorkersAiProvider(ai, config.ai.model ?? AI_MODEL, config.ai.gatewayId ?? "peoplelake", {
+        maxTokens: config.ai.maxTokens,
+        budget: coordinatorNeuronBudget(env),
+      });
     }
     case "openai-compatible":
       return new OpenAiCompatibleProvider(config.ai.llmBaseUrl ?? "http://127.0.0.1:8150/v1", "local", fetchImpl);

@@ -124,6 +124,7 @@ export interface BudgetReport {
     workflow_steps_today: number;
   };
   bigquery: TransformBudget;
+  workers_ai: { neurons_today: number; cap: number };
   landing: { landed_through: string | null; committed_through: string | null };
 }
 
@@ -335,6 +336,32 @@ export class Coordinator extends DurableObject<Env> {
     const m = this.#bqMonth(now);
     const cap = this.#guards().bqMonthlyBytesCap;
     return { ok: m.bytes + BQ_TRANSFORM_RESERVE_BYTES <= cap, month: m.month, bytes_billed: m.bytes, reserve_bytes: BQ_TRANSFORM_RESERVE_BYTES, cap_bytes: cap };
+  }
+
+  // -- Workers AI neuron ledger (SPEC 29.4.5) ---------------------------------------------------------
+
+  #neuronsOn(day: string): number {
+    const raw = this.#get("ai_neurons_day");
+    const parsed = raw ? (JSON.parse(raw) as { day: string; neurons: number }) : null;
+    return parsed?.day === day ? parsed.neurons : 0;
+  }
+
+  /** Reserve neurons for one Workers AI call, refusing when the UTC day's total would pass the cap. */
+  reserveNeurons(neurons: number, now: number = Date.now()): { ok: boolean; used: number; cap: number } {
+    const cap = this.#config().ai.dailyNeuronCap;
+    const day = utcDay(now);
+    const used = this.#neuronsOn(day);
+    if (used + neurons > cap) return { ok: false, used, cap };
+    this.#set("ai_neurons_day", JSON.stringify({ day, neurons: used + neurons }));
+    return { ok: true, used: used + neurons, cap };
+  }
+
+  /** Correct today's reservation once Workers AI reports the tokens a call used. */
+  adjustNeurons(delta: number, now: number = Date.now()): { used: number } {
+    const day = utcDay(now);
+    const used = Math.max(0, this.#neuronsOn(day) + delta);
+    this.#set("ai_neurons_day", JSON.stringify({ day, neurons: used }));
+    return { used };
   }
 
   // -- runs -----------------------------------------------------------------------------------------
@@ -847,6 +874,7 @@ export class Coordinator extends DurableObject<Env> {
         workflow_steps_today: today?.steps ?? 0,
       },
       bigquery: this.transformBudget(now),
+      workers_ai: { neurons_today: this.#neuronsOn(utcDay(now)), cap: this.#config().ai.dailyNeuronCap },
       landing: { landed_through: this.#get("landed_through"), committed_through: this.#get("committed_through") },
     };
   }

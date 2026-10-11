@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
@@ -10,7 +11,9 @@ from peoplelake.evals.ask import (
     FIELDS,
     AskEvalError,
     Question,
+    budget_exhausted,
     evaluate,
+    evaluate_resumable,
     load_questions,
     percentile,
     report,
@@ -113,6 +116,87 @@ def test_report_labels_provider_target_and_questions_hash() -> None:
     assert "stand-in" in rep["provider_label"]
     assert len(rep["questions_sha256"]) == 64
     assert rep["summary"]["exact_match"] == 1
+
+
+def _workers_ai(questions: list[Question], budget: int) -> tuple:
+    """A fake production Worker: answers correctly until `budget` calls, then 429 ai_budget."""
+    calls = {"n": 0}
+
+    def ask(question: str) -> tuple[int, dict]:
+        if calls["n"] >= budget:
+            return 429, {"error": "ai_budget", "detail": "1800 of 1800 neurons used today (UTC)"}
+        calls["n"] += 1
+        q = next(q for q in questions if q.question == question)
+        return 200, {
+            "provider": "workers-ai",
+            "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+            "query": q.expected,
+            "usage": {"calls": 1, "neurons_reserved": 34},
+        }
+
+    return ask, calls
+
+
+def test_workers_ai_eval_checkpoints_stops_at_the_cap_and_resumes_on_a_later_day(tmp_path) -> None:
+    qs = load_questions()
+    checkpoint = tmp_path / "ask-workers-ai.checkpoint.json"
+    ask, _ = _workers_ai(qs, budget=25)
+    first = evaluate_resumable(
+        qs, ask, "workers-ai", checkpoint=checkpoint, resume=False, questions_hash="h", today=lambda: "2026-10-12"
+    )
+    assert not first["complete"] and first["stopped"] == "ai_budget"
+    saved = json.loads(checkpoint.read_text())
+    assert len(saved["rows"]) == 25 and saved["days"] == ["2026-10-12"]  # every answered question was saved
+    with pytest.raises(AskEvalError, match="--resume"):
+        evaluate_resumable(qs, ask, "workers-ai", checkpoint=checkpoint, resume=False, questions_hash="h")
+    with pytest.raises(AskEvalError, match="other questions"):
+        evaluate_resumable(qs, ask, "workers-ai", checkpoint=checkpoint, resume=True, questions_hash="other")
+    ask2, calls2 = _workers_ai(qs, budget=1000)
+    second = evaluate_resumable(
+        qs, ask2, "workers-ai", checkpoint=checkpoint, resume=True, questions_hash="h", today=lambda: "2026-10-13"
+    )
+    assert second["complete"] and second["stopped"] is None
+    assert calls2["n"] == 35  # only the unanswered questions were asked again
+    assert [r["id"] for r in second["rows"]] == [q.id for q in qs]
+    assert second["days"] == ["2026-10-12", "2026-10-13"]
+    assert (second["calls"], second["neurons_reserved"]) == (60, 60 * 34)
+
+
+def test_results_are_written_only_for_a_complete_run_and_name_the_model(tmp_path, monkeypatch) -> None:
+    from peoplelake.evals import ask as ask_mod
+
+    qs = load_questions()
+    monkeypatch.setattr(ask_mod, "checkpoint_path", lambda: tmp_path / "cp.json")
+
+    class Op:
+        base_url = "https://peoplelake.example.workers.dev"
+        http = None
+
+        def headers(self):
+            return {}
+
+        def close(self):
+            pass
+
+    fake, _ = _workers_ai(qs, budget=10)
+    monkeypatch.setattr("peoplelake.evals.freshness.prod_operator", lambda: Op())
+    monkeypatch.setattr(ask_mod, "_http_ask", lambda http, headers: fake)
+    with pytest.raises(ask_mod.AskEvalIncomplete, match="stopped after 10 of 60"):
+        ask_mod.run_prod(qs)
+    fake, _ = _workers_ai(qs, budget=1000)
+    monkeypatch.setattr(ask_mod, "_http_ask", lambda http, headers: fake)
+    outcome = ask_mod.run_prod(qs, resume=True)
+    rep = report("workers-ai", outcome, "peoplelake eval ask --provider workers-ai --resume")
+    assert rep["model"] == "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+    assert rep["summary"]["questions"] == 60 and rep["calls"] == 60 and rep["neurons_estimated"] == 2040.0
+    assert len(rep["days"]) >= 1
+
+
+def test_budget_answers_are_the_429_or_the_daily_allocation_error() -> None:
+    assert budget_exhausted(429, {"error": "ai_budget"})
+    assert budget_exhausted(502, {"error": "4006: you have used up your daily free allocation of 10,000 neurons"})
+    assert not budget_exhausted(502, {"error": "local LLM unreachable"})
+    assert not budget_exhausted(422, {"error": "workers-ai returned an invalid query"})
 
 
 @pytest.mark.e2e

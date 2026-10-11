@@ -41,6 +41,8 @@
     "RUNNER_SEEN_WINDOW_SECONDS": "60",
     "EVAL_FAULTS_ENABLED": "true",
     "AI_PROVIDER": "stub",
+    "AI_MAX_TOKENS": "96",
+    "AI_DAILY_NEURON_CAP": "1800",
     "LLM_BASE_URL": "http://127.0.0.1:8150/v1"
   },
   "r2_buckets": [
@@ -107,7 +109,9 @@
         "EVAL_FAULTS_ENABLED": "false",
         "AI_PROVIDER": "workers-ai",
         "AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-        "AI_GATEWAY_ID": "peoplelake"
+        "AI_GATEWAY_ID": "peoplelake",
+        "AI_MAX_TOKENS": "96",
+        "AI_DAILY_NEURON_CAP": "1800"
       },
       // Production only: an `ai` binding makes `wrangler dev` wait for a remote connection, so local runs
       // use llama-server or the stub and tests inject a mocked AI binding.

@@ -1,7 +1,7 @@
 // parseConfig(env, requestHost): every rule fails closed (SPEC 7.2). A config error turns every request
 // into 500 {"error":"config"} and makes scheduled handlers do nothing.
 import { z } from "zod";
-import { GUARD_BOUNDS, PRODUCTION_GUARDS } from "../shared/free-budget.ts";
+import { AI_DAILY_NEURON_CAP, AI_DAILY_NEURON_CAP_AT_MOST, AI_MAX_TOKENS, GUARD_BOUNDS, PRODUCTION_GUARDS } from "../shared/free-budget.ts";
 
 export class ConfigError extends Error {
   override name = "ConfigError";
@@ -51,6 +51,9 @@ export interface AppConfig {
     readonly model: string | null;
     readonly gatewayId: string | null;
     readonly llmBaseUrl: string | null;
+    /** Workers AI only: max_tokens on every call and this repo's neuron cap per UTC day (SPEC 29.4.5). */
+    readonly maxTokens: number;
+    readonly dailyNeuronCap: number;
   };
   readonly gcp: { readonly project: string; readonly region: string; readonly job: string } | null;
 }
@@ -150,6 +153,8 @@ export function parseConfig(env: ConfigEnv, requestHost: string | null): AppConf
     autoRunsMaxPerDay: int(env, "AUTO_RUNS_MAX_PER_DAY", prod ? P.AUTO_RUNS_MAX_PER_DAY : 100_000, 1),
     bqMonthlyBytesCap: int(env, "BQ_MONTHLY_BYTES_CAP", P.BQ_MONTHLY_BYTES_CAP, 1),
   };
+  const aiMaxTokens = int(env, "AI_MAX_TOKENS", AI_MAX_TOKENS, 1);
+  const aiDailyNeuronCap = int(env, "AI_DAILY_NEURON_CAP", AI_DAILY_NEURON_CAP, 1);
   if (guards.failureBackoffMaxMinutes < guards.failureBackoffBaseMinutes) {
     throw new ConfigError("FAILURE_BACKOFF_MAX_MINUTES must be at least FAILURE_BACKOFF_BASE_MINUTES");
   }
@@ -169,6 +174,10 @@ export function parseConfig(env: ConfigEnv, requestHost: string | null): AppConf
       throw new ConfigError(`production requires BQ_MONTHLY_BYTES_CAP <= ${b.bqMonthlyBytesCapAtMost}`);
     }
     if (heartbeatMinutes > b.heartbeatMinutesAtMost) throw new ConfigError("production requires HEARTBEAT_MINUTES=0 (heartbeat off)");
+    if (aiMaxTokens > AI_MAX_TOKENS) throw new ConfigError(`production requires AI_MAX_TOKENS <= ${AI_MAX_TOKENS}`);
+    if (aiDailyNeuronCap > AI_DAILY_NEURON_CAP_AT_MOST) {
+      throw new ConfigError(`production requires AI_DAILY_NEURON_CAP <= ${AI_DAILY_NEURON_CAP_AT_MOST}`);
+    }
   }
   const gcpProject = secret(env, "GCP_PROJECT");
   const rollMaxBytes = int(env, "LANDING_ROLL_MAX_BYTES", 8 * 1024 * 1024, 1024);
@@ -199,6 +208,8 @@ export function parseConfig(env: ConfigEnv, requestHost: string | null): AppConf
       model: secret(env, "AI_MODEL"),
       gatewayId: secret(env, "AI_GATEWAY_ID"),
       llmBaseUrl: secret(env, "LLM_BASE_URL"),
+      maxTokens: aiMaxTokens,
+      dailyNeuronCap: aiDailyNeuronCap,
     },
     gcp: gcpProject
       ? { project: gcpProject, region: str(env, "GCP_REGION", "us-central1"), job: str(env, "CLOUD_RUN_JOB", "peoplelake-runner") }

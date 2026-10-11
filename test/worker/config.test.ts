@@ -99,6 +99,9 @@ describe("parseConfig fail-closed rules", () => {
     fails({ ...production(), AUTO_RUNS_MAX_PER_DAY: "31" }, null, /AUTO_RUNS_MAX_PER_DAY <= 30/);
     fails({ ...production(), BQ_MONTHLY_BYTES_CAP: "300000000000" }, null, /BQ_MONTHLY_BYTES_CAP <= 275000000000/);
     fails({ ...production(), HEARTBEAT_MINUTES: "360" }, null, /HEARTBEAT_MINUTES=0/);
+    fails({ ...production(), AI_DAILY_NEURON_CAP: "2001" }, null, /AI_DAILY_NEURON_CAP <= 2000/);
+    fails({ ...production(), AI_MAX_TOKENS: "256" }, null, /AI_MAX_TOKENS <= 96/);
+    expect(parseConfig(production(), null).ai).toMatchObject({ maxTokens: 96, dailyNeuronCap: 1800 });
     fails({ ...local(), FAILURE_BACKOFF_BASE_MINUTES: "10", FAILURE_BACKOFF_MAX_MINUTES: "5" }, "127.0.0.1", /FAILURE_BACKOFF_MAX_MINUTES/);
     expect(parseConfig(local(), "127.0.0.1").guards.runMinIntervalSeconds).toBe(0);
   });

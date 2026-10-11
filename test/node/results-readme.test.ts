@@ -59,6 +59,29 @@ const ingest: IngestCpuReport = {
 };
 
 describe("results renderer", () => {
+  it("renders a resumable Workers AI ask result with its model, days, calls and neurons", () => {
+    const ask: AskReport = {
+      kind: "ask",
+      command: "peoplelake eval ask --provider workers-ai --resume",
+      date: "2026-10-13",
+      provider: "workers-ai",
+      provider_label: "Workers AI through AI Gateway peoplelake",
+      model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      days: ["2026-10-12", "2026-10-13"],
+      calls: 63,
+      neurons_estimated: 2121,
+      target: "prod",
+      route: "POST /api/ask/query",
+      questions_file: "evals/ask/questions.jsonl",
+      questions_sha256: "f6b4b0d5e154aaaa",
+      summary: { questions: 60, exact_match: 50, field_accuracy: { metric: 1, department_id: 1, start_month: 0.9, end_month: 0.9 }, invalid_answers: 0, latency_ms: { p50: 900, p95: 1500 } },
+    };
+    const text = renderResults([{ file: "evals/results/ask-workers-ai-2026-10-13.json", report: ask }]);
+    expect(text).toContain("model `@cf/meta/llama-3.3-70b-instruct-fp8-fast`");
+    expect(text).toContain("UTC days: 2026-10-12, 2026-10-13; model calls: 63; neurons reserved: 2121.");
+    expect(findProseViolations(text)).toEqual([]);
+  });
+
   it("renders the ingest CPU benchmark with ranges and the 10 ms limit", () => {
     const text = renderResults([{ file: "evals/results/ingest-cpu-2026-10-11.json", report: ingest }]);
     expect(text).toContain("#### Ingest CPU per request (2026-10-11)");

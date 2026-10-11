@@ -5,7 +5,7 @@ import type { App } from "../app.ts";
 import { requireRole } from "../app.ts";
 import { LATEST_METRICS_KEY } from "../reports.ts";
 import type { AppConfig } from "../config.ts";
-import { type AiProvider, AskError, type MetricQuery, makeProvider } from "./providers.ts";
+import { type AiProvider, AskError, type MetricQuery, makeProvider, WorkersAiProvider } from "./providers.ts";
 
 interface SnapshotRow {
   month: string;
@@ -16,6 +16,12 @@ interface SnapshotRow {
 // The Workers AI model id; llama-server serves whatever GGUF it was started with (the eval records it).
 function modelOf(config: AppConfig, provider: AiProvider["name"]): string | null {
   return provider === "workers-ai" ? (config.ai.model ?? "@cf/meta/llama-3.3-70b-instruct-fp8-fast") : null;
+}
+
+/** 429 ai_budget past this repo's daily neuron cap; every other AskError keeps its status. */
+function askErrorResponse(err: AskError): { body: Record<string, unknown>; status: 400 | 422 | 429 | 502 } {
+  if (err.status === 429) return { body: { error: "ai_budget", detail: err.message }, status: 429 };
+  return { body: { error: err.message }, status: err.status };
 }
 
 export function answer(query: MetricQuery, rows: SnapshotRow[]): { month: string; value: string | null }[] {
@@ -42,9 +48,17 @@ export function mountAsk(app: App): void {
     try {
       const provider = makeProvider(config, c.env);
       const query = await provider.toQuery(question);
-      return c.json({ provider: provider.name, model: modelOf(config, provider.name), query });
+      return c.json({
+        provider: provider.name,
+        model: modelOf(config, provider.name),
+        query,
+        ...(provider instanceof WorkersAiProvider ? { usage: provider.usage() } : {}),
+      });
     } catch (err) {
-      if (err instanceof AskError) return c.json({ error: err.message }, err.status);
+      if (err instanceof AskError) {
+        const { body, status } = askErrorResponse(err);
+        return c.json(body, status);
+      }
       throw err;
     }
   });
@@ -66,7 +80,10 @@ export function mountAsk(app: App): void {
         values: answer(query, metrics.rows),
       });
     } catch (err) {
-      if (err instanceof AskError) return c.json({ error: err.message }, err.status);
+      if (err instanceof AskError) {
+        const { body, status } = askErrorResponse(err);
+        return c.json(body, status);
+      }
       throw err;
     }
   });
