@@ -56,6 +56,25 @@ TAMPERS = {
         "UPDATE peoplelake_core.dim_employee_history SET valid_to = valid_to - INTERVAL 1 DAY WHERE employee_id = 'E000001' AND valid_from = (SELECT min(valid_from) FROM peoplelake_core.dim_employee_history WHERE employee_id = 'E000001')",
         "UPDATE peoplelake_core.dim_employee_history SET valid_to = valid_to + INTERVAL 1 DAY WHERE employee_id = 'E000001' AND valid_from = (SELECT min(valid_from) FROM peoplelake_core.dim_employee_history WHERE employee_id = 'E000001')",
     ),
+    # The point-in-time macro pl_employee_as_of over the SCD2 history must agree with the monthly snapshot:
+    # end one active employee's interval covering 2024-09-30 on that day, so the as-of view loses them.
+    "recon_history_as_of_matches_snapshot": (
+        "error",
+        """
+        CREATE OR REPLACE TABLE peoplelake_ops.tamper_as_of AS
+        SELECT h.employee_id, h.valid_from, h.valid_to FROM peoplelake_core.dim_employee_history h
+        JOIN peoplelake_core.fct_workforce_monthly f ON f.employee_id = h.employee_id AND f.month_end = DATE '2024-09-30'
+        WHERE h.valid_from <= DATE '2024-09-30' AND h.valid_to > DATE '2024-09-30'
+        ORDER BY h.employee_id LIMIT 1;
+        UPDATE peoplelake_core.dim_employee_history AS h SET valid_to = DATE '2024-09-30'
+        FROM peoplelake_ops.tamper_as_of t WHERE h.employee_id = t.employee_id AND h.valid_from = t.valid_from
+        """,
+        """
+        UPDATE peoplelake_core.dim_employee_history AS h SET valid_to = t.valid_to
+        FROM peoplelake_ops.tamper_as_of t WHERE h.employee_id = t.employee_id AND h.valid_from = t.valid_from;
+        DROP TABLE peoplelake_ops.tamper_as_of
+        """,
+    ),
     "recon_metrics_vs_oracle": (
         "warn",
         "UPDATE peoplelake_core.metrics_workforce_monthly SET hires = hires + 1 WHERE department_id = 'D01' AND month = DATE '2025-01-01'",
@@ -91,6 +110,26 @@ def test_check_fires_when_invariant_breaks(built, name):
         with connection(built.wh.path) as con:
             con.execute(undo)
     assert run_check(built, name).success
+
+
+def test_every_reconciliation_check_has_a_test_that_breaks_it():
+    """The module docstring's promise, checked: each check under tests/reconciliation is broken on purpose
+    by a TAMPERS entry or a dedicated test in this module."""
+    from pathlib import Path
+
+    from peoplelake.paths import repo_root
+
+    checks = {p.stem for p in (repo_root() / "warehouse" / "tests" / "reconciliation").glob("*.sql")}
+    dedicated = {
+        "recon_retro_corrections_applied",  # R4
+        "recon_rescinded_terminations_excluded",  # R5
+        "recon_offer_to_hire",  # R6
+        "recon_no_event_id_conflicts",  # R8
+    }
+    source = Path(__file__).read_text()
+    for name in dedicated:
+        assert f'outcome = run_check(built, "{name}")' in source, name
+    assert checks == set(TAMPERS) | dedicated
 
 
 def test_r4_detects_superseded_department(built):

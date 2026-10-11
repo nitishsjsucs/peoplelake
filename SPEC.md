@@ -1040,17 +1040,17 @@ On the small profile loaded straight into DuckDB (no Worker): `dbt seed`, `dbt r
 | Claim fragment | Verification | Runs where |
 |---|---|---|
 | three simulated enterprise sources | `test_generator_counts.py::test_three_sources`; ingest routes exist for exactly 3 | CI |
-| approximately 100,000 workforce events | generator asserts 100,000; R7 at quiescence on the full profile; `peoplelake prod verify` counts 100,000 unique `event_id` in BigQuery `pl_staging.stg_events` | CI (local), prod after setup |
+| approximately 100,000 workforce events | generator asserts 100,000; R7 at quiescence on the full profile; `peoplelake prod verify` counts 100,000 unique `event_id` in BigQuery `peoplelake_staging.stg_events` | CI (local), prod after setup |
 | into BigQuery | `prod verify` + digest parity DuckDB vs BigQuery; BigQuery drill scenarios | prod only (needs Nitish) |
 | Workers, R2, Apache Iceberg (revision 3; was "Basin Pipelines") | landing-roller and committer tests (section 15.7); `doctor` checks buckets, the catalog and the table; `prod verify` reads `peoplelake.raw_events` snapshots whose summaries name the landing rolls | CI (local), prod after setup |
 | Python/SQL ELT | loader + dbt tests | CI |
 | dbt dimensional models | `_core.yml` tests (unique, not_null, relationships) | CI |
 | effective-dated employee history | unit tests + R9 | CI |
-| five workforce metrics | `test_metric_catalog_has_exactly_five`; R10 oracle | CI |
+| five workforce metrics | `pipeline/tests/test_metric_catalog.py::test_metric_catalog_has_exactly_five` (the Worker's `METRIC_IDS`, the mart's metric columns, the oracle seed and the semantic layer; fixer: the test was cited here but did not exist) and `test/node/metric-catalog.test.ts`; R10 oracle | CI |
 | reconciliation for rehires | R3 + unit tests | CI |
 | reconciliation for retroactive corrections | R4, R5 + unit tests | CI |
 | incremental processing | reference digests from the dbt job (incremental-on-empty equals full refresh); every scenario leg equals them; `test_bucket_cursors.py` | CI |
-| historical employee records | `dim_employee_history` + `pl_employee_as_of` test | CI |
+| historical employee records | `dim_employee_history` + `recon_history_as_of_matches_snapshot` (the `pl_employee_as_of` check, with a tamper test that breaks it) | CI |
 | consistent workforce reporting | metrics mart is the single definition; reporting views and `/api/*` read it; R10 | CI |
 | retry-safe orchestration with Cloudflare Workflows | `workflow.test.ts`, `coordinator.test.ts`, S4 | CI (Miniflare Workflows); prod Workflows after deploy |
 | targeting 15-minute p95 freshness | `eval freshness` measured p95 (local); prod p95 from the single `prod:e2e` delivery | local session + prod |
