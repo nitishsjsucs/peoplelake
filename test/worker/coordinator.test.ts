@@ -346,6 +346,46 @@ describe("Coordinator Free plan guards", () => {
     expect((await c().requestRun("manual", "incremental", t0 + 242_000)).started).toBe(true);
   });
 
+  it("never re-arms the alarm every second while a due pending automatic run waits for the active run", async () => {
+    // A lake event inside the minimum interval leaves a pending automatic run; when it falls due while the
+    // first run is still active, the alarm must sleep until a real deadline (here the 10-minute local run
+    // timeout), and releasing the run starts the pending one at once.
+    await c().setTestOptions({ guards: { runMinIntervalSeconds: 240 } });
+    const t0 = Date.now();
+    const first = await c().requestRun("lake-event", "incremental", t0);
+    const firstId = first.run_id ?? "";
+    expect(await c().requestRun("lake-event", "incremental", t0 + 60_000)).toMatchObject({ started: false, reason: "min_interval" });
+    const before = (await c().sqlUsage()).rows_written;
+    const alarmAfterSweep = await runInDurableObject(c(), async (instance: Coordinator, state) => {
+      await state.storage.deleteAlarm(); // inside alarm() the fired alarm is gone
+      await instance.sweep(t0 + 240_000);
+      return state.storage.getAlarm();
+    });
+    expect((await c().status())["active_run_id"]).toBe(firstId);
+    expect(alarmAfterSweep).toBe(t0 + 10 * MIN);
+    expect((await c().sqlUsage()).rows_written - before).toBeLessThanOrEqual(2); // the alarm set counts as a row
+    await c().commitRun(firstId, commitInput(), t0 + 250_000);
+    const released = await c().releaseRun(firstId, t0 + 250_000);
+    expect(released.next).toMatchObject({ started: true });
+    expect((await c().getRun(released.next?.run_id ?? ""))?.run.reason).toBe("pending-auto");
+    expect((await c().status())["pending_auto"]).toBeNull();
+  });
+
+  it("a run that ends before the pending automatic run is due arms the alarm for its due time", async () => {
+    await c().setTestOptions({ guards: { runMinIntervalSeconds: 240 } });
+    const t0 = Date.now();
+    const first = await c().requestRun("lake-event", "incremental", t0);
+    await c().requestRun("lake-event", "incremental", t0 + 60_000);
+    const alarm = await runInDurableObject(c(), async (instance: Coordinator, state) => {
+      await state.storage.deleteAlarm(); // e.g. an earlier deadline fired and the pending run was not counted
+      await instance.commitRun(first.run_id ?? "", commitInput(), t0 + 100_000);
+      expect((await instance.releaseRun(first.run_id ?? "", t0 + 100_000)).next).toBeNull();
+      return state.storage.getAlarm();
+    });
+    expect(alarm).toBe(t0 + 240_000);
+    expect((await c().status())["pending_auto"]).toBe("1");
+  });
+
   it("caps automatic runs per UTC day", async () => {
     await c().setTestOptions({ guards: { autoRunsMaxPerDay: 2 } });
     const day = Date.parse("2026-10-10T08:00:00.000Z");
@@ -440,7 +480,7 @@ describe("Coordinator Free plan guards", () => {
     await c().releaseRun(runId, now);
     const afterRun = await c().sqlUsage();
     expect(afterRun.rows_written - afterTick.rows_written).toBeLessThanOrEqual(100);
-    expect(afterRun.rows_read - afterTick.rows_read).toBeLessThanOrEqual(100); // measured: 47 read, 64 written
+    expect(afterRun.rows_read - afterTick.rows_read).toBeLessThanOrEqual(100); // measured: 47 read, 66 written (2 of them alarm sets)
     // The daily counters are persisted at most every 5 minutes (one row).
     await c().tick(now + 5 * MIN);
     const budget = await c().budget(now + 5 * MIN);

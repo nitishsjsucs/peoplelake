@@ -1,7 +1,8 @@
 // Every Durable Object SQL call goes through MeteredSql (SPEC 29.4.3): it drains the cursor and adds
 // SqlStorageCursor.rowsRead and rowsWritten to in-memory counters for the current UTC day, so tests can
 // pin how many rows an operation reads and writes against the Workers Free allowances (5 million rows
-// read and 100,000 rows written a day per account), and operators can see the totals.
+// read and 100,000 rows written a day per account), and operators can see the totals. Alarms count too:
+// each setAlarm() is billed as one row written.
 
 export interface SqlUsage {
   /** UTC day the counters belong to (YYYY-MM-DD). */
@@ -46,6 +47,11 @@ export class MeteredSql {
 
   run(query: string, ...bindings: unknown[]): void {
     this.all(query, ...bindings);
+  }
+
+  /** Cloudflare bills each `setAlarm()` as one row written; callers count every alarm they set here. */
+  countAlarmSet(): void {
+    this.#count(0, 1);
   }
 
   /** Counters of the current UTC day (a copy). */

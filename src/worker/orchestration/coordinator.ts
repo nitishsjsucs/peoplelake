@@ -233,7 +233,10 @@ export class Coordinator extends DurableObject<Env> {
 
   async #armAlarm(at: number): Promise<void> {
     const current = await this.ctx.storage.getAlarm();
-    if (current === null || at < current) await this.ctx.storage.setAlarm(at);
+    if (current === null || at < current) {
+      await this.ctx.storage.setAlarm(at);
+      this.#db.countAlarmSet();
+    }
   }
 
   /** When the pending automatic run may start (the minimum interval after the last automatic start). */
@@ -250,7 +253,10 @@ export class Coordinator extends DurableObject<Env> {
       queued ? queued.t + cfg.jobs.claimTimeoutSeconds * 1000 : null,
       claimed?.t ?? null,
       active ? active.t + cfg.jobs.runTimeoutMinutes * 60_000 : null,
-      this.#pendingAutoDue(),
+      // A pending automatic run can start only once no run is active; releaseRun starts it (or arms the
+      // alarm for its due time) then. Counting it while a run is active would re-arm the alarm every second
+      // (each alarm a Durable Object request and a billed row written) until the run ends.
+      this.#get("active_run_id") === null ? this.#pendingAutoDue() : null,
     ].filter((t): t is number => t !== null);
     return deadlines.length > 0 ? Math.min(...deadlines) : null;
   }
@@ -548,7 +554,18 @@ export class Coordinator extends DurableObject<Env> {
     if (this.#get("active_run_id") !== runId) return { released: false, next: null };
     this.#set("active_run_id", null);
     const pending = this.#get("pending_mode") as RunMode | null;
-    if (pending === null) return { released: true, next: null };
+    if (pending === null) {
+      // A pending automatic run (a trigger inside the minimum interval) waited for this run to end.
+      const due = this.#pendingAutoDue();
+      if (due === null) return { released: true, next: null };
+      if (now < due) {
+        await this.#armAlarm(due);
+        return { released: true, next: null };
+      }
+      this.#set("pending_auto", null);
+      if (!this.#config().runsEnabled) return { released: true, next: null };
+      return { released: true, next: await this.requestRun("pending-auto", "incremental", now) };
+    }
     const kind = this.#get("pending_kind");
     this.#set("pending_mode", null);
     if (kind !== null) this.#set("pending_kind", null);

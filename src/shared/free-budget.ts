@@ -166,7 +166,7 @@ export const PEAK_DAY = {
   runnerCallsPerRun: 20, // claim, heartbeats, results, artifact, roll listing and reads
   workflowDoCallsPerRun: 24,
   operatorRequests: 300, // operator, dashboard, doctor and eval calls
-  coordinatorRowsPerRun: 100,
+  coordinatorRowsPerRun: 100, // rows written by one committed run, setAlarm calls included (measured 66 in coordinator.test.ts)
   indexOverhead: 1.3,
   ndjsonBytesPerRecord: 632, // measured on the full profile (SPEC 25, revision 3)
   icebergAndReportBytes: 22_000_000,

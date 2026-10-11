@@ -143,6 +143,7 @@ export class LandingRoller extends DurableObject<Env> {
     if (this.#alarmAt === undefined) this.#alarmAt = await this.ctx.storage.getAlarm();
     if (this.#alarmAt !== null && this.#alarmAt <= at) return;
     await this.ctx.storage.setAlarm(at);
+    this.#db.countAlarmSet();
     this.#alarmAt = at;
   }
 
