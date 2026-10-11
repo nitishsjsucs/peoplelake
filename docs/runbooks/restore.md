@@ -2,7 +2,7 @@
 
 Two recovery paths exist: replay from the lake (`replay.md`) and BigQuery time travel, described here.
 
-Time travel windows (set by `peoplelake prod bootstrap-gcp`): 48 h on `peoplelake_raw`, `peoplelake_staging`, `peoplelake_ops`; 168 h on `peoplelake_core`, `peoplelake_restricted`, `peoplelake_reporting`. After time travel, BigQuery keeps deleted data 7 more days in fail-safe, recoverable only through Cloud Customer Care.
+Time travel windows (set by `peoplelake prod bootstrap-gcp`): 48 h on `peoplelake_raw`, `peoplelake_staging`, `peoplelake_ops`; 168 h on `peoplelake_core`, `peoplelake_restricted`, `peoplelake_restricted_access` (views), `peoplelake_reporting`. After time travel, BigQuery keeps deleted data 7 more days in fail-safe, recoverable only through Cloud Customer Care.
 
 ## Why SQL and not a copy job
 A copy job (`bq cp table@<epoch_ms>`) does not copy partitioning information or policy tags. A copied `dim_employee_history`, `fct_workforce_monthly` or `fct_compensation_history` would be unpartitioned (unusable by the int64-range `insert_overwrite`) and would expose restricted columns without masking.

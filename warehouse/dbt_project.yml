@@ -51,6 +51,12 @@ models:
     restricted:
       +schema: peoplelake_restricted
       +materialized: table
+    # What peoplelake-analyst reads: views over the two restricted tables, authorized on
+    # peoplelake_restricted, so the dataset dbt builds in (with its untagged __dbt_tmp tables) stays
+    # runner-only (SPEC 11.7).
+    restricted_access:
+      +schema: peoplelake_restricted_access
+      +materialized: view
     reporting:
       +schema: peoplelake_reporting
       +materialized: view

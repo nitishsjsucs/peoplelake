@@ -33,6 +33,20 @@ def test_reporting_views_are_authorized_on_core(nodes):
         assert n["schema"] == "peoplelake_reporting"
 
 
+def test_analyst_views_are_authorized_on_restricted_and_restricted_tables_are_never_recreated(nodes):
+    for name in ("compensation_history", "performance_reviews"):
+        n = nodes[name]
+        assert n["schema"] == "peoplelake_restricted_access"
+        assert n["config"]["materialized"] == "view"
+        assert n["config"]["grant_access_to"] == [{"project": "peoplelake-offline", "dataset": "peoplelake_restricted"}]
+    # A `create or replace` would leave the tagged columns untagged until persist_docs ran again.
+    for name in ("fct_compensation_history", "fct_performance_reviews"):
+        assert nodes[name]["config"]["materialized"] == "incremental"
+        assert nodes[name]["config"]["full_refresh"] is False
+    assert nodes["fct_performance_reviews"]["config"]["incremental_strategy"] == "merge"
+    assert nodes["fct_performance_reviews"]["config"]["unique_key"] == "review_id"
+
+
 def test_bucketed_models_use_int64_range_insert_overwrite(nodes):
     for name in ("dim_employee_history", "fct_workforce_monthly", "fct_compensation_history"):
         cfg = nodes[name]["config"]
@@ -56,7 +70,7 @@ def test_schemas_map_to_bigquery_datasets(nodes):
 @pytest.mark.parametrize("branch", ["full-build", "incremental"])
 def test_offline_compile_parses_as_bigquery_and_lints_clean(tmp_path, branch):
     report = compile_branch(branch, tmp_path / branch)
-    assert report.compiled_models == 28
+    assert report.compiled_models == 30
     assert report.compiled_tests > 80
     assert report.parse_errors == []
     assert report.order_violations == []

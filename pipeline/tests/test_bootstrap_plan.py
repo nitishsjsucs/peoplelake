@@ -10,6 +10,7 @@ from google.api_core.exceptions import NotFound, PermissionDenied
 
 from peoplelake.prod.bootstrap_gcp import (
     ALLOWED_PROJECT_ROLES,
+    ANALYST_DATASETS,
     SERVICES,
     Bootstrap,
     Clients,
@@ -48,19 +49,21 @@ class FakeRunner:
 
 
 class FakeBigQuery:
-    def __init__(self, exists: bool, sandbox_expiration: bool = False):
+    def __init__(self, exists: bool, sandbox_expiration: bool = False, analyst_also_on: tuple[str, ...] = ()):
         self.exists = exists
         self.sandbox_expiration = sandbox_expiration
+        self.analyst_also_on = analyst_also_on
 
     def get_dataset(self, ref):
         if not self.exists:
             raise NotFound(ref)
         name = ref.split(".")[1]
         hours = dict(all_datasets())[name]
-        entries = [
-            SimpleNamespace(entity_id="peoplelake-runner@peoplelake-123.iam.gserviceaccount.com", role="OWNER"),
-            SimpleNamespace(entity_id="peoplelake-analyst@peoplelake-123.iam.gserviceaccount.com", role="READER"),
-        ]
+        entries = [SimpleNamespace(entity_id="peoplelake-runner@peoplelake-123.iam.gserviceaccount.com", role="OWNER")]
+        if name in ANALYST_DATASETS or name in self.analyst_also_on:
+            entries.append(
+                SimpleNamespace(entity_id="peoplelake-analyst@peoplelake-123.iam.gserviceaccount.com", role="READER")
+            )
         sixty_days = 60 * 24 * 3600 * 1000 if self.sandbox_expiration else None
         return SimpleNamespace(
             max_time_travel_hours=hours,
@@ -148,7 +151,7 @@ def test_plan_on_an_empty_project_creates_everything_without_mutating(tmp_path, 
     boot, runner, gcloud = bootstrap(tmp_path, monkeypatch, exists=False)
     actions = boot.run()
     created = [(a.step, a.target) for a in actions if a.kind == "create"]
-    assert sum(1 for s, _ in created if s == "datasets") == 12
+    assert sum(1 for s, _ in created if s == "datasets") == 14
     assert ("taxonomy", "peoplelake-sensitivity") in created
     assert {t for s, t in created if s == "data policies"} == {
         "peoplelake_mask_compensation",
@@ -314,7 +317,7 @@ def test_datasets_get_no_default_expiration(tmp_path, monkeypatch):
     boot, _, _ = bootstrap(tmp_path, monkeypatch, exists=True, sandbox_expiration=True)
     actions = boot.run()
     updated = [a for a in actions if a.step == "datasets" and a.kind == "update"]
-    assert len(updated) == 12
+    assert len(updated) == 14
     assert all(
         "default table expiration cleared" in a.detail and "default partition expiration cleared" in a.detail
         for a in updated
@@ -376,3 +379,23 @@ def test_adc_quota_project_comes_from_google_auth(monkeypatch):
 
     monkeypatch.setattr(google.auth, "default", missing)
     assert adc_quota_project() == (False, None)
+
+
+def test_the_analyst_reads_the_view_datasets_only(tmp_path, monkeypatch):
+    """dbt builds in peoplelake_restricted and leaves untagged __dbt_tmp copies there, so the analyst gets
+    READER on peoplelake_reporting and peoplelake_restricted_access (views) and nothing else."""
+    boot, _, _ = bootstrap(tmp_path, monkeypatch, exists=False)
+    grants = [a.target for a in boot.run() if a.step == "dataset access" and "analyst" in a.target]
+    assert sorted(grants) == sorted(
+        f"READER peoplelake-analyst@peoplelake-123.iam.gserviceaccount.com on {d}" for d in ANALYST_DATASETS
+    )
+    assert ANALYST_DATASETS == ("peoplelake_reporting", "peoplelake_restricted_access")
+
+
+def test_an_analyst_entry_on_the_restricted_dataset_is_removed(tmp_path, monkeypatch):
+    boot, _, _ = bootstrap(tmp_path, monkeypatch, exists=True)
+    boot.clients.bigquery = FakeBigQuery(True, analyst_also_on=("peoplelake_restricted",))
+    updates = [a for a in boot.run() if a.step == "dataset access" and a.kind == "update"]
+    assert [a.target for a in updates] == [
+        "peoplelake-analyst@peoplelake-123.iam.gserviceaccount.com removed from peoplelake_restricted"
+    ]

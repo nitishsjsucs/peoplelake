@@ -29,7 +29,9 @@ from typing import Any
 from ..budget import BQ_MONTHLY_BYTES_CAP
 from ..envfile import read_env_file
 from ..paths import repo_root
+from ..warehouse.bigquery_wh import RESTRICTED_COLUMNS
 from .bootstrap_gcp import (
+    ANALYST_DATASETS,
     DATA_POLICIES,
     GCLOUD_ENV,
     JOB,
@@ -115,6 +117,7 @@ class Readers:
     taxonomies: Callable[[str], list[str]]  # location parent -> display names
     data_policies: Callable[[str], list[str]]  # location parent -> data policy ids
     month_billed: Callable[[], int]
+    get_table: Callable[[str], Any] = lambda table_id: None  # "dataset.table" -> table, or None when missing
 
 
 def real_readers(project: str, location: str) -> Readers:
@@ -144,9 +147,18 @@ def real_readers(project: str, location: str) -> Readers:
         client = bigquery_datapolicies_v1.DataPolicyServiceClient()
         return [d.data_policy_id for d in client.list_data_policies(parent=parent)]
 
+    def get_table(table_id: str):
+        from google.api_core.exceptions import NotFound
+
+        try:
+            return bq().get_table(f"{project}.{table_id}")
+        except NotFound:
+            return None
+
     return Readers(
         adc=adc_quota_project,
         get_dataset=get_dataset,
+        get_table=get_table,
         taxonomies=taxonomies,
         data_policies=data_policies,
         month_billed=lambda: month_bytes_billed(bq()),
@@ -325,6 +337,58 @@ def doctor(
             SETUP_FIX,
         )
 
+    def analyst_grants() -> Check:
+        """peoplelake-analyst reads exactly the two view datasets; never peoplelake_restricted, where dbt
+        writes untagged __dbt_tmp copies, nor any _drill dataset."""
+        name = "peoplelake-analyst dataset grants (views only)"
+        problems, seen = [], set()
+        for dataset, _ in all_datasets():
+            ds = read.get_dataset(dataset)
+            if ds is None:
+                continue
+            for e in getattr(ds, "access_entries", []) or []:
+                if getattr(e, "entity_id", None) != config.analyst_sa:
+                    continue
+                if dataset in ANALYST_DATASETS and e.role == "READER":
+                    seen.add(dataset)
+                else:
+                    problems.append(f"{e.role} on {dataset}")
+        missing = [d for d in ANALYST_DATASETS if d not in seen]
+        if not problems and len(missing) == len(ANALYST_DATASETS) and read.get_dataset(ANALYST_DATASETS[0]) is None:
+            return Check(name, "MISSING", "the datasets do not exist yet", SETUP_FIX)
+        detail = "; ".join([f"unexpected {x}" for x in problems] + [f"no READER on {d}" for d in missing])
+        return Check(
+            name,
+            "PASS" if not problems and not missing else "FAIL",
+            detail or ", ".join(ANALYST_DATASETS),
+            "remove the analyst's entry on peoplelake_restricted (bq update or the console) and rerun " + SETUP_FIX,
+        )
+
+    def column_tags() -> Check:
+        name = "policy tags on the restricted columns"
+        gcp = prod_dir / "gcp.json"
+        tags = (json.loads(gcp.read_text()).get("policy_tags") or {}) if gcp.exists() else {}
+        if not tags:
+            return Check(name, "INFO", "checked once bootstrap-gcp has written .prod/gcp.json")
+        problems, built = [], 0
+        for (table, column), tag in RESTRICTED_COLUMNS.items():
+            t = read.get_table(f"peoplelake_restricted.{table}")
+            if t is None:
+                continue
+            built += 1
+            field = next((f for f in t.schema if f.name == column), None)
+            names = list(getattr(getattr(field, "policy_tags", None), "names", None) or [])
+            if tags.get(tag) not in names:
+                problems.append(f"{table}.{column} lacks the {tag} tag")
+        if built == 0:
+            return Check(name, "INFO", "checked once the first transform has built the restricted tables")
+        return Check(
+            name,
+            "PASS" if not problems else "FAIL",
+            "; ".join(problems) or "base_salary, bonus_target_pct, rating",
+            "the runner drops the analyst views and fails the run until a dbt build reapplies the tags",
+        )
+
     def taxonomy() -> Check:
         name = "policy tags and data masking"
         if "datacatalog.googleapis.com" not in state["apis"]:
@@ -448,7 +512,9 @@ def doctor(
         ("project roles", project_roles),
         ("build identity", build_identity),
         ("datasets", datasets),
+        ("analyst grants", analyst_grants),
         ("taxonomy", taxonomy),
+        ("column tags", column_tags),
         ("secrets", secrets),
         ("artifact registry", artifact_repo),
         ("job", job),

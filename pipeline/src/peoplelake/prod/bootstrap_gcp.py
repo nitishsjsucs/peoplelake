@@ -47,8 +47,13 @@ DATASETS: dict[str, int] = {
     "peoplelake_ops": 48,
     "peoplelake_core": 168,
     "peoplelake_restricted": 168,
+    # Views only: the analyst's way to the restricted tables (dbt builds in peoplelake_restricted, which
+    # holds untagged __dbt_tmp tables during and after a failed build, so analysts never read it).
+    "peoplelake_restricted_access": 168,
     "peoplelake_reporting": 168,
 }
+# The only datasets peoplelake-analyst may read (views; the doctor fails on any other analyst entry).
+ANALYST_DATASETS = ("peoplelake_reporting", "peoplelake_restricted_access")
 LABELS = {"app": "peoplelake"}
 TAXONOMY = "peoplelake-sensitivity"
 TAGS = ("compensation", "performance")
@@ -543,10 +548,7 @@ class Bootstrap:
 
         bq = self.clients.bigquery
         grants = [(name, self.c.runner_sa, "OWNER") for name, _ in all_datasets()]
-        grants += [
-            ("peoplelake_reporting", self.c.analyst_sa, "READER"),
-            ("peoplelake_restricted", self.c.analyst_sa, "READER"),
-        ]
+        grants += [(name, self.c.analyst_sa, "READER") for name in ANALYST_DATASETS]
         for name, email, role in grants:
             ref = f"{self.c.project}.{name}"
 
@@ -570,6 +572,26 @@ class Bootstrap:
                 ]
                 bq.update_dataset(ds, ["access_entries"])
             self.act("dataset access", "create", f"{role} {email} on {name}")
+        # The analyst reads the two view datasets only: an entry anywhere else (peoplelake_restricted in an
+        # earlier design, where dbt leaves untagged __dbt_tmp copies) is removed.
+        for name, _ in all_datasets():
+            if name in ANALYST_DATASETS:
+                continue
+            ref = f"{self.c.project}.{name}"
+
+            def get(ref: str = ref) -> Any:
+                try:
+                    return bq.get_dataset(ref)
+                except NotFound:
+                    return None
+
+            ds = self.client_read("bigquery.googleapis.com", get)
+            if ds is None or not any(e.entity_id == self.c.analyst_sa for e in ds.access_entries):
+                continue
+            if not self.g.plan:
+                ds.access_entries = [e for e in ds.access_entries if e.entity_id != self.c.analyst_sa]
+                bq.update_dataset(ds, ["access_entries"])
+            self.act("dataset access", "update", f"{self.c.analyst_sa} removed from {name}", "analysts read views only")
 
     def tag_and_policy_iam(self) -> None:
         for tag in TAGS:

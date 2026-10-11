@@ -99,6 +99,14 @@ def run_transform(job: dict, *, warehouse, dbt: DbtRunner, upload, profile: str,
         return _failed(
             job, started, f"dbt build failed ({outcome.models_error} models, {outcome.tests_error} tests): {detail}"
         )
+    # Column security (BigQuery): every restricted column must carry its policy tag after the build. If one
+    # does not, the analyst views are dropped (the next build recreates them) and the run fails.
+    untagged = warehouse.restricted_tag_problems()
+    if untagged:
+        warehouse.close_restricted_access()
+        return _failed(
+            job, started, f"restricted columns without policy tags (analyst views dropped): {'; '.join(untagged)}"
+        )
     digests = warehouse.digests(suffix)
     histogram = warehouse.freshness_histogram(-1 if before is None or replay else before)
     body, rows = metrics_artifact_body(job["run_id"], warehouse, profile, suffix)

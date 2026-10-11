@@ -6,7 +6,8 @@ select
     {{ pl_json_str('e.payload', 'review_id') }} as review_id,
     {{ pl_json_str('e.payload', 'cycle') }} as cycle,
     {{ pl_json_int('e.payload', 'rating') }} as rating,
-    {{ pl_json_str('e.payload', 'reviewer_id') }} as reviewer_id
+    {{ pl_json_str('e.payload', 'reviewer_id') }} as reviewer_id,
+    e._pl_load_seq
 from {{ ref('stg_events') }} as e
 where e.source = 'talent'
   and e.event_type = 'review.submitted'

@@ -1,0 +1,12 @@
+version: 2
+
+models:
+  - name: compensation_history
+    description: >
+      Analyst view of fct_compensation_history (authorized on peoplelake_restricted). base_salary and
+      bonus_target_pct carry the compensation policy tag on the table, so analysts see the masking value.
+
+  - name: performance_reviews
+    description: >
+      Analyst view of fct_performance_reviews (authorized on peoplelake_restricted). rating carries the
+      performance policy tag on the table, so analysts see null.

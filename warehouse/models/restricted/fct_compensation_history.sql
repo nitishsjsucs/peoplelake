@@ -1,4 +1,7 @@
 {{ config(**pl_bucketed_config(['employee_id'], ['talent'])) }}
+{#- On BigQuery a replay must not recreate the policy-tagged table (`create or replace` leaves its
+    columns untagged until persist_docs runs): the bucketed incremental path rebuilds what changed. -#}
+{{ config(full_refresh=(false if target.type == 'bigquery' else none)) }}
 {#- Restricted: compensation history per employee (valid_to exclusive). Bucketed by talent events. -#}
 with comp as (
     select

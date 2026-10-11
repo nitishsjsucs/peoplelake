@@ -58,7 +58,7 @@ flowchart LR
   subgraph GCP["Google Cloud, shared project (local stand-in: DuckDB via dbt-duckdb)"]
     CR["Cloud Run Job peoplelake-runner<br/>Python runner + dbt, SA peoplelake-runner<br/>(local: peoplelake runner poll)"]
     RAW[("BigQuery peoplelake_raw.raw_event_deliveries")]
-    DBT["dbt build: peoplelake_staging, peoplelake_core,<br/>peoplelake_restricted, peoplelake_reporting, peoplelake_ops"]
+    DBT["dbt build: peoplelake_staging, peoplelake_core,<br/>peoplelake_restricted (+ analyst views in _restricted_access),<br/>peoplelake_reporting, peoplelake_ops"]
   end
   H -->|"HTTPS + service token"| ACC
   A -->|"HTTPS + service token"| ACC
@@ -102,7 +102,7 @@ Exactly-once effects without Basin Pipelines: a roll is planned before it is wri
 | Runner | **stand-in**: `peoplelake runner poll` process | Cloud Run Job `peoplelake-runner` (us-central1), started by the Workflow through the Cloud Run Admin API |
 | Warehouse | **stand-in**: DuckDB 1.5.6 via dbt-duckdb 1.11.0, session UTC, schemas `peoplelake_*` | BigQuery (US) via dbt-bigquery 1.12.1, datasets `peoplelake_*`, every query capped at 1 GB billed and labeled `app=peoplelake` |
 | Load | `INSERT ... WHERE NOT EXISTS` on `delivery_id` | load job (Parquet, free) to a stage table + `MERGE` on `delivery_id` |
-| Column security | none (schemas only) | policy tags, data masking policies, authorized views |
+| Column security | none (schemas only) | policy tags, data masking policies, authorized views; analysts read only `peoplelake_reporting` and the views in `peoplelake_restricted_access`, never `peoplelake_restricted` where dbt builds; the runner fails a run whose build left a restricted column untagged |
 | Recovery | replay from the local Iceberg table; Iceberg snapshots | replay from Basin Catalog; BigQuery time travel (48 to 168 h) with SQL restore into `_drill`; 7-day fail-safe via support |
 | Auth | locally generated RS256 keys, the same verifier code | Access JWT (RS256) against the team JWKS; One-time PIN for people; service tokens for machines |
 | LLM | llama-server (Qwen3-1.7B) on 8150, or a deterministic stub in CI | Workers AI `@cf/meta/llama-3.3-70b-instruct-fp8-fast` through AI Gateway `peoplelake`, `max_tokens` 96, 1,800 neurons a day |
@@ -387,7 +387,7 @@ Then (the owner's operator):
 | Local | Node, npm, uv, Python 3.12, wrangler 4.149.0, `TZ=UTC` in scripts, ports 8791, 9241 and 8150, dev keys, the Workers Free plan rules and budget |
 | `.prod` files | presence and mode 600, the two secrets a person creates (steps 2 and 3) and the service token secrets setup writes, names only |
 | Cloudflare | wrangler login and account, the workers.dev subdomain, R2 enabled, both buckets, Basin Catalog, the Iceberg table and its landing cursor, both queues, the Zero Trust team domain (its public signing keys), and with `PL_CF_SETUP_TOKEN` the token itself, the One-time PIN login method, the five service tokens, AI Gateway and the Access application; once the Worker is deployed, its secret, `RUNS_ENABLED`, Access in front of it, each service token's role, a wrong secret rejected, the landing, `GET /api/ops/budget` against the planning shares, Workers AI through the gateway and the dispatch token |
-| Google Cloud (`peoplelake prod doctor-gcp`) | gcloud login, the project, the ADC quota project, billing, the 11 APIs, the key creation policy, the four service accounts and that they hold no project-level role beyond the two allowed, the build bucket, the 12 datasets (time travel, no default expiration), policy tags and data masking, the three secrets, the Artifact Registry repository, the Cloud Run job and its last execution, bytes billed this month against the 275 GB guard, and the go-live evidence (reported, not failed, before go-live) |
+| Google Cloud (`peoplelake prod doctor-gcp`) | gcloud login, the project, the ADC quota project, billing, the 11 APIs, the key creation policy, the four service accounts and that they hold no project-level role beyond the two allowed, the build bucket, the 14 datasets (time travel, no default expiration), that `peoplelake-analyst` reads only the two view datasets, policy tags and data masking, the policy tags on the live restricted columns, the three secrets, the Artifact Registry repository, the Cloud Run job and its last execution, bytes billed this month against the 275 GB guard, and the go-live evidence (reported, not failed, before go-live) |
 
 It ends with a summary that lists every check not passing under its fix, in the order of the steps above. It exits 1 on any FAIL, MISSING or UNKNOWN; WARN and INFO do not fail it.
 

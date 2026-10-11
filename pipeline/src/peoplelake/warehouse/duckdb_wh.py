@@ -209,6 +209,13 @@ class DuckDBWarehouse:
             return []
         return [(int(b), int(n)) for b, n in rows]
 
+    def restricted_tag_problems(self) -> list[str]:
+        """DuckDB has no policy tags (column security is production only, SPEC 18)."""
+        return []
+
+    def close_restricted_access(self) -> None:
+        """Nothing to close locally."""
+
     def seed_checksum(self) -> str | None:
         return duckdb_seed_checksum(self)
 

@@ -12,6 +12,7 @@ clustered by source, event_type, event_id.
 from __future__ import annotations
 
 import io
+import os
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -105,6 +106,44 @@ VALUES (@run_id, @job_id, @load_seq, @rows_read, @rows_inserted, @duplicates, @u
 """
 
 MAX_SEQ_SQL = "SELECT MAX(_pl_load_seq) AS m FROM `{raw}`"
+
+
+# Restricted columns and the policy tag each must carry (warehouse/models/restricted/_restricted.yml), and
+# the analyst views over them (warehouse/models/restricted_access).
+RESTRICTED_COLUMNS: dict[tuple[str, str], str] = {
+    ("fct_compensation_history", "base_salary"): "compensation",
+    ("fct_compensation_history", "bonus_target_pct"): "compensation",
+    ("fct_performance_reviews", "rating"): "performance",
+}
+RESTRICTED_ACCESS_VIEWS = ("compensation_history", "performance_reviews")
+
+
+def expected_policy_tags() -> dict[str, str]:
+    """The policy tag resource names dbt applies (the runner job's PL_PT_* settings, written by bootstrap)."""
+    return {
+        "compensation": os.environ.get("PL_PT_COMPENSATION", ""),
+        "performance": os.environ.get("PL_PT_PERFORMANCE", ""),
+    }
+
+
+def policy_tag_problems(get_table: Any, dataset: str, expected: dict[str, str]) -> list[str]:
+    """Restricted columns of the tables in `dataset` that do not carry their policy tag. `get_table` is the
+    client's (or the doctor's) table read; a missing table is reported as such."""
+    from google.api_core.exceptions import NotFound
+
+    problems: list[str] = []
+    for (table, column), tag in RESTRICTED_COLUMNS.items():
+        try:
+            t = get_table(f"{dataset}.{table}")
+        except NotFound:
+            problems.append(f"{table} does not exist")
+            continue
+        field = next((f for f in t.schema if f.name == column), None)
+        names = list(getattr(getattr(field, "policy_tags", None), "names", None) or [])
+        want = expected.get(tag) or f"(PL_PT_{tag.upper()} not set)"
+        if want not in names:
+            problems.append(f"{table}.{column} lacks the {tag} policy tag")
+    return problems
 
 
 def stage_name(job_id: str) -> str:
@@ -279,6 +318,16 @@ class BigQueryWarehouse:
             [bigquery.ScalarQueryParameter("c", "STRING", checksum)],
         )
 
+    def restricted_tag_problems(self) -> list[str]:
+        """After every dbt build: the restricted columns must carry their policy tags, or analysts could read
+        raw values through the access views."""
+        return policy_tag_problems(self.client.get_table, self.dataset("peoplelake_restricted"), expected_policy_tags())
+
+    def close_restricted_access(self) -> None:
+        """Drop the analyst views (the next build recreates them) when a restricted column lost its tag."""
+        for view in RESTRICTED_ACCESS_VIEWS:
+            self.client.delete_table(f"{self.dataset('peoplelake_restricted_access')}.{view}", not_found_ok=True)
+
     def reset(self) -> None:
         """Empty the drill datasets (scenario drills start from empty state). Never touches production."""
         if self.suffix != "drill":
@@ -288,6 +337,7 @@ class BigQueryWarehouse:
             "peoplelake_staging",
             "peoplelake_core",
             "peoplelake_restricted",
+            "peoplelake_restricted_access",
             "peoplelake_reporting",
             "peoplelake_ops",
         ):

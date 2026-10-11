@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from peoplelake.paths import repo_root
-from peoplelake.prod.bootstrap_gcp import SERVICES, all_datasets
+from peoplelake.prod.bootstrap_gcp import ANALYST_DATASETS, SERVICES, all_datasets
 from peoplelake.prod.checks import Check, failed, summary
 from peoplelake.prod.doctor_gcp import (
     GCLOUD_ENV,
@@ -18,6 +18,7 @@ from peoplelake.prod.doctor_gcp import (
     doctor,
     gcloud_read_only,
 )
+from peoplelake.warehouse.bigquery_wh import RESTRICTED_COLUMNS
 
 PROJECT = "peoplelake-123"
 
@@ -58,15 +59,41 @@ class FakeGcloud:
         return subprocess.CompletedProcess(argv, rc, out, "")
 
 
-def fake_readers(complete: bool, quota: str | None = PROJECT, billed: list | None = None):
+ANALYST = f"peoplelake-analyst@{PROJECT}.iam.gserviceaccount.com"
+TAGS = {
+    "compensation": "projects/p/locations/us/taxonomies/1/policyTags/c",
+    "performance": "projects/p/locations/us/taxonomies/1/policyTags/p",
+}
+
+
+def fake_readers(
+    complete: bool,
+    quota: str | None = PROJECT,
+    billed: list | None = None,
+    analyst_on: tuple[str, ...] = ANALYST_DATASETS,
+    untagged: tuple[str, ...] = (),
+):
     def get_dataset(name):
         if not complete:
             return None
+        entries = [SimpleNamespace(entity_id=ANALYST, role="READER")] if name in analyst_on else []
         return SimpleNamespace(
             max_time_travel_hours=dict(all_datasets())[name],
             default_table_expiration_ms=None,
             default_partition_expiration_ms=None,
+            access_entries=entries,
         )
+
+    def get_table(table_id):
+        if not complete:
+            return None
+        table = table_id.split(".")[-1]
+        fields = []
+        for (t, column), tag in RESTRICTED_COLUMNS.items():
+            if t == table:
+                names = [] if column in untagged else [TAGS[tag]]
+                fields.append(SimpleNamespace(name=column, policy_tags=SimpleNamespace(names=names)))
+        return SimpleNamespace(schema=fields)
 
     def month_billed():
         if billed is not None:
@@ -76,6 +103,7 @@ def fake_readers(complete: bool, quota: str | None = PROJECT, billed: list | Non
     return lambda project, location: Readers(
         adc=lambda: (True, quota),
         get_dataset=get_dataset,
+        get_table=get_table,
         taxonomies=lambda parent: ["peoplelake-sensitivity"] if complete else [],
         data_policies=lambda parent: (
             ["peoplelake_mask_compensation", "peoplelake_mask_performance"] if complete else []
@@ -84,17 +112,29 @@ def fake_readers(complete: bool, quota: str | None = PROJECT, billed: list | Non
     )
 
 
-def run(tmp_path, complete: bool, *, billing: str = "True", env=None, config: str | None = None, billed=None):
+def run(
+    tmp_path,
+    complete: bool,
+    *,
+    billing: str = "True",
+    env=None,
+    config: str | None = None,
+    billed=None,
+    gcp_json: bool = False,
+    **reader_options,
+):
     prod = tmp_path / ".prod"
     prod.mkdir(parents=True, exist_ok=True)
     if config is not None:
         (prod / "config.env").write_text(config)
+    if gcp_json:
+        (prod / "gcp.json").write_text(json.dumps({"policy_tags": TAGS}))
     fake = FakeGcloud(complete, billing)
     gcloud = ReadOnlyGcloud(runner=fake)
     checks = doctor(
         prod,
         gcloud=gcloud,
-        readers=fake_readers(complete, billed=billed),
+        readers=fake_readers(complete, billed=billed, **reader_options),
         env=env if env is not None else {"PL_GCP_PROJECT": PROJECT},
         which=lambda _: "/usr/bin/gcloud",
     )
@@ -132,7 +172,7 @@ def test_an_unprovisioned_sandbox_project_lists_exactly_what_is_missing(tmp_path
     assert apis.status == "MISSING" and "run.googleapis.com" in apis.detail and "iam.googleapis.com" not in apis.detail
     sas = next(c for c in checks if c.name.startswith("service accounts"))
     assert sas.name == "service accounts (0 of 4)" and sas.status == "MISSING"
-    assert by["BigQuery datasets"].status == "MISSING" and "12" in by["BigQuery datasets"].detail
+    assert by["BigQuery datasets"].status == "MISSING" and "14" in by["BigQuery datasets"].detail
     assert by["policy tags and data masking"].status == "MISSING"
     assert "datacatalog.googleapis.com is not enabled" in by["policy tags and data masking"].detail
     assert by["Secret Manager secrets (names only)"].status == "MISSING"
@@ -153,7 +193,7 @@ def test_a_complete_project_passes(tmp_path):
     not_passing = {c.name: c.status for c in checks if c.status not in ("PASS", "INFO", "WARN")}
     assert not_passing == {}
     assert billed == [1]
-    assert by["BigQuery datasets, time travel, no default expiration"].detail == "12 datasets"
+    assert by["BigQuery datasets, time travel, no default expiration"].detail == "14 datasets"
     assert not failed(checks)
 
 
@@ -206,3 +246,21 @@ def test_summary_groups_what_is_not_passing_by_fix():
         "    - f (WARN)",
     ]
     assert failed(checks) and not failed([Check("x", "WARN"), Check("y", "INFO")])
+
+
+def test_the_analyst_reads_views_only_and_restricted_columns_carry_their_tags(tmp_path):
+    by_name, _, _, _ = run(tmp_path / "ok", True, gcp_json=True)
+    assert by_name["peoplelake-analyst dataset grants (views only)"].status == "PASS"
+    assert by_name["policy tags on the restricted columns"].status == "PASS"
+    loose, _, _, _ = run(tmp_path / "loose", True, analyst_on=(*ANALYST_DATASETS, "peoplelake_restricted"))
+    assert loose["peoplelake-analyst dataset grants (views only)"].status == "FAIL"
+    assert (
+        "unexpected READER on peoplelake_restricted" in loose["peoplelake-analyst dataset grants (views only)"].detail
+    )
+    bare, _, _, _ = run(tmp_path / "bare", True, gcp_json=True, untagged=("bonus_target_pct",))
+    tags = bare["policy tags on the restricted columns"]
+    assert (
+        tags.status == "FAIL" and tags.detail == "fct_compensation_history.bonus_target_pct lacks the compensation tag"
+    )
+    before, _, _, _ = run(tmp_path / "before", False)
+    assert before["policy tags on the restricted columns"].status == "INFO"
