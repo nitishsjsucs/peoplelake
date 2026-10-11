@@ -6,7 +6,7 @@ All data is synthetic. The design is in [SPEC.md](SPEC.md); the domain glossary 
 
 ## Status
 
-v1 is under construction and this repository is published while it is built. This table is updated in every commit that changes what works.
+v1 is built and verified end to end on the local stack (every item of the build plan, including the ask eval, the dashboard and the MetricFlow layer). Nothing has run against Cloudflare production or Google Cloud yet: that needs the owner's accounts (see Production setup). This table is updated in every commit that changes what works.
 
 | Area | State |
 |---|---|
@@ -40,6 +40,7 @@ flowchart LR
     A["ats"]
     T["talent"]
   end
+  O["Owner's browser<br/>dashboard (React, static assets)"]
   subgraph CF["Cloudflare"]
     ACC["Zero Trust Access<br/>service tokens and JWT"]
     W["Worker peoplelake<br/>Hono: /v1/ingest, /api, /internal"]
@@ -58,6 +59,7 @@ flowchart LR
   H --> ACC
   A --> ACC
   T --> ACC
+  O -->|"Access session"| ACC
   ACC --> W
   W -->|send records| S
   S --> L
@@ -311,10 +313,12 @@ Then:
 13. Go live:
     ```bash
     npm run prod:e2e    # one live 60-minute delivery of the full profile, prod verify, production freshness
-    uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10 --target prod-drill   # all five scenarios on BigQuery _drill datasets
+    uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10 --target prod-drill   # all five scenarios on BigQuery _drill datasets (about 1.5 to 3.5 hours; --scenarios B,S1 splits it)
     uv run --project pipeline peoplelake prod demo-masking
+    uv run --project pipeline peoplelake eval ask --provider workers-ai   # the 60 questions through Workers AI and AI Gateway
     npm run results:readme
     ```
+    Then open `https://peoplelake.<subdomain>.workers.dev/` and sign in through Access with `PL_OWNER_EMAIL` to see the dashboard. Which login methods Access offers is set in Zero Trust under Settings, Authentication; the one-time PIN sent by email needs no identity provider (whether a new organization has it on by default is unverified).
 14. Push `main` so CI runs. CI needs no secrets and holds no cloud credentials.
 
 ### What `setup:prod` does for you
