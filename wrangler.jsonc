@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Never the production name: a plain `wrangler deploy` cannot replace production.
+  // Deploy production only with `npm run deploy`.
+  "name": "peoplelake-local",
+  "workers_dev": false,
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "vars": {
+    "ENVIRONMENT": "local",
+    "AUTH_MODE": "dev",
+    "LAKE_MODE": "local",
+    "RUNNER_DISPATCH": "poll",
+    "RUNS_ENABLED": "true",
+    "ACCESS_TEAM_DOMAIN": "https://peoplelake-dev.local",
+    "ACCESS_AUD": "peoplelake-dev"
+  },
+  "env": {
+    "production": {
+      "name": "peoplelake",
+      "workers_dev": true,
+      "preview_urls": false,
+      "vars": {
+        "ENVIRONMENT": "production",
+        "AUTH_MODE": "access",
+        "LAKE_MODE": "basin",
+        "RUNNER_DISPATCH": "cloudrun",
+        "RUNS_ENABLED": "__PL_RUNS_ENABLED__",
+        "ACCESS_TEAM_DOMAIN": "__PL_ACCESS_TEAM_DOMAIN__",
+        "ACCESS_AUD": "__PL_ACCESS_AUD__"
+      }
+    }
+  }
+}

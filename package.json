@@ -1,0 +1,33 @@
+{
+  "name": "peoplelake",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Replayable workforce ELT and historical analytics warehouse on Cloudflare Workers, Basin Pipelines, R2, Workflows, BigQuery and dbt",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "TZ=UTC wrangler dev --port 8791 --inspector-port 9241 --ip 127.0.0.1",
+    "typegen": "wrangler types worker-configuration.d.ts --strict-vars=false --env-file .dev.vars.example",
+    "typegen:check": "wrangler types worker-configuration.d.ts --strict-vars=false --env-file .dev.vars.example --check",
+    "typecheck": "tsc -p tsconfig.worker.json && tsc -p tsconfig.worker-test.json && tsc -p tsconfig.node.json",
+    "test": "TZ=UTC vitest run",
+    "test:py": "TZ=UTC uv run --project pipeline pytest",
+    "check:prose": "TZ=UTC node scripts/check-prose.ts"
+  },
+  "dependencies": {
+    "hono": "4.13.13",
+    "jose": "6.2.12",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.0",
+    "@types/node": "24.19.1",
+    "jsonc-parser": "3.3.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11",
+    "wrangler": "4.149.0"
+  }
+}
