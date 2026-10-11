@@ -42,6 +42,13 @@ export interface FreshnessReport {
   excluding_first_5_minutes?: { p95_s: number | null };
   runs: number;
   stand_ins: string;
+  machine?: string;
+  rate_events_per_s?: number;
+  runs_committed?: number;
+  transforms_skipped?: number;
+  components?: { receive_to_run_start: { p95_s: number | null }; run_start_to_commit: { p95_s: number | null } };
+  cross_check_ops_histogram?: { ledger_events: number; ops_events: number; mismatched_10s_buckets: number; agrees: boolean };
+  target_15_minutes_p95_met?: boolean;
 }
 
 export type Report = ScenarioReport | FreshnessReport;
@@ -70,14 +77,27 @@ export function renderScenarioReport(r: ScenarioReport, file: string): string {
 
 export function renderFreshnessReport(r: FreshnessReport, file: string): string {
   const o = r.overall;
+  const details: string[] = [];
+  if (r.components) {
+    details.push(`p95 split: first receipt to run start ${fmtS(r.components.receive_to_run_start.p95_s)}, run start to commit ${fmtS(r.components.run_start_to_commit.p95_s)}.`);
+  }
+  if (r.runs_committed !== undefined) {
+    details.push(`Runs committed: ${r.runs_committed} of ${r.runs}${r.transforms_skipped !== undefined ? `, transforms skipped (the load inserted nothing new): ${r.transforms_skipped}` : ""}.`);
+  }
+  if (r.cross_check_ops_histogram) {
+    const x = r.cross_check_ops_histogram;
+    details.push(`Cross-check against the runner's \`ops_event_freshness\` histograms: ${x.ledger_events} ledger events, ${x.ops_events} ops events, ${x.mismatched_10s_buckets} mismatched 10 s buckets (${x.agrees ? "agrees" : "DISAGREES"}).`);
+  }
+  if (r.target_15_minutes_p95_met !== undefined) details.push(`15-minute p95 target (reported, not asserted): ${r.target_15_minutes_p95_met ? "met" : "not met"}.`);
   return [
-    `#### Freshness, ${r.target} (${r.date})`,
+    `#### Freshness, ${r.target}, ${r.profile} profile (${r.date})`,
     "",
-    `Command: \`${r.command}\`. Method: ${r.method}. Engine: ${r.engine}. Stand-ins: ${r.stand_ins}. Source: \`${file}\`.`,
+    `Command: \`${r.command}\`. Method: ${r.method}. Engine: ${r.engine}. Stand-ins: ${r.stand_ins}.${r.machine ? ` Machine: ${r.machine}.` : ""}${r.rate_events_per_s !== undefined ? ` Rate: ${r.rate_events_per_s} events per second.` : ""} Source: \`${file}\`.`,
     "",
     "| Events | Duration | Runs | p50 | p90 | p95 | p99 | max | Within 15 min | p95 excluding first 5 min |",
     "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     `| ${r.events} | ${r.duration_minutes} min | ${r.runs} | ${fmtS(o.p50_s)} | ${fmtS(o.p90_s)} | ${fmtS(o.p95_s)} | ${fmtS(o.p99_s)} | ${fmtS(o.max_s)} | ${o.share_within_15m === null ? "n/a" : `${(o.share_within_15m * 100).toFixed(2)}%`} | ${fmtS(r.excluding_first_5_minutes?.p95_s)} |`,
+    ...(details.length ? ["", details.join(" ")] : []),
   ].join("\n");
 }
 

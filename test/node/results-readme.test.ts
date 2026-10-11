@@ -53,6 +53,29 @@ describe("results renderer", () => {
     expect(findProseViolations(text)).toEqual([]);
   });
 
+  it("renders the freshness split and the ops histogram cross-check when the report has them", () => {
+    const text = renderResults([
+      {
+        file: "evals/results/f.json",
+        report: {
+          ...freshness,
+          machine: "Darwin arm64",
+          runs_committed: 70,
+          transforms_skipped: 30,
+          components: { receive_to_run_start: { p95_s: 100 }, run_start_to_commit: { p95_s: 25 } },
+          cross_check_ops_histogram: { ledger_events: 100000, ops_events: 100000, mismatched_10s_buckets: 0, agrees: true },
+          target_15_minutes_p95_met: true,
+        },
+      },
+    ]);
+    expect(text).toContain("#### Freshness, local, full profile (2026-10-10)");
+    expect(text).toContain("p95 split: first receipt to run start 100 s, run start to commit 25 s.");
+    expect(text).toContain("Runs committed: 70 of 70, transforms skipped (the load inserted nothing new): 30.");
+    expect(text).toContain("100000 ledger events, 100000 ops events, 0 mismatched 10 s buckets (agrees)");
+    expect(text).toContain("15-minute p95 target (reported, not asserted): met.");
+    expect(findProseViolations(text)).toEqual([]);
+  });
+
   it("says so when there are no results and replaces only the marked section", () => {
     const readme = `# x\n\n## Results\n\n${START}\nold\n${END}\n\n## License\n`;
     const out = replaceSection(readme, renderResults([]));
