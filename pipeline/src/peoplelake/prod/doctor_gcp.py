@@ -31,6 +31,7 @@ from ..envfile import read_env_file
 from ..paths import repo_root
 from .bootstrap_gcp import (
     DATA_POLICIES,
+    GCLOUD_ENV,
     JOB,
     REPO,
     SECRETS,
@@ -71,9 +72,6 @@ READ_ONLY_GCLOUD: tuple[tuple[str, ...], ...] = (
     ("run", "jobs", "describe"),
     ("run", "jobs", "executions", "list"),
 )
-# No prompts at all, and in particular no "API ... not enabled, enable and retry?" (gcloud core properties
-# disable_prompts and should_prompt_to_enable_api).
-GCLOUD_ENV = {"CLOUDSDK_CORE_DISABLE_PROMPTS": "1", "CLOUDSDK_CORE_SHOULD_PROMPT_TO_ENABLE_API": "false"}
 
 
 def gcloud_read_only(args: list[str]) -> bool:

@@ -180,6 +180,11 @@ class Action:
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
+# gcloud never prompts here, and in particular never offers to enable a disabled API (core properties
+# disable_prompts and should_prompt_to_enable_api, read in gcloud's source): a read in `--plan` mode or in
+# the doctor must not change the project, and a run must not hang on a question.
+GCLOUD_ENV = {"CLOUDSDK_CORE_DISABLE_PROMPTS": "1", "CLOUDSDK_CORE_SHOULD_PROMPT_TO_ENABLE_API": "false"}
+
 
 class Gcloud:
     """gcloud wrapper: reads always run; mutations are recorded and run only outside plan mode."""
@@ -197,7 +202,14 @@ class Gcloud:
         return argv
 
     def read(self, args: list[str]) -> subprocess.CompletedProcess:
-        return self.runner(self._argv(args), capture_output=True, text=True, check=False)
+        return self.runner(
+            self._argv(args),
+            capture_output=True,
+            text=True,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            env={**os.environ, **GCLOUD_ENV},
+        )
 
     def ok(self, args: list[str]) -> bool:
         return self.read(args).returncode == 0
@@ -207,7 +219,14 @@ class Gcloud:
         self.mutations.append(" ".join(argv) + (" < (secret on stdin)" if stdin is not None else ""))
         if self.plan:
             return None
-        res = self.runner(argv, input=stdin, capture_output=True, text=True, check=False)
+        res = self.runner(
+            argv,
+            input=stdin if stdin is not None else "",
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, **GCLOUD_ENV},
+        )
         if res.returncode != 0:
             raise RuntimeError(f"{' '.join(argv[:6])} failed: {res.stderr.strip()[:500]}")
         return res

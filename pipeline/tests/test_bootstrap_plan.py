@@ -26,9 +26,11 @@ class FakeRunner:
         self.exists = exists
         self.billing = billing
         self.calls = []
+        self.kwargs = []
 
-    def __call__(self, argv, capture_output=True, text=True, check=False, input=None):
+    def __call__(self, argv, **kwargs):
         self.calls.append(argv)
+        self.kwargs.append(kwargs)
         joined = " ".join(argv)
         out = ""
         rc = 0 if self.exists else 1
@@ -153,6 +155,11 @@ def test_plan_on_an_empty_project_creates_everything_without_mutating(tmp_path, 
     assert any("--data-file=-" in m and "secret on stdin" in m for m in gcloud.mutations)
     assert not any("token-value" in m for m in gcloud.mutations)  # secret values never in argv
     assert not (tmp_path / ".prod" / "gcp.json").exists()
+    # Reads never prompt (gcloud would otherwise offer to enable a disabled API, a mutation in plan mode).
+    for kwargs in runner.kwargs:
+        assert kwargs["stdin"] is subprocess.DEVNULL
+        assert kwargs["env"]["CLOUDSDK_CORE_SHOULD_PROMPT_TO_ENABLE_API"] == "false"
+        assert kwargs["env"]["CLOUDSDK_CORE_DISABLE_PROMPTS"] == "1"
 
 
 def test_plan_on_a_complete_project_creates_nothing(tmp_path, monkeypatch):
