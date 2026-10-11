@@ -441,16 +441,26 @@ export class Setup {
           include: Object.keys(serviceTokenIds).map((n) => ({ service_token: { token_id: byName.get(n) ?? n } })),
         },
       ];
+      const host = `${WORKER}.${this.state.workers_subdomain}.workers.dev`;
       const created = await this.api("POST", base, token, {
         type: "self_hosted",
         name: WORKER,
-        destinations: [{ type: "public", uri: `${WORKER}.${this.state.workers_subdomain}.workers.dev` }],
+        // The API reference lists `domain` as required for self_hosted; `destinations` supersedes the
+        // deprecated `self_hosted_domains`. Both name the same hostname.
+        domain: host,
+        destinations: [{ type: "public", uri: host }],
         session_duration: "24h",
         policies,
       });
       app = created.json?.result as { id: string; name: string; aud: string } | undefined;
       if (!app && !this.dryRun) throw new Error(`could not create the Access application (HTTP ${created.status})`);
     } else this.say(`  exists: ${app.id}`);
+    if (app && !app.aud && !this.dryRun) {
+      // Whether the create response carries `aud` is unverified (SPEC 25); the application itself does.
+      const got = await this.api("GET", `${base}/${app.id}`, token);
+      app.aud = (got.json?.result?.aud as string | undefined) ?? "";
+      if (!app.aud) throw new Error(`the Access application ${app.id} has no AUD tag (HTTP ${got.status})`);
+    }
     if (app) {
       this.state.access.app_id = app.id;
       this.state.access.aud = app.aud;

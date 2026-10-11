@@ -168,6 +168,26 @@ describe("setup:prod on the Workers Free plan (SPEC 21.0)", () => {
     for (const name of Object.keys(SERVICE_TOKENS)) expect(name).toMatch(/^peoplelake-/);
     expect(log).toMatch(/would call: POST .*\/access\/service_tokens \{"name":"peoplelake-source-hris"/);
     expect(log).toContain('"email":{"email":"owner+hr@example.com"}');
+    expect(log).toContain('"domain":"peoplelake.example.workers.dev","destinations":[{"type":"public","uri":"peoplelake.example.workers.dev"}]');
+  });
+
+  it("reads the AUD tag from the application when the create response has none", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pl-setup-"));
+    mkdirSync(join(root, ".prod"));
+    writeFileSync(join(root, ".prod", "secrets.env"), "PL_CF_SETUP_TOKEN=setup-token-value\n");
+    const calls: string[] = [];
+    const http = async (method: string, url: string) => {
+      calls.push(`${method} ${url.replace(/^.*\/client\/v4/, "")}`);
+      if (method === "POST") return { ok: true, status: 200, json: { result: { id: "app-1", name: "peoplelake" } } };
+      if (url.endsWith("/access/apps/app-1")) return { ok: true, status: 200, json: { result: { id: "app-1", aud: "aud-from-get" } } };
+      return { ok: true, status: 200, json: { result: [] } };
+    };
+    const setup = new Setup(root, false, { exec: () => ({ ok: true, stdout: "", stderr: "" }), http });
+    setup.state.account_id = "acct";
+    setup.state.workers_subdomain = "example";
+    await setup.accessApp({});
+    expect(setup.state.access).toMatchObject({ app_id: "app-1", aud: "aud-from-get" });
+    expect(calls).toContain("GET /accounts/acct/access/apps/app-1");
   });
 
   it("refuses to run while billing is disabled", async () => {
