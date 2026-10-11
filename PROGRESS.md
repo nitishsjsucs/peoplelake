@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Commit 15 of 18 (core) done: freshness eval (code); the 60-minute local measurement is running.
+Commit 16 of 18 (core) done: Workers AI and /api/ask; the 60-minute local freshness measurement is still running.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -36,8 +36,10 @@ Commit 15 of 18 (core) done: freshness eval (code); the 60-minute local measurem
 
 15. Freshness: `evals/freshness.py` (paced live delivery through the local stack in live mode, quiescence on the ledger, p50/p90/p95/p99/max, share within 15 minutes, excluding the first 5 minutes, receive-to-run-start and run-to-commit components, per-stage durations, ledger against ops histogram cross-check; production mode reads the single `prod:e2e` delivery), `sim/deliver.py` (chunk or live delivery, local or production service tokens, delivery records), Worker and Python freshness math tests with the same cases. Validated in this session with a 3-minute small-profile run: 10,000 events, p95 85 s, ledger and ops histograms equal on every 10 s bucket, ports free afterwards. The 60-minute full-profile run is executing from a worktree under `.data/` so Worker edits in the main tree cannot reload its `wrangler dev`.
 
+16. AI: `src/worker/ai/providers.ts` (`MetricQuery` zod contract, JSON schema for the model, stub rule parser, `OpenAiCompatibleProvider`, `WorkersAiProvider` with `{gateway: {id}}` and one repair retry), `src/worker/ai/ask.ts` (`POST /api/ask` from the committed snapshot), `/api/ops/ai`, `ai` binding in `env.production` only, 17 tests with a mocked AI binding and an injected fetch. Checked by hand: llama-server (Qwen3-1.7B, port 8150, `-np 1 -c 8192 -ngl 99`) answered five questions through `OpenAiCompatibleProvider` in 1.2 to 2.2 s each, 3 of 5 matching the intended query (it widened "December 2025" to the year and picked a department for "people left the company"); the same smoke found and fixed a stub bug (the word "people" matched the People department). llama-server stopped, port 8150 free.
+
 ## Next
-16. Workers AI: AiProvider (stub, llama-server, Workers AI through AI Gateway), minimal `/api/ask`, ops check; then record the freshness result.
+17. Production: render and predeploy check, setup:prod, doctor, bootstrap-gcp, drills, masking demo, reset, prod e2e, BigQuery drill target; then record the freshness result.
 
 ## Check status (last run at this commit)
 | Check | Result |

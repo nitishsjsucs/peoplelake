@@ -20,9 +20,9 @@ v1 is under construction and this repository is published while it is built. Thi
 | Worker: auth, ingest, sinks | done locally: fail-closed config, Access JWT verification (RS256, iss, aud, exp) with locally generated dev keys, role gates, `POST /v1/ingest/:source` for three envelopes (zod, all-or-nothing), RawRecord normalization shared with Python through a golden, Basin stream sink (production) and the SinkRoller stand-in (local) |
 | Orchestration: Coordinator, Workflow, dispatchers | done locally (Miniflare Workflows): Coordinator ledger with single-flight runs, attempt-scoped jobs and leases, `WarehouseRunWorkflow` (load, transform or skip, verify, commit, release), poll and Cloud Run dispatchers, Basin Catalog poll, lake-events queue consumer, per-minute cron, eval faults; production Workflows not exercised yet |
 | Runner and local stack | done locally: `peoplelake runner poll` (in-process dbt, heartbeats, eval fault hooks) and `peoplelake stack up/down` (wrangler dev, runner, ticker in their own process groups, ports checked free) |
-| Scenario and freshness evals | scenario equivalence done on DuckDB (see Results); live freshness eval built (), the 60-minute local measurement is running and lands in Results when it finishes |
+| Scenario and freshness evals | scenario equivalence done on DuckDB (see Results); live freshness eval built (`peoplelake eval freshness`), the 60-minute local measurement is running and lands in Results when it finishes |
 | CI | workflows written (`ci.yml` on every push, `eval-full.yml` weekly and on demand); they have not run on GitHub yet because the owner publishes the repo |
-| Workers AI and `/api/ask` | not started |
+| Workers AI and `/api/ask` | done: `AiProvider` with a deterministic stub (CI), llama-server (local) and Workers AI through AI Gateway (production, mocked in tests), `POST /api/ask` answering only from the committed metrics snapshot, `/api/ops/ai` gateway check; the 60-question ask eval is below the core cut and not built |
 | Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | not started |
 | Front end | none in v1 (the dashboard is below the core cut line); `/api/*` is the read interface |
 
@@ -175,6 +175,10 @@ uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10 
 uv run --project pipeline peoplelake eval scenarios --profile small --scenarios S4   # one scenario
 npm run results:readme                                                                 # renders evals/results into Results
 ```
+
+### Asking questions
+
+`POST /api/ask {"question": "..."}` (viewer) turns a question into a validated query (one of the five metrics, a department or `ALL`, a month range inside 2023-01 to 2025-12) and answers with the values from the committed metrics snapshot (`reports/metrics/latest.json`); numbers never come from a model. `AI_PROVIDER` picks the translator: `stub` (a deterministic rule parser, the local and CI default), `openai-compatible` (llama-server with Qwen3-1.7B on 127.0.0.1:8150, `llama-server -m <gguf> --host 127.0.0.1 --port 8150 -np 1 -c 8192 -ngl 99` and `--var AI_PROVIDER:openai-compatible` on `wrangler dev`), or `workers-ai` (production: `@cf/meta/llama-3.3-70b-instruct-fp8-fast` through AI Gateway `peoplelake`, JSON schema output with one repair retry). The 60-question accuracy eval across providers is below the core cut and not built, so no accuracy number is claimed.
 
 ### Freshness
 

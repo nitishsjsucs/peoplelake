@@ -1,4 +1,5 @@
 // PeopleLake Worker entry point: HTTP (Hono), the lake-events queue consumer and the per-minute cron.
+import { mountAsk } from "./ai/ask.ts";
 import { mountDevRoutes } from "./api/dev.ts";
 import { mountInternalApi } from "./api/internal.ts";
 import { mountOpsApi } from "./api/ops.ts";
@@ -16,6 +17,7 @@ export { WarehouseRunWorkflow } from "./orchestration/warehouse-run.ts";
 const app = createApp((a) => {
   mountIngest(a, { afterAccept: (env, accepted, receivedAt) => coordinatorStub(env).noteIngest(accepted, receivedAt) });
   mountPublicApi(a);
+  mountAsk(a);
   mountInternalApi(a);
   mountOpsApi(a);
   mountDevRoutes(a);

@@ -88,6 +88,9 @@
         "AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
         "AI_GATEWAY_ID": "peoplelake"
       },
+      // Production only: an `ai` binding makes `wrangler dev` wait for a remote connection, so local runs
+      // use llama-server or the stub and tests inject a mocked AI binding.
+      "ai": { "binding": "AI" },
       "r2_buckets": [{ "binding": "REPORTS_BUCKET", "bucket_name": "peoplelake-reports" }],
       "queues": {
         "consumers": [
