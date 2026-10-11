@@ -164,7 +164,7 @@ Computed by `npm run budget` from the repo's constants and `wrangler.jsonc` `env
 | Cloud Build minutes | 2,500 build-minutes (a month, billing account) | 625 | 24 | 0.96% | yes | 3 builds of about 8 minutes |
 | Artifact Registry storage | 500 MB (a month, billing account) | 125 MB | 340 MB | 68.0% | no (reported, not gated) | 1 runner image of about 340 MB (measured 2026-10-11, gzip of `docker save`, linux/arm64); about $0.10 per GB-month beyond the free 0.5 GB |
 | Secret Manager active versions | 6 versions (a month, billing account) | 1 | 3 | 50.0% | no (reported, not gated) | one active version of each of the 3 runner secrets (bootstrap destroys superseded versions); $0.06 per version-month beyond the free 6 |
-| CPU per ingest request (50 events) | 10 ms per request | 10 ms | warm p99 1.48 ms, first after prewarm 2.62 ms | 26.2% | yes | measured in Node as a proxy for workerd (not yet on Cloudflare): `evals/results/ingest-cpu-2026-10-11.json` (2026-10-11), the worst of the three sources |
+| CPU per ingest request (50 events) | 10 ms per request | 10 ms | warm p99 0.7 ms, first after prewarm 1.92 ms | 19.2% | yes | measured in Node as a proxy for workerd (not yet on Cloudflare): `evals/results/ingest-cpu-2026-10-11.json` (2026-10-11), the worst of the three sources |
 
 Configuration rules (no `pipelines`, no `limits`, one `*/5 * * * *` cron, SQLite Durable Objects only, the production guard values, a Free plan model): all hold.
 <!-- budget:end -->
@@ -471,24 +471,25 @@ Run guards: 240 s minimum interval between automatic runs, 30 automatic runs a d
 
 #### Ingest CPU per request (2026-10-11)
 
-Command: `npm run bench:ingest`. Method: Worker code path in Node (JSON parse, zod batch parse, normalization with SHA-256, RawRecord parse, NDJSON) on full-profile envelopes, zod jitless, process.cpuUsage() per request, Node's WebCrypto module (globalThis.crypto) loaded before timing in fresh processes (workerd's is built in); a proxy for workerd CPU time. Runtime: node v25.9.0. Machine: darwin arm64 Apple M5 (load average 4.12). 300 warm requests and 9 fresh processes per size and source; ranges are across the three sources. The Workers Free plan allows 10 ms of CPU per request; the Worker accepts at most 50 events. Source: `evals/results/ingest-cpu-2026-10-11.json`.
+Command: `npm run bench:ingest`. Method: Worker code path in Node (JSON parse, zod batch parse, normalization with SHA-256, RawRecord parse, NDJSON) on full-profile envelopes, zod jitless, process.cpuUsage() per request, Node's WebCrypto module (globalThis.crypto) loaded before timing in fresh processes (workerd's is built in); a proxy for workerd CPU time. Runtime: node v25.9.0. Machine: darwin arm64 Apple M5 (load average 3.62). 300 warm requests and 9 fresh processes per size and source; ranges are across the three sources. The Workers Free plan allows 10 ms of CPU per request; the Worker accepts at most 50 events. Source: `evals/results/ingest-cpu-2026-10-11.json`.
 
 | Events per request | Warm p50 (ms) | Warm p99 (ms) | First request, fresh process (ms) | First request after prewarm (ms) | NDJSON per request |
 |---:|---|---|---|---|---|
-| 25 | 0.22 to 0.3 | 0.7 to 1.74 | 3.52 to 6.3 | 0.61 to 2.12 | 14 to 15 KB |
-| 50 (the limit) | 0.47 to 0.64 | 0.99 to 1.48 | 5.41 to 9.2 | 1.48 to 2.62 | 29 to 32 KB |
-| 100 | 0.89 to 0.99 | 1.3 to 1.38 | 7.04 to 9.5 | 2.86 to 4.16 | 57 to 64 KB |
-| 200 | 1.86 to 2 | 2.53 to 3.33 | 9.27 to 13.1 | 4.69 to 8.13 | 114 to 127 KB |
-| 500 | 4.88 to 5.78 | 6.45 to 7.78 | 12.84 to 22.33 | 9.96 to 28.4 | 286 to 301 KB |
+| 25 | 0.19 to 0.2 | 0.41 to 1.12 | 3.22 to 4.27 | 0.54 to 1.1 | 14 to 15 KB |
+| 50 (the limit) | 0.35 | 0.65 to 0.7 | 4.03 to 5.16 | 1.3 to 1.92 | 29 to 32 KB |
+| 100 | 0.64 to 0.65 | 0.89 to 0.9 | 5.11 to 5.89 | 2.28 to 3.13 | 57 to 64 KB |
+| 200 | 1.29 to 1.33 | 1.55 to 2.08 | 6.46 to 7.56 | 3.37 to 4.21 | 114 to 127 KB |
+| 500 | 3.45 to 3.7 | 4.62 to 5.1 | 11.73 to 14.76 | 8.81 to 11.48 | 286 to 301 KB |
 
-Other paths bound by the 10 ms limit (same method; Hono routing, Access JWT verification and Durable Object calls are not timed here):
+Other paths bound by the 10 ms limit (same method; Hono routing and Durable Object calls are not timed here):
 
 | Path | What is timed | Warm p99 (ms) | First call, fresh process (ms) |
 |---|---|---:|---|
-| per-request config | parseConfig on a production-shaped env (role map of 7 people and 5 tokens) after the startup prewarm, on every request | 0.24 | 0.33 to 2.11 |
-| GET /api/runs?format=full&limit=200 | the full format of 200 run rows (digests, checks, options parsed) serialized as the response body | 0.55 | 0.86 to 1.82 |
-| PUT metrics artifact at the cap | SHA-256 of an artifact at MAX_ARTIFACT_BYTES (the PUT checks it; the Workflow's verify step hashes it again) | 0.11 | 0.33 to 0.37 |
-| dispatch assertion (RS256) | signAssertion: import the dispatcher's PKCS8 key and sign the JWT bearer assertion (the dispatch step, once a token expires) | 0.81 | 2.05 to 2.51 |
+| per-request config | parseConfig on a production-shaped env (role map of 7 people and 5 tokens) after the startup prewarm, on every request | 0.21 | 0.29 to 0.73 |
+| GET /api/runs?format=full&limit=200 | the full format of 200 run rows (digests, checks, options parsed) serialized as the response body | 0.47 | 0.7 to 0.84 |
+| PUT metrics artifact at the cap | SHA-256 of an artifact at MAX_ARTIFACT_BYTES (the PUT checks it; the Workflow's verify step hashes it again) | 0.11 | 0.38 to 0.42 |
+| Access JWT verification (RS256) | verifyAccessJwt on every request: RS256 signature, iss, aud and exp against a JWKS set (the dev key source; production fetches the team's JWKS, which is I/O, and imports the same RSA key); the first call includes the key import | 0.24 | 0.97 to 1.11 |
+| dispatch assertion (RS256) | signAssertion: import the dispatcher's PKCS8 key and sign the JWT bearer assertion (the dispatch step, once a token expires) | 0.9 | 2.08 to 2.28 |
 
 #### MetricFlow parity, full profile, duckdb (2026-10-11)
 

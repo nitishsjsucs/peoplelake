@@ -8,10 +8,10 @@
 // requests per size and source in one process after 30 unmeasured warm-up requests; "first request"
 // numbers come from `--fresh` new processes per size and source, without and with the module-scope
 // prewarm the Worker runs at startup (src/worker/ingest/prewarm-core.ts). It also times the other paths
-// bound by 10 ms of CPU (`OTHER_PATHS`: the per-request config parse, a full 200-run page, the metrics
-// artifact hash at its cap, the dispatch assertion). It does not time Hono routing, the Access JWT
-// verification or the Durable Object RPC (they need workerd). It reports and never gates CI: Node on this
-// machine is not workerd on Cloudflare's CPUs.
+// bound by 10 ms of CPU (`OTHER_PATHS`: the per-request config parse, the Access JWT verification, a full
+// 200-run page, the metrics artifact hash at its cap, the dispatch assertion). It does not time Hono
+// routing or the Durable Object RPC (they need the Worker's bindings, so workerd). It reports and never
+// gates CI: Node on this machine is not workerd on Cloudflare's CPUs.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { arch, cpus, loadavg, platform } from "node:os";
@@ -143,6 +143,27 @@ const OTHER_PATHS: Record<string, { detail: string; prepare: () => Promise<() =>
       const { MAX_ARTIFACT_BYTES } = await import("../src/shared/free-budget.ts");
       const text = "x".repeat(MAX_ARTIFACT_BYTES);
       return () => sha256Hex(text);
+    },
+  },
+  "Access JWT verification (RS256)": {
+    detail:
+      "verifyAccessJwt on every request: RS256 signature, iss, aud and exp against a JWKS set (the dev key source; production fetches the team's JWKS, which is I/O, and imports the same RSA key); the first call includes the key import",
+    prepare: async () => {
+      const { exportJWK, generateKeyPair, SignJWT } = await import("jose");
+      const { verifyAccessJwt } = await import("../src/worker/auth/access.ts");
+      const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
+      const jwk = { ...(await exportJWK(publicKey)), kid: "bench", alg: "RS256", use: "sig" };
+      const teamDomain = "https://example.cloudflareaccess.com";
+      const aud = "0123abcd";
+      const token = await new SignJWT({ email: "person0@example.com", type: "app" })
+        .setProtectedHeader({ alg: "RS256", kid: "bench" })
+        .setIssuer(teamDomain)
+        .setAudience(aud)
+        .setIssuedAt()
+        .setExpirationTime("1h")
+        .sign(privateKey);
+      const config = { authMode: "dev", devAccessJwks: JSON.stringify({ keys: [jwk] }), access: { teamDomain, aud } } as unknown as Parameters<typeof verifyAccessJwt>[1];
+      return () => verifyAccessJwt(token, config);
     },
   },
   "dispatch assertion (RS256)": {

@@ -96,6 +96,15 @@ describe("results renderer", () => {
     ]);
     expect(other).toContain("Other paths bound by the 10 ms limit");
     expect(other).toContain("| dispatch assertion (RS256) | signAssertion | 0.81 | 2.05 to 2.51 |");
+    expect(other).toContain("Hono routing, Access JWT verification and Durable Object calls are not timed here");
+    const withJwt = renderResults([
+      {
+        file: "evals/results/ingest-cpu-2026-10-11.json",
+        report: { ...ingest, other_paths: [{ path: "Access JWT verification (RS256)", detail: "verifyAccessJwt", warm_p99_ms: 0.2, first_call_fresh_ms: [1.1, 1.4] }] },
+      },
+    ]);
+    expect(withJwt).toContain("Hono routing and Durable Object calls are not timed here");
+    expect(withJwt).toContain("| Access JWT verification (RS256) | verifyAccessJwt | 0.2 | 1.1 to 1.4 |");
   });
 
   it("renders every report with its command and date, and no dashes in prose", () => {

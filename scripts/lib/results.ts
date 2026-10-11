@@ -241,7 +241,7 @@ export function renderIngestCpuReport(r: IngestCpuReport, file: string): string 
     ...(r.other_paths?.length
       ? [
           "",
-          "Other paths bound by the 10 ms limit (same method; Hono routing, Access JWT verification and Durable Object calls are not timed here):",
+          `Other paths bound by the 10 ms limit (same method; ${r.other_paths.some((o) => o.path.startsWith("Access JWT")) ? "Hono routing and Durable Object calls are" : "Hono routing, Access JWT verification and Durable Object calls are"} not timed here):`,
           "",
           "| Path | What is timed | Warm p99 (ms) | First call, fresh process (ms) |",
           "|---|---|---:|---|",

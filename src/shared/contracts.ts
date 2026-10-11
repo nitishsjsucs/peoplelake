@@ -248,9 +248,9 @@ export const TalentItem = z.discriminatedUnion("kind", [
 export type TalentItem = z.infer<typeof TalentItem>;
 
 // At most 50 events per request: in evals/results/ingest-cpu-2026-10-11.json (`npm run bench:ingest`, Node
-// as a proxy for workerd) a 50-event request takes 0.99 to 1.48 ms of CPU at warm p99 and at most 2.62 ms
+// as a proxy for workerd) a 50-event request takes 0.65 to 0.7 ms of CPU at warm p99 and at most 1.92 ms
 // on the first request after the prewarm, against the Workers Free plan's 10 ms per request; 500 events
-// reach 28.4 ms on a first request. SPEC 29.4.2.
+// reach 11.48 ms on a first request after the prewarm and 14.76 ms without it. SPEC 29.4.2.
 export const MAX_BATCH_EVENTS = 50;
 export const MAX_BODY_BYTES = 1024 * 1024;
 
