@@ -22,7 +22,7 @@ import {
   versionAtLeast,
 } from "../../scripts/doctor.ts";
 import { parsePersonaEmails } from "../../scripts/lib/free-plan.ts";
-import { buildRoleMap, type Exec, finalRunsEnabled, readEnvFile, redact, SERVICE_TOKENS, Setup, upsertEnv } from "../../scripts/setup-prod.ts";
+import { buildRoleMap, type Exec, finalRunsEnabled, parseCatalogInfo, readEnvFile, redact, SERVICE_TOKENS, Setup, upsertEnv } from "../../scripts/setup-prod.ts";
 
 describe("setup:prod helpers", () => {
   it("never shows secret values in a printed command", () => {
@@ -46,6 +46,14 @@ describe("setup:prod helpers", () => {
     expect(finalRunsEnabled(true, "false")).toBe(false);
     expect(finalRunsEnabled(false, "true")).toBe(false);
     expect(() => finalRunsEnabled(true, "no")).toThrow(/true or false/);
+  });
+
+  it("reads the Basin Catalog URI and warehouse from wrangler's get and enable output", () => {
+    const get = "Getting Basin Catalog status for 'peoplelake-lake'...\n\n\u001b[37mCatalog URI:\u001b[39m  \u001b[90mhttps://catalog.cloudflarestorage.com/acct/peoplelake-lake\u001b[39m\n\u001b[37mWarehouse:\u001b[39m    \u001b[90macct_peoplelake-lake\u001b[39m\n\u001b[37mStatus:\u001b[39m       \u001b[90mactive\u001b[39m";
+    expect(parseCatalogInfo(get)).toEqual({ uri: "https://catalog.cloudflarestorage.com/acct/peoplelake-lake", warehouse: "acct_peoplelake-lake" });
+    const enable = "Successfully enabled Basin Catalog on bucket 'peoplelake-lake'.\n\nCatalog URI: 'https://catalog.cloudflarestorage.com/acct/peoplelake-lake'\nWarehouse: 'acct_peoplelake-lake'\n\nUse this Catalog URI with Iceberg-compatible query engines";
+    expect(parseCatalogInfo(enable)).toEqual({ uri: "https://catalog.cloudflarestorage.com/acct/peoplelake-lake", warehouse: "acct_peoplelake-lake" });
+    expect(parseCatalogInfo("Basin Catalog is not enabled for bucket 'peoplelake-lake'.")).toEqual({ uri: "", warehouse: "" });
   });
 
   it("creates one service token per source, the runner and the doctor", () => {

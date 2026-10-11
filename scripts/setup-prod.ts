@@ -12,6 +12,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 import { parsePersonaEmails } from "./lib/free-plan.ts";
 import type { ProdState } from "./lib/prod-state.ts";
 
@@ -62,6 +63,17 @@ export function upsertEnv(path: string, values: Record<string, string>): void {
 export function finalRunsEnabled(gcpBootstrapPassed: boolean, override: string | undefined): boolean {
   if (override !== undefined && override !== "true" && override !== "false") throw new Error("--runs-enabled must be true or false");
   return gcpBootstrapPassed && override !== "false";
+}
+
+/**
+ * The Catalog URI and Warehouse from `wrangler basin catalog get` (labelled values, gray when colors are on)
+ * or `enable` (values in single quotes). Format read in wrangler 4.149.0's source (`basinCatalogGetCommand`,
+ * `formatLabelledValues`).
+ */
+export function parseCatalogInfo(text: string): { uri: string; warehouse: string } {
+  const plain = stripVTControlCharacters(text);
+  const value = (label: string) => new RegExp(`^\\s*${label}:\\s*'?([^'\\s]+)'?\\s*$`, "im").exec(plain)?.[1] ?? "";
+  return { uri: value("Catalog URI"), warehouse: value("Warehouse") };
 }
 
 /** Replace secret values in a command line for printing. */
@@ -272,9 +284,9 @@ export class Setup {
       this.wrangler(["basin", "catalog", "enable", LAKE_BUCKET], true);
       info = this.wrangler(["basin", "catalog", "get", LAKE_BUCKET], false);
     } else this.say(`  exists: catalog on ${LAKE_BUCKET}`);
-    const text = `${info.stdout}\n${info.stderr}`;
-    const uri = this.config["PL_R2_CATALOG_URI"] || /Catalog URI:\s*(\S+)/i.exec(text)?.[1] || "";
-    const warehouse = this.config["PL_R2_WAREHOUSE"] || /Warehouse(?: Name)?:\s*(\S+)/i.exec(text)?.[1] || "";
+    const parsed = parseCatalogInfo(`${info.stdout}\n${info.stderr}`);
+    const uri = this.config["PL_R2_CATALOG_URI"] || parsed.uri;
+    const warehouse = this.config["PL_R2_WAREHOUSE"] || parsed.warehouse;
     if (!uri || !warehouse) {
       this.say("  UNKNOWN catalog URI or warehouse in the wrangler output; set PL_R2_CATALOG_URI and PL_R2_WAREHOUSE in .prod/config.env");
     }

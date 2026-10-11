@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Builder 4 is finishing the production setup and doctor for the Workers Free plan. Builder 3's Free plan migration (the nine commits of SPEC 23.0 plus the `eval-full` freshness job) is done and every local result was re-recorded on it. Builder 4 so far: commit 1 (bootstrap read the Basin Catalog URI and warehouse from keys `.prod/state.json` never has; fixed, and ADC through google-auth) and commit 2 (the doctor runs read-only before anything is provisioned, against the real logins, and ends with everything not passing grouped by fix in README step order). Next: README and PROGRESS record what the doctor reported on the real accounts. After that, only the owner's go-live (SPEC 20.2 and 20.5) remains. Everything is verified on the local stack only; nothing has run against Cloudflare production or Google Cloud.
+Builder 4 is finishing the production setup and doctor for the Workers Free plan. Builder 3's Free plan migration (the nine commits of SPEC 23.0 plus the `eval-full` freshness job) is done and every local result was re-recorded on it. Builder 4 so far: commit 1 (bootstrap read the Basin Catalog URI and warehouse from keys `.prod/state.json` never has; fixed, and ADC through google-auth) commit 2 (the doctor runs read-only before anything is provisioned, against the real logins, and ends with everything not passing grouped by fix in README step order) and commit 3 (setup parses the Basin Catalog URI and warehouse from wrangler's real output format). Next: README and PROGRESS record what the doctor reported on the real accounts. After that, only the owner's go-live (SPEC 20.2 and 20.5) remains. Everything is verified on the local stack only; nothing has run against Cloudflare production or Google Cloud.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -84,6 +84,8 @@ Freshness result: `peoplelake eval freshness --target local --duration 60m` (ful
    - **Exact output.** `.prod` checks separate the two secrets a person creates (README steps 2 and 3) from the ten setup writes; every fix cites the current README step (`README_STEP` in both languages, checked against README by a node test and a pytest, and against each other); a summary lists every check not passing under its fix, ordered by README step; `doctor-gcp --json` lets `npm run doctor` merge the Google checks into that summary. The doctor fails on FAIL, MISSING or UNKNOWN; the go-live evidence is a WARN and a job with no executions yet is INFO, so the doctor can pass before the go-live.
    Tests: node (allowlist accepts the reads and refuses `r2 bucket create`, `queues create`, `basin catalog enable`, `deploy`, `secret put`, `bootstrap-gcp`, `lake init` and a non-GET request; an unprovisioned account reports each missing resource with no secret or account id in the output and every call read only and pinned to the account; R2 not enabled; not logged in; the setup token's checks with and without One-time PIN and with a token that cannot read identity providers; a provisioned account where every check passes, live checks included; whole-name matching; the summary order; README steps) and pytest `test_doctor_gcp.py` (every gcloud call read only with prompts off; a mutating command refused; an unbilled, unprovisioned project lists exactly what is missing with no query run; a complete project passes; the project from gcloud config; the project from `.prod/config.env`; README steps; the summary). README: the Production setup intro, the optional read permission in step 3, and a new "What the doctor checks" section.
 
+3. `fix(setup): parse the Basin Catalog URI and warehouse from wrangler's labelled output`. SPEC 21.1 step 4 marked the output format of `wrangler basin catalog get` unverified; read in wrangler 4.149.0's source (`basinCatalogGetCommand`, `formatLabelledValues`), `get` prints `Catalog URI:` and `Warehouse:` as labelled values (gray, with ANSI color codes when colors are on) and `enable` prints them in single quotes. Setup's regexes took the first non-space run after the label, which is an ANSI code when colors are on and a quoted string after `enable`. `parseCatalogInfo` strips control sequences and quotes (tested with both outputs and the "not enabled" message); `PL_R2_CATALOG_URI` and `PL_R2_WAREHOUSE` still override. Also read there: `get` on a bucket without the catalog exits 0 with "Basin Catalog is not enabled for bucket ...", which both setup and the doctor already treat as not enabled, and `snapshot-expiration enable` takes `--older-than-days`, `--retain-last` and (for catalog-level settings) `--token`, as setup step 6 passes them.
+
 ## Next
 - Builder 4: README and PROGRESS record what the doctor reported on the real accounts.
 - The owner's go-live (SPEC 20.2 and 20.5).
@@ -95,13 +97,13 @@ Freshness result: `peoplelake eval freshness --target local --duration 60m` (ful
 |---|---|
 | `npm run typecheck` | pass (worker, worker tests, node, web) |
 | `npm run typegen:check` | pass |
-| `npm test` (vitest) | pass: 21 files, 258 tests (worker 12 files in workerd, node 7, web 2) |
+| `npm test` (vitest) | pass: 21 files, 259 tests (worker 12 files in workerd, node 7, web 2) |
 | `npm run check:prose` | pass |
 | `npm run contracts:check` | pass |
 | `npm run results:check` | pass |
 | `npm run deploy:dry-run` | pass (predeploy-check now also applies the Free plan rules) |
 | `npm run budget -- --check` | pass: every estimate within its planning share, all config rules hold |
-| `npm run test:py` (pytest, all markers) | pass: 278 passed (267 at the start of builder 4, 3 new bootstrap tests, 8 in the new `test_doctor_gcp.py`) |
+| `npm run test:py` (pytest, all markers) | pass: 278 passed at commit 2 (267 at the start of builder 4, 3 new bootstrap tests, 8 in `test_doctor_gcp.py`); this commit changes no Python |
 | `ruff check`, `ruff format --check` | pass |
 | `npm run doctor -- --local-only` | pass: 13 checks, 12 pass, 1 info (the optional local LLM) |
 | `peoplelake dev clean-clone-check` | pass at `1602029` (commit 6); this commit adds no file the runner or warehouse needs |
