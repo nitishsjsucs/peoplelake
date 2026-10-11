@@ -317,11 +317,20 @@ class DrillTarget:
     runner_env: dict
 
     def month_billed(self) -> int:
-        """Bytes billed this month by the peoplelake-* service accounts (queried as the operator, capped)."""
-        from ..prod.doctor_gcp import month_bytes_billed
+        """Bytes billed this month by this repo's jobs (queried as the operator, capped). The total also goes
+        to the production Coordinator as the floor of its monthly guard: the drill bills through the local
+        Worker, so production's ledger would otherwise never see it."""
+        import sys
+
+        from ..prod.doctor_gcp import month_bytes_billed, report_month_to_production
         from ..warehouse.bigquery_wh import bigquery_client
 
-        return month_bytes_billed(bigquery_client(self.project, self.location))
+        billed = month_bytes_billed(bigquery_client(self.project, self.location))
+        try:
+            report_month_to_production(billed)
+        except Exception as exc:  # noqa: BLE001 - the drill guard itself does not depend on production
+            print(f"warning: could not report {billed} bytes to the production Worker: {exc}", file=sys.stderr)
+        return billed
 
     def warehouse(self):
         from ..warehouse.bigquery_wh import BigQueryWarehouse, bigquery_client

@@ -337,6 +337,17 @@ export class Coordinator extends DurableObject<Env> {
     this.#set("bq_bytes_month", JSON.stringify({ month: m.month, bytes: m.bytes + bytes }));
   }
 
+  /** The month's billed bytes measured outside the ledger (INFORMATION_SCHEMA: this repo's service
+   * accounts and every job labeled app=peoplelake, so the BigQuery drill and owner-run queries count too).
+   * It is a floor: the guard uses whichever is larger, the ledger's sum or the measured total. */
+  noteBqMonth(month: string, bytes: number, now: number = Date.now()): TransformBudget {
+    const m = this.#bqMonth(now);
+    if (month === m.month && Number.isSafeInteger(bytes) && bytes > m.bytes) {
+      this.#set("bq_bytes_month", JSON.stringify({ month: m.month, bytes }));
+    }
+    return this.transformBudget(now);
+  }
+
   /** The monthly BigQuery guard: a transform may run while billed bytes plus one transform stay under the cap. */
   transformBudget(now: number = Date.now()): TransformBudget {
     const m = this.#bqMonth(now);
@@ -700,10 +711,11 @@ export class Coordinator extends DurableObject<Env> {
           );
         }
       }
-      if (status === "succeeded") {
-        const billed = row.kind === "load" ? result["bytes_billed"] : (result["dbt"] as { bytes_billed?: unknown } | undefined)?.bytes_billed;
-        if (typeof billed === "number") this.#addBqBytes(now, billed);
-      }
+      // Every terminal result counts, failed ones too: the runner reports every byte the attempt billed
+      // (dbt and its own queries); older transform results carried only dbt's share under dbt.bytes_billed.
+      const top = result["bytes_billed"];
+      const billed = typeof top === "number" ? top : (result["dbt"] as { bytes_billed?: unknown } | undefined)?.bytes_billed;
+      if (typeof billed === "number") this.#addBqBytes(now, billed);
     });
     await this.#sendEvent(row.run_id, `${row.kind}-result-a${row.attempt}`, result);
     return { duplicate: false, known: true };

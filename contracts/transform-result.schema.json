@@ -194,6 +194,11 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
+        },
+        "bytes_billed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -240,6 +245,11 @@
           "type": "string"
         },
         "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "bytes_billed": {
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991

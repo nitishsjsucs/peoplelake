@@ -20,7 +20,7 @@ from ..config import Settings, load_settings, open_lake
 from ..warehouse.dbt_runner import DbtRunner, env_overrides
 from ..warehouse.loader import run_load
 from .client import WorkerClient, WorkerLandingSource
-from .jobs import Faults, SimulatedCrash, failed_result, run_transform
+from .jobs import Faults, SimulatedCrash, billed_total, failed_result, run_transform
 
 log = logging.getLogger("peoplelake.runner")
 MAX_JOBS_PER_PROCESS = 200
@@ -108,6 +108,7 @@ class Runner:
         self.current = job
         suffix = job["input"].get("dataset_suffix")
         started = time.monotonic()
+        warehouse = None
         try:
             with Heartbeat(self.client, job, self.worker_id), env_overrides(self._dbt_env(suffix)):
                 warehouse = self._warehouse(suffix)
@@ -126,6 +127,7 @@ class Runner:
                         result["duplicate_deliveries_skipped"],
                         result["lake"]["snapshots_read"],
                     )
+                    billed_total(result, warehouse)  # every byte the load job billed, not only the MERGE's
                     if faults.crash_after_load:
                         raise SimulatedCrash(job["job_id"])
                 else:
@@ -145,7 +147,8 @@ class Runner:
             return "crashed"
         except BaseException as exc:  # noqa: BLE001 - report anything, including SIGTERM
             try:
-                self._report(job, failed_result(job, f"{type(exc).__name__}: {exc}", started))
+                failed = failed_result(job, f"{type(exc).__name__}: {exc}", started)
+                self._report(job, billed_total(failed, warehouse))
             except Exception:  # noqa: BLE001
                 log.exception("could not report failure for %s", job["job_id"])
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):

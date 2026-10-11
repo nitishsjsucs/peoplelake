@@ -82,31 +82,33 @@ def run_transform(job: dict, *, warehouse, dbt: DbtRunner, upload, profile: str,
     histogram and the metrics artifact (uploaded through `upload(run_id, body) -> {key, sha256}`)."""
     started = time.monotonic()
     replay = bool(job["input"].get("full_refresh"))
+    dbt_bytes = 0  # BigQuery: dbt's own billed bytes; billed_total adds the warehouse's queries
     # BigQuery datasets carry the suffix; a local suffixed replay uses its own DuckDB file instead.
     suffix = job["input"].get("dataset_suffix") if warehouse.kind == "bigquery" else None
     checksum = seed_checksum()
     if replay or warehouse.seed_checksum() != checksum:
         seeded = dbt.seed(full_refresh=True)
+        dbt_bytes += int(getattr(seeded, "bytes_billed", 0) or 0)
         if not seeded.success:
-            return _failed(job, started, f"dbt seed failed: {seeded.failed_nodes or seeded.exception}")
+            failed = _failed(job, started, f"dbt seed failed: {seeded.failed_nodes or seeded.exception}")
+            return billed_total(failed, warehouse, dbt_bytes)
         warehouse.set_seed_checksum(checksum)
     before = warehouse.max_load_seq("peoplelake_ops", "ops_event_freshness")
     if faults.fail_model:
         faults.fired.append(f"fail_transform_model:{faults.fail_model}")
     outcome = dbt.build(full_refresh=replay, fail_model=faults.fail_model)
+    dbt_bytes += int(getattr(outcome, "bytes_billed", 0) or 0)
     if not outcome.success:
         detail = ", ".join(n.split(".")[-1] for n in outcome.failed_nodes[:10]) or (outcome.exception or "unknown")
-        return _failed(
-            job, started, f"dbt build failed ({outcome.models_error} models, {outcome.tests_error} tests): {detail}"
-        )
+        error = f"dbt build failed ({outcome.models_error} models, {outcome.tests_error} tests): {detail}"
+        return billed_total(_failed(job, started, error), warehouse, dbt_bytes)
     # Column security (BigQuery): every restricted column must carry its policy tag after the build. If one
     # does not, the analyst views are dropped (the next build recreates them) and the run fails.
     untagged = warehouse.restricted_tag_problems()
     if untagged:
         warehouse.close_restricted_access()
-        return _failed(
-            job, started, f"restricted columns without policy tags (analyst views dropped): {'; '.join(untagged)}"
-        )
+        error = f"restricted columns without policy tags (analyst views dropped): {'; '.join(untagged)}"
+        return billed_total(_failed(job, started, error), warehouse, dbt_bytes)
     digests = warehouse.digests(suffix)
     histogram = warehouse.freshness_histogram(-1 if before is None or replay else before)
     body, rows = metrics_artifact_body(job["run_id"], warehouse, profile, suffix)
@@ -122,7 +124,7 @@ def run_transform(job: dict, *, warehouse, dbt: DbtRunner, upload, profile: str,
     }
     if warehouse.kind == "bigquery":
         dbt_stats["bytes_billed"] = outcome.bytes_billed
-    return {
+    result = {
         "job_id": job["job_id"],
         "run_id": job["run_id"],
         "attempt": job["attempt"],
@@ -140,6 +142,16 @@ def run_transform(job: dict, *, warehouse, dbt: DbtRunner, upload, profile: str,
         "metrics_artifact": {"key": uploaded["key"], "sha256": uploaded["sha256"], "rows": rows},
         "duration_ms": int((time.monotonic() - started) * 1000),
     }
+    return billed_total(result, warehouse, dbt_bytes)
+
+
+def billed_total(result: dict, warehouse, dbt_bytes: int = 0) -> dict:
+    """BigQuery: set `bytes_billed` to every byte the job billed so far (the warehouse object counts each of
+    its queries; dbt reports its own), on succeeded and failed results alike, so the Coordinator's monthly
+    guard sees what was really spent. DuckDB results carry no bytes."""
+    if getattr(warehouse, "kind", None) == "bigquery":
+        result["bytes_billed"] = int(getattr(warehouse, "bytes_billed", 0) or 0) + int(dbt_bytes)
+    return result
 
 
 def _failed(job: dict, started: float, error: str) -> dict:

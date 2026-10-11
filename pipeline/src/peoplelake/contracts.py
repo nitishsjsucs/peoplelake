@@ -455,7 +455,8 @@ class FailedResult(Strict):
     status: Literal["failed", "expired"]
     error: str
     duration_ms: NonNegInt | None = None
-    _no_null = _omit_not_null("duration_ms")
+    bytes_billed: NonNegInt | None = None  # BigQuery: billed before the failure (the monthly guard counts it)
+    _no_null = _omit_not_null("duration_ms", "bytes_billed")
 
 
 class LoadResult(Strict):
@@ -514,6 +515,8 @@ class TransformResult(Strict):
     ops_freshness_histogram_10s: Histogram
     metrics_artifact: MetricsArtifact
     duration_ms: NonNegInt
+    bytes_billed: NonNegInt | None = None  # BigQuery: every byte the job billed, dbt and the runner's queries
+    _no_null = _omit_not_null("bytes_billed")
 
 
 def dump_contract(model: BaseModel) -> dict:

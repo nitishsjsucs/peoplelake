@@ -118,7 +118,7 @@ Production must not depend on Workers Paid anywhere: there is no `pipelines` bin
 
 - Ingest: at most 50 events per request (measured CPU, see Results), the ingest path prewarmed at isolate startup, production sources posting every 10 s (at most 3,080 requests for a 100,000-event delivery).
 - Landing: one SQLite row per request and one R2 object and one Queue message per minute of data; 503 `landing_backpressure` above 64 MiB buffered.
-- Coordinator: indexed queries, per-day row counters, a 5-minute cron backstop, a 240 s minimum interval between automatic runs, failure backoff up to 6 hours, 30 automatic runs a UTC day and a 275 GB monthly BigQuery guard; `GET /api/ops/budget` reports the state.
+- Coordinator: indexed queries, per-day row counters (alarm sets included), a 5-minute cron backstop, a 240 s minimum interval between automatic runs, failure backoff up to 6 hours, 30 automatic runs a UTC day and a 275 GB monthly BigQuery guard that counts every byte the runner's jobs bill (failed attempts too) and takes the month total measured in `INFORMATION_SCHEMA` (drills and owner queries included) as a floor; `GET /api/ops/budget` reports the state.
 - Workers AI: `max_tokens` 96 and 1,800 neurons a UTC day (429 `ai_budget` past it); the Workers AI ask eval resumes on a later day.
 - Google Cloud: every query capped at 1 GB billed and labeled, `peoplelake` names, resource-scoped grants, a dedicated build identity.
 - `npm run budget -- --check` (in CI) recomputes the table below from the repo's constants and fails on any estimate past its share or any setting that needs Workers Paid; `predeploy-check` and `npm run doctor` apply the same rules.
@@ -370,6 +370,7 @@ Then (the owner's operator):
     ```bash
     npm run prod:e2e    # one live 60-minute delivery (sources post every 10 s, at most 50 events per request), prod verify, production freshness
     uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10 --target prod-drill   # the five scenarios on BigQuery _drill datasets; stops before passing the 275 GB monthly guard, resume with --scenarios
+    uv run --project pipeline peoplelake prod bq-month   # this month's BigQuery bytes of this repo's jobs to production's monthly guard (the drill also sends it)
     uv run --project pipeline peoplelake prod demo-masking
     uv run --project pipeline peoplelake prod drill-restore --as-of-ms <epoch ms> --expected <run digests>   # docs/runbooks/restore.md
     uv run --project pipeline peoplelake eval ask --provider workers-ai   # 1 to 3 UTC days under the 1,800-neuron cap: rerun with --resume after a 429 stop

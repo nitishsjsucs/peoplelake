@@ -430,6 +430,29 @@ describe("Coordinator Free plan guards", () => {
     expect((await c().transformBudget(Date.parse("2026-11-01T00:00:00.000Z"))).ok).toBe(true);
   });
 
+  it("counts the bytes of failed attempts and takes the measured month total as a floor", async () => {
+    const cap = 10 * BQ_TRANSFORM_RESERVE_BYTES;
+    await c().setTestOptions({ guards: { bqMonthlyBytesCap: cap } });
+    const october = Date.parse("2026-10-20T00:00:00.000Z");
+    const runId = await newRun();
+    const t1 = await c().enqueueJob(runId, "transform", 1, input, october);
+    await c().claimJob("w", october);
+    const failed = { job_id: t1.job_id, run_id: runId, attempt: 1, status: "failed", error: "dbt build failed", bytes_billed: 2 * BQ_TRANSFORM_RESERVE_BYTES };
+    await c().completeJob(t1.job_id, failed, october);
+    expect((await c().transformBudget(october)).bytes_billed).toBe(2 * BQ_TRANSFORM_RESERVE_BYTES);
+    // A succeeded transform's top-level bytes (dbt plus the runner's own queries) win over dbt's share.
+    const t2 = await c().enqueueJob(runId, "transform", 2, input, october);
+    await c().claimJob("w", october);
+    await c().completeJob(t2.job_id, { status: "succeeded", bytes_billed: 3, dbt: { bytes_billed: 1 } }, october);
+    expect((await c().transformBudget(october)).bytes_billed).toBe(2 * BQ_TRANSFORM_RESERVE_BYTES + 3);
+    // The BigQuery drill billed most of the month outside this ledger: the measured total blocks the next
+    // production transform; a smaller or other-month total changes nothing.
+    expect((await c().noteBqMonth("2026-09", cap, october)).bytes_billed).toBe(2 * BQ_TRANSFORM_RESERVE_BYTES + 3);
+    expect((await c().noteBqMonth("2026-10", 1, october)).bytes_billed).toBe(2 * BQ_TRANSFORM_RESERVE_BYTES + 3);
+    const measured = cap - BQ_TRANSFORM_RESERVE_BYTES + 1;
+    expect(await c().noteBqMonth("2026-10", measured, october)).toMatchObject({ ok: false, bytes_billed: measured });
+  });
+
   it("keeps a tick's rows read and a committed run's rows written flat with 10,000 runs and 20,000 jobs of history", async () => {
     const generation = await c().generation();
     await runInDurableObject(c(), async (_instance: Coordinator, state) => {

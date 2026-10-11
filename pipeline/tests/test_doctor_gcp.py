@@ -179,7 +179,7 @@ def test_an_unprovisioned_sandbox_project_lists_exactly_what_is_missing(tmp_path
     assert by["Artifact Registry repository peoplelake"].status == "MISSING"
     assert by["Cloud Run Job peoplelake-runner"].status == "MISSING"
     assert by["last runner execution"].status == "INFO"
-    billed_check = by["BigQuery bytes billed this month by peoplelake-* service accounts"]
+    billed_check = by["BigQuery bytes billed this month by this repo's jobs"]
     assert billed_check.status == "PASS" and "no query run" in billed_check.detail
     assert billed == []  # nothing queried while no peoplelake-* account exists
     assert by["go-live evidence"].status == "WARN"

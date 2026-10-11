@@ -86,6 +86,16 @@ export function mountOpsApi(app: App): void {
   });
 
   // Guarded ledger reset before a second prod:e2e (runbook prod-reset.md).
+  // The month's BigQuery bytes measured from INFORMATION_SCHEMA by the operator's tools (the BigQuery drill,
+  // `peoplelake prod bq-month`): a floor for the monthly guard, which otherwise sees only runner results.
+  app.post("/api/ops/bq-month", requireRole("operator"), async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { month?: unknown; bytes_billed?: unknown };
+    const month = typeof body.month === "string" && /^\d{4}-\d{2}$/.test(body.month) ? body.month : null;
+    const bytes = typeof body.bytes_billed === "number" && Number.isSafeInteger(body.bytes_billed) && body.bytes_billed >= 0 ? body.bytes_billed : null;
+    if (month === null || bytes === null) return c.json({ error: "month (YYYY-MM) and bytes_billed (integer) required" }, 400);
+    return c.json(await coordinatorStub(c.env).noteBqMonth(month, bytes));
+  });
+
   app.post("/api/ops/reset", requireRole("operator"), async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { confirm?: unknown };
     if (body.confirm !== "peoplelake") return c.json({ error: "confirm must be peoplelake" }, 400);

@@ -68,6 +68,15 @@ describe("API role gates", () => {
     expect(body.durable_objects.rows_read_today).toBeGreaterThan(0);
   });
 
+  it("takes the measured BigQuery month total from operators only", async () => {
+    const month = new Date().toISOString().slice(0, 7);
+    expect((await call("/api/ops/bq-month", "runner", json({ month, bytes_billed: 1 }))).status).toBe(403);
+    expect((await call("/api/ops/bq-month", "operator", json({ month: "October", bytes_billed: 1 }))).status).toBe(400);
+    expect((await call("/api/ops/bq-month", "operator", json({ month, bytes_billed: -1 }))).status).toBe(400);
+    const res = await call("/api/ops/bq-month", "operator", json({ month, bytes_billed: 274_000_000_000 }));
+    expect(await res.json()).toMatchObject({ ok: false, bytes_billed: 274_000_000_000 });
+  });
+
   it("serves the committed metrics snapshot and 404 before any commit", async () => {
     expect((await call("/api/metrics/latest", "viewer")).status).toBe(404);
     await env.REPORTS_BUCKET.put("reports/metrics/latest.json", JSON.stringify({ rows: [] }));

@@ -12,8 +12,8 @@ once a `peoplelake-*` service account exists, since nothing can be billed to acc
 
 The project is shared by four repos: besides the resources, it checks that this repo's service accounts
 hold no project-level role other than `roles/bigquery.jobUser` and `roles/logging.logWriter`, that no
-`peoplelake_*` dataset has a default expiration, and the bytes billed this month by the `peoplelake-*`
-service accounts against the 275 GB monthly guard."""
+`peoplelake_*` dataset has a default expiration, and the bytes billed this month by this repo's jobs
+(`peoplelake-*` service accounts or the `app=peoplelake` label) against the 275 GB monthly guard."""
 
 from __future__ import annotations
 
@@ -49,9 +49,14 @@ from .bootstrap_gcp import (
 )
 from .checks import Check, run_check
 
+# This repo's BigQuery jobs this UTC month: anything run by a peoplelake-* service account (the runner, the
+# drills, dbt) and anything labeled app=peoplelake (bigquery_client labels every query, the owner's verify,
+# reset and doctor queries included). The Coordinator's monthly guard takes the same total as a floor
+# (POST /api/ops/bq-month), so the two guards share one source.
 MONTH_BILLED_SQL = (
     "SELECT IFNULL(SUM(total_bytes_billed), 0) AS b FROM `region-us`.INFORMATION_SCHEMA.JOBS_BY_PROJECT "
-    "WHERE STARTS_WITH(user_email, 'peoplelake-') AND creation_time >= TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), MONTH)"
+    "WHERE creation_time >= TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), MONTH) AND (STARTS_WITH(user_email, 'peoplelake-') "
+    "OR EXISTS (SELECT 1 FROM UNNEST(labels) AS l WHERE l.key = 'app' AND l.value = 'peoplelake'))"
 )
 
 # README "Production setup", "Steps only a person can do": the numbers the fixes cite (a test reads README).
@@ -103,9 +108,22 @@ class ReadOnlyGcloud:
 
 
 def month_bytes_billed(client) -> int:  # noqa: ANN001
-    """Bytes billed this UTC month by this repo's service accounts (the caller needs project-wide job
+    """Bytes billed this UTC month by this repo's jobs (MONTH_BILLED_SQL; the caller needs project-wide job
     visibility: the owner's ADC)."""
     return int(list(client.query(MONTH_BILLED_SQL).result())[0]["b"])
+
+
+def report_month_to_production(billed: int, month: str | None = None) -> dict | None:
+    """Give the production Coordinator the measured month total as the floor of its monthly guard. Returns
+    its transform budget, or None when production is not set up (no .prod/state.json)."""
+    from datetime import UTC, datetime
+
+    if not (repo_root() / ".prod" / "state.json").exists():
+        return None
+    from ..evals.freshness import prod_operator
+
+    month = month or datetime.now(UTC).strftime("%Y-%m")
+    return prod_operator().bq_month(month, billed)
 
 
 @dataclass
@@ -468,7 +486,7 @@ def doctor(
         )
 
     def billed() -> Check:
-        name = "BigQuery bytes billed this month by peoplelake-* service accounts"
+        name = "BigQuery bytes billed this month by this repo's jobs"
         if not state["service_accounts"]:
             return Check(name, "PASS", "0 bytes: no peoplelake-* service account exists yet (no query run)")
         b = read.month_billed()

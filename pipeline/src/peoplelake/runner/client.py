@@ -97,6 +97,10 @@ class WorkerClient:
     def install_faults(self, faults: list[dict]) -> dict:
         return self._json("POST", "/internal/dev/faults", json={"faults": faults})
 
+    def bq_month(self, month: str, bytes_billed: int) -> dict:
+        """Operator: the measured BigQuery bytes of the month, a floor for the Coordinator's monthly guard."""
+        return self._json("POST", "/api/ops/bq-month", json={"month": month, "bytes_billed": int(bytes_billed)})
+
     def request_run(self, mode: str = "incremental") -> dict:
         return self._json("POST", "/api/replay" if mode == "replay" else "/api/runs")
 

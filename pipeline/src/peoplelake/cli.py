@@ -567,6 +567,12 @@ def _cmd_prod(args: argparse.Namespace) -> int:
 
         landing = landing_committed(open_lake(load_settings("prod")), prod_operator().status().get("landed_through"))
         result = verify(config, Path(args.reference) if args.reference else None, landing=landing)
+    elif args.prod_command == "bq-month":
+        from .prod.doctor_gcp import month_bytes_billed, report_month_to_production
+        from .warehouse.bigquery_wh import bigquery_client
+
+        billed = month_bytes_billed(bigquery_client(config.project, config.bq_location))
+        result = {"bytes_billed_this_month": billed, "production_guard": report_month_to_production(billed)}
     elif args.prod_command == "demo-masking":
         from .prod.demo_masking import demo
 
@@ -790,6 +796,10 @@ def build_parser() -> argparse.ArgumentParser:
     e2e_p.add_argument("--duration", default="60m")
     e2e_p.add_argument("--tick-seconds", type=float, default=10.0, help="sources post every N seconds (default 10)")
     e2e_p.set_defaults(func=_cmd_prod)
+    prod_sub.add_parser(
+        "bq-month",
+        help="this month's BigQuery bytes of this repo's jobs (capped query), sent to production's monthly guard",
+    ).set_defaults(func=_cmd_prod)
     prod_sub.add_parser("demo-masking", help="query restricted columns as peoplelake-analyst").set_defaults(
         func=_cmd_prod
     )

@@ -361,6 +361,8 @@ const failedOrExpired = {
   status: z.enum(["failed", "expired"]),
   error: z.string(),
   duration_ms: nonNegInt().optional(),
+  // BigQuery: bytes the attempt billed before it failed; the monthly guard counts failed attempts too.
+  bytes_billed: nonNegInt().optional(),
 };
 
 export const LoadResultSucceeded = z
@@ -389,7 +391,7 @@ export const LoadResultSucceeded = z
     received_histogram_10s: Histogram10s,
     warehouse: Engine,
     duration_ms: nonNegInt(),
-    // BigQuery loads: bytes billed by the load's queries; the Coordinator's monthly guard sums them.
+    // BigQuery loads: every byte the load job billed; the Coordinator's monthly guard sums them.
     bytes_billed: nonNegInt().optional(),
   })
   .strict();
@@ -424,6 +426,9 @@ export const TransformResultSucceeded = z
     ops_freshness_histogram_10s: Histogram10s,
     metrics_artifact: z.object({ key: z.string().min(1), sha256: Sha256Hex, rows: nonNegInt() }).strict(),
     duration_ms: nonNegInt(),
+    // BigQuery: every byte the job billed (dbt seed and build, digests, histogram, metrics snapshot), which
+    // the Coordinator's monthly guard sums; dbt.bytes_billed is the dbt part alone.
+    bytes_billed: nonNegInt().optional(),
   })
   .strict();
 export const TransformResult = z.union([TransformResultSucceeded, z.object(failedOrExpired).strict()]);
