@@ -116,6 +116,28 @@ models:
                 to: ref('dim_employee')
                 field: employee_id
 
+  - name: metrics_workforce_monthly
+    description: >
+      The five workforce metrics (headcount, FTE, hires, departures, offer acceptance rate) and their
+      components by month and department, plus department_id ALL for the company. 468 rows.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: ["month", "department_id"]
+    columns:
+      - name: headcount
+        description: Active at month end (hired on or before it, not ended on or before it).
+        data_tests: [not_null]
+      - name: fte
+        description: Sum of FTE of those in headcount, exact DECIMAL(18,6) / NUMERIC.
+        data_tests: [not_null]
+      - name: hires
+        description: Hire and rehire spells starting in the month, department at hire.
+      - name: departures
+        description: Effective terminations in the month, department on the last day.
+      - name: offer_acceptance_rate
+        description: accepted / (accepted + declined) by decision month, half-up parts per million; rescinded excluded; null without decisions.
+
 unit_tests:
   - name: ut_offer_accepted_then_hire_with_corrected_date
     description: The hire is matched by candidate even though its corrected date differs from the offer start.

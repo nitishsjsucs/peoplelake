@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: ops_anomalies
+    description: Open anomalies; R11 requires it to be empty at quiescence.
+    columns:
+      - name: anomaly_code
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - orphan_correction
+                  - orphan_rescind
+                  - inferred_spell_end
+                  - rehire_without_prior_spell
+                  - termination_outside_spell
+                  - hris_change_outside_spell
+                  - talent_event_outside_spell
+                  - offer_decision_without_extension
+
+  - name: ops_delivery_stats
+    description: Deliveries, unique events and duplicate deliveries per source and event type.
+
+  - name: ops_event_freshness
+    description: First receipt time and publishing load sequence per event.
+    columns:
+      - name: event_id
+        data_tests: [not_null, unique]

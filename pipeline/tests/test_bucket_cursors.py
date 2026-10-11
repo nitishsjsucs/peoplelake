@@ -40,7 +40,8 @@ def test_shuffled_delivery_incremental_equals_full_refresh(tmp_path, monkeypatch
     for i in range(1, 7):
         env.load(part(items, i, 6))
         outcome = env.dbt.build()
-        assert outcome.success, outcome.failed_nodes
+        assert outcome.success, outcome.failed_nodes  # error-level checks hold while data is in flight
+    assert outcome.tests_warn == 0, outcome.checks_warn  # warn-level checks are 0 at quiescence
     assert env.wh.digests() == full_refresh_digests(env)
 
 

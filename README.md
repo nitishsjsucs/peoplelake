@@ -14,7 +14,7 @@ v1 is under construction and this repository is published while it is built. Thi
 | Synthetic generator with exact counts and oracle | done: 100,000 events (full) and 10,000 (small) from `hris`, `ats`, `talent`, pinned sha256, committed oracle seeds |
 | Contracts and canonical JSON golden | done: zod contracts generate `contracts/*.schema.json`; pydantic mirrors; fixtures and a canonical JSON golden asserted by vitest (in workerd) and pytest |
 | DuckDB loader and output digests | done: idempotent load on `delivery_id`, UTC sessions, engine-independent digests for the 10 published models |
-| dbt models, five metrics, reconciliation checks | in progress: staging, spells, SCD2 history with per-model bucket cursors, facts, metrics mart (matches the oracle on all 468 rows for both profiles), 10 unit tests; reconciliation checks next |
+| dbt models, five metrics, reconciliation checks | done on DuckDB: staging, spells, SCD2 history with per-model bucket cursors, facts, metrics mart, reporting and ops models, 10 unit tests, reconciliation checks R1 to R11 |
 | BigQuery configs and offline compile | not started |
 | Local Iceberg lake | not started |
 | Worker: auth, ingest, sinks | not started (only `GET /v1/health` exists) |
@@ -112,7 +112,29 @@ uv run --project pipeline peoplelake dbt seed
 uv run --project pipeline peoplelake dbt run --empty   # unit tests need the relations to exist
 uv run --project pipeline peoplelake dbt build         # models, unit tests and data tests
 uv run --project pipeline peoplelake digest     # digests of the 10 published models
+
+# SPEC 15.4 in one command: straight load, incremental build with unit tests, full refresh, equal digests
+uv run --project pipeline peoplelake dev reference-digests --profile small --out .data/reference/reference-digests-small.json
 ```
+
+### Five metrics and reconciliation
+
+`metrics_workforce_monthly` is the single definition of headcount, FTE, hires, departures and offer acceptance rate (plus rehires, transfers and offer components) by month and department. Reconciliation checks run as dbt tests; error-level checks block a warehouse commit and hold even while late data is in flight, warn-level checks are completeness checks that must be 0 at quiescence.
+
+| Id | Check | Severity |
+|---|---|---|
+| R1, R2 | headcount roll-forward for the company and per department (with transfers) | error |
+| R3 | rehire continuity: spells never overlap, rehires are spell 2 or later | error |
+| R4 | retroactive corrections applied in the history, superseded values gone (independent SQL path) | error |
+| R5 | rescinded terminations end no spell and count as no departure | error |
+| R6 | accepted offer to hire, both directions, within 30 days | warn |
+| R7 | unique events by source and type equal the generator manifest | warn |
+| R8 | one payload per event id across deliveries | error |
+| R9 | effective-dated history contiguous within each spell | error |
+| R10 | all five metrics and components equal the oracle on all 468 rows | warn |
+| R11 | no open anomalies (orphan corrections, inferred spell ends, events outside spells) | warn |
+
+`pipeline/tests/test_reconciliation_checks.py` breaks each invariant on purpose and asserts that its check fires.
 
 ### Synthetic data
 

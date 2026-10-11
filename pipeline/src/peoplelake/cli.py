@@ -121,6 +121,23 @@ def _cmd_dbt(args: argparse.Namespace) -> int:
     return 0 if result.success else 1
 
 
+def _cmd_reference_digests(args: argparse.Namespace) -> int:
+    from .devtools.reference import ReferenceError_, reference_digests
+    from .paths import data_dir
+
+    try:
+        result = reference_digests(args.profile, Path(args.workdir) if args.workdir else data_dir() / "reference")
+    except ReferenceError_ as exc:
+        print(f"reference-digests: {exc}", file=sys.stderr)
+        return 1
+    text = json.dumps(result, indent=2, sort_keys=True)
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(text + "\n")
+    print(text)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="peoplelake", description="PeopleLake pipelines")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -148,6 +165,16 @@ def build_parser() -> argparse.ArgumentParser:
     dbt = sub.add_parser("dbt", help="run dbt in process with the repo's project and profiles directories")
     dbt.add_argument("dbt_args", nargs=argparse.REMAINDER)
     dbt.set_defaults(func=_cmd_dbt)
+
+    dev = sub.add_parser("dev", help="developer and CI tools")
+    dev_sub = dev.add_subparsers(dest="dev_command", required=True)
+    ref = dev_sub.add_parser(
+        "reference-digests", help="straight load + incremental and full-refresh builds (SPEC 15.4)"
+    )
+    ref.add_argument("--profile", choices=["full", "small"], default="small")
+    ref.add_argument("--workdir")
+    ref.add_argument("--out")
+    ref.set_defaults(func=_cmd_reference_digests)
 
     dig = sub.add_parser("digest", help="output digests of the 10 published models (open only after `stack down`)")
     dig.add_argument("--duckdb")

@@ -1,0 +1,16 @@
+version: 2
+
+models:
+  - name: rpt_workforce_monthly
+    description: Headcount, FTE, hires and departures by month and department, small cells suppressed.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: ["month", "department_id"]
+
+  - name: rpt_offer_acceptance_monthly
+    description: Offer acceptance by decision month and requisition department, small cells suppressed.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: ["month", "department_id"]
