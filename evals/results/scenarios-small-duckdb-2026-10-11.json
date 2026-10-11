@@ -24,16 +24,16 @@
   "scenarios": [
     {
       "chunk_seconds": [
-        12.42,
-        5.16,
-        5.13,
-        4.58,
-        4.84,
-        5.16,
-        5.47,
-        5.49,
-        4.6,
-        5.65
+        7.76,
+        3.79,
+        4.06,
+        3.81,
+        3.81,
+        3.81,
+        3.8,
+        3.78,
+        4.08,
+        3.8
       ],
       "chunks": 10,
       "digests": {
@@ -48,7 +48,7 @@
         "fct_workforce_monthly": "be79a55a34dd180cc026efe17ed518ba6376db16fb1993b2ff3953d24fd8e21f",
         "metrics_workforce_monthly": "79996727b746de40dffeb8feb888759b45dd2e27dee545a3f220f9a7f6854ca0"
       },
-      "duration_s": 62.2,
+      "duration_s": 44.9,
       "engine": "duckdb",
       "error_checks_at_quiescence": {
         "recon_headcount_roll_forward_company": 0,
@@ -103,7 +103,7 @@
       "ports_busy_after_stack_down": [],
       "profile": "small",
       "scenario": "B",
-      "started_at": "2026-10-11T08:11:29Z",
+      "started_at": "2026-10-11T22:53:25Z",
       "warn_checks_at_quiescence": {
         "recon_anomalies_open": 0,
         "recon_event_counts_vs_manifest": 0,
@@ -113,16 +113,16 @@
     },
     {
       "chunk_seconds": [
-        16.71,
-        6.15,
-        7.37,
-        7.13,
-        7.15,
-        7.09,
-        7.34,
-        6.82,
-        4.99,
-        4.61
+        7.23,
+        4.06,
+        4.04,
+        3.86,
+        4.11,
+        3.87,
+        3.83,
+        3.84,
+        4.13,
+        3.6
       ],
       "chunks": 10,
       "digests": {
@@ -137,7 +137,7 @@
         "fct_workforce_monthly": "be79a55a34dd180cc026efe17ed518ba6376db16fb1993b2ff3953d24fd8e21f",
         "metrics_workforce_monthly": "79996727b746de40dffeb8feb888759b45dd2e27dee545a3f220f9a7f6854ca0"
       },
-      "duration_s": 78.6,
+      "duration_s": 44.4,
       "engine": "duckdb",
       "error_checks_at_quiescence": {
         "recon_headcount_roll_forward_company": 0,
@@ -198,7 +198,7 @@
       "ports_busy_after_stack_down": [],
       "profile": "small",
       "scenario": "S1",
-      "started_at": "2026-10-11T08:12:32Z",
+      "started_at": "2026-10-11T22:54:10Z",
       "warn_checks_at_quiescence": {
         "recon_anomalies_open": 0,
         "recon_event_counts_vs_manifest": 0,
@@ -208,16 +208,16 @@
     },
     {
       "chunk_seconds": [
-        14.1,
-        5.52,
-        5.17,
-        5.4,
-        6.03,
-        5.8,
-        4.92,
-        5.4,
-        4.93,
-        4.85
+        7.3,
+        3.85,
+        3.83,
+        3.57,
+        3.88,
+        3.85,
+        3.85,
+        3.86,
+        3.83,
+        4.14
       ],
       "chunks": 10,
       "digests": {
@@ -232,7 +232,7 @@
         "fct_workforce_monthly": "be79a55a34dd180cc026efe17ed518ba6376db16fb1993b2ff3953d24fd8e21f",
         "metrics_workforce_monthly": "79996727b746de40dffeb8feb888759b45dd2e27dee545a3f220f9a7f6854ca0"
       },
-      "duration_s": 64.9,
+      "duration_s": 43.6,
       "engine": "duckdb",
       "error_checks_at_quiescence": {
         "recon_headcount_roll_forward_company": 0,
@@ -309,7 +309,7 @@
       "ports_busy_after_stack_down": [],
       "profile": "small",
       "scenario": "S2",
-      "started_at": "2026-10-11T08:13:51Z",
+      "started_at": "2026-10-11T22:54:55Z",
       "warn_checks_at_quiescence": {
         "recon_anomalies_open": 0,
         "recon_event_counts_vs_manifest": 0,
@@ -319,17 +319,17 @@
     },
     {
       "chunk_seconds": [
-        10.77,
-        4.59,
-        4.31,
-        4.31,
-        4.31,
-        4.57,
-        4.58,
-        4.86,
-        5.15,
-        5.15,
-        4.86
+        7.31,
+        4.11,
+        3.85,
+        3.62,
+        3.84,
+        3.56,
+        3.89,
+        3.86,
+        3.86,
+        3.85,
+        3.79
       ],
       "chunks": 10,
       "digests": {
@@ -344,7 +344,7 @@
         "fct_workforce_monthly": "be79a55a34dd180cc026efe17ed518ba6376db16fb1993b2ff3953d24fd8e21f",
         "metrics_workforce_monthly": "79996727b746de40dffeb8feb888759b45dd2e27dee545a3f220f9a7f6854ca0"
       },
-      "duration_s": 60.1,
+      "duration_s": 47.4,
       "engine": "duckdb",
       "error_checks_at_quiescence": {
         "recon_headcount_roll_forward_company": 0,
@@ -415,7 +415,7 @@
       "ports_busy_after_stack_down": [],
       "profile": "small",
       "scenario": "S3",
-      "started_at": "2026-10-11T08:14:56Z",
+      "started_at": "2026-10-11T22:55:39Z",
       "warn_checks_at_quiescence": {
         "recon_anomalies_open": 0,
         "recon_event_counts_vs_manifest": 0,
@@ -425,16 +425,16 @@
     },
     {
       "chunk_seconds": [
-        10.6,
-        26.01,
-        5.46,
-        6.48,
-        4.91,
-        25.34,
-        5.66,
-        3.8,
-        4.06,
-        3.79
+        7.32,
+        24.07,
+        3.87,
+        4.87,
+        3.86,
+        24.13,
+        4.92,
+        3.82,
+        4.12,
+        3.82
       ],
       "chunks": 10,
       "digests": {
@@ -449,7 +449,7 @@
         "fct_workforce_monthly": "be79a55a34dd180cc026efe17ed518ba6376db16fb1993b2ff3953d24fd8e21f",
         "metrics_workforce_monthly": "79996727b746de40dffeb8feb888759b45dd2e27dee545a3f220f9a7f6854ca0"
       },
-      "duration_s": 98.8,
+      "duration_s": 86.7,
       "engine": "duckdb",
       "error_checks_at_quiescence": {
         "recon_headcount_roll_forward_company": 0,
@@ -528,7 +528,7 @@
       "ports_busy_after_stack_down": [],
       "profile": "small",
       "scenario": "S4",
-      "started_at": "2026-10-11T08:15:56Z",
+      "started_at": "2026-10-11T22:56:26Z",
       "warn_checks_at_quiescence": {
         "recon_anomalies_open": 0,
         "recon_event_counts_vs_manifest": 0,
@@ -538,16 +538,16 @@
     },
     {
       "chunk_seconds": [
-        7.22,
-        4.04,
-        3.79,
-        3.75,
-        3.79,
-        3.97,
-        3.77,
-        4.29,
-        5.8,
-        4.96
+        7.33,
+        3.87,
+        3.84,
+        3.86,
+        3.87,
+        3.85,
+        3.88,
+        3.88,
+        3.89,
+        3.86
       ],
       "chunks": 10,
       "digests": {
@@ -562,7 +562,7 @@
         "fct_workforce_monthly": "be79a55a34dd180cc026efe17ed518ba6376db16fb1993b2ff3953d24fd8e21f",
         "metrics_workforce_monthly": "79996727b746de40dffeb8feb888759b45dd2e27dee545a3f220f9a7f6854ca0"
       },
-      "duration_s": 57.3,
+      "duration_s": 52.0,
       "engine": "duckdb",
       "error_checks_at_quiescence": {
         "recon_headcount_roll_forward_company": 0,
@@ -619,14 +619,14 @@
       "rebuild": {
         "point_in_time_identical_to_recorded": true,
         "point_in_time_mismatched_models": [],
-        "point_in_time_of": "r-tmqhpc-000006",
-        "point_in_time_run": "r-tmqhpc-000013",
-        "point_in_time_snapshot": "8733386736671415287",
-        "rebuild_run": "r-tmqhpc-000012",
+        "point_in_time_of": "r-tmrmgi-000006",
+        "point_in_time_run": "r-tmrmgi-000013",
+        "point_in_time_snapshot": "5704638470251231690",
+        "rebuild_run": "r-tmrmgi-000012",
         "rebuild_status": "committed"
       },
       "scenario": "S5",
-      "started_at": "2026-10-11T08:17:35Z",
+      "started_at": "2026-10-11T22:57:53Z",
       "warn_checks_at_quiescence": {
         "recon_anomalies_open": 0,
         "recon_event_counts_vs_manifest": 0,

@@ -20,7 +20,7 @@ v1 is built and verified end to end on the local stack (every item of the build 
 | Worker: auth, ingest, landing | done locally: fail-closed config, Access JWT verification (RS256, iss, aud, exp) with locally generated dev keys, role gates, `POST /v1/ingest/:source` for three envelopes (zod, all-or-nothing, at most 50 events per request, which measured well inside the Workers Free plan's 10 ms of CPU in a Node proxy (not yet measured on Cloudflare), the ingest path prewarmed at isolate startup), RawRecord normalization shared with Python through a golden, and the LandingRoller Durable Object (one SQLite row per request, planned immutable roll files in R2 every 60 s, one Queue message per roll, backpressure), the same code locally and in production; no Basin Pipelines (Workers Paid only) |
 | Orchestration: Coordinator, Workflow, dispatchers | done locally (Miniflare Workflows): Coordinator ledger with single-flight runs, attempt-scoped jobs and leases, `WarehouseRunWorkflow` (load, transform or skip, verify, commit, release; a committed run uses 8 steps and records them), poll and Cloud Run dispatchers, lake-events queue consumer (one message per landing roll), the Workers Free plan guards (a 5-minute cron backstop that requests a run only while a landed roll is past the committed landing cursor, heartbeat off, a 240 s minimum interval between automatic runs, failure backoff of 5 minutes doubling to 6 hours, 30 automatic runs a UTC day, a 274 GB monthly BigQuery guard that commits the load and skips the transform), indexed ledger queries with per-day Durable Object row counters and `GET /api/ops/budget`, eval faults; production Workflows not exercised yet |
 | Runner and local stack | done locally: `peoplelake runner poll` (in-process dbt, heartbeats, eval fault hooks) and `peoplelake stack up/down` (wrangler dev, runner, ticker in their own process groups, ports checked free) |
-| Scenario and freshness evals | done on the local stack and re-recorded on the Free plan design (see Results): scenario equivalence on DuckDB for all six scenarios on both profiles, and two 60-minute local freshness measurements of the full profile (wide run guards with 1 s source ticks: p95 69 s; the production cadence of 240 s between automatic runs and 10 s ticks: p95 260 s); production freshness is measured once by `npm run prod:e2e` |
+| Scenario and freshness evals | done on the local stack and re-recorded on the Free plan design (see Results): scenario equivalence on DuckDB for all six scenarios on both profiles (re-recorded at `d581069`, after the review fixes changed the loader, the restricted models and the reporting views), and two 60-minute local freshness measurements of the full profile (wide run guards with 1 s source ticks: p95 69 s; the production cadence of 240 s between automatic runs and 10 s ticks: p95 260 s); production freshness is measured once by `npm run prod:e2e` |
 | CI | `ci.yml` runs on GitHub on every push of `main` and has passed every run so far, the small-profile scenario matrix included; `eval-full.yml` (weekly and on demand) has not run yet |
 | Workers AI and `/api/ask` | done: `AiProvider` with a deterministic stub (CI), llama-server (local) and Workers AI through AI Gateway (production, mocked in tests), `POST /api/ask` answering only from the committed metrics snapshot, `/api/ops/ai` gateway check; the 60-question ask eval (`peoplelake eval ask`) scores each provider through the Worker: stub and llama-server results recorded (see Results), Workers AI runs after the production setup |
 | Workers Free plan budget | done: `npm run budget` computes every peak-day estimate from the repo's constants and production config against the Free allowances and this repo's planning shares (table below), `--check` runs in CI, `predeploy-check` and the doctor refuse anything that needs Workers Paid |
@@ -285,7 +285,7 @@ The generator (`pipeline/src/peoplelake/generator`) keeps the true world state a
 | S5 | recovery-warehouse-rebuild | after a clean delivery: delete the warehouse and replay everything from the lake; replay up to the middle run's snapshot into a scratch warehouse and require that run's recorded digests |
 
 ```bash
-uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10      # all six, about 15 minutes here
+uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10      # all six, about 6 minutes here
 uv run --project pipeline peoplelake eval scenarios --profile small --scenarios S4   # one scenario
 npm run results:readme                                                                 # renders evals/results into Results
 ```
@@ -325,7 +325,7 @@ GitHub Actions run CI only and hold no cloud credentials (`permissions: contents
 | `eval-full.yml` | scenarios | the same matrix on the full profile (100,000 events), weekly and on demand; reports only |
 | `eval-full.yml` | freshness | the local freshness eval on the full profile for `freshness_minutes` (default 20, also weekly; 1 to 60, 0 skips it); reports only |
 
-Scenario step timeouts come from measured runs of the Free plan design. Small profile: 5 minutes, twice the slowest scenario step on GitHub's `ubuntu-latest` runner (S4, 148 s; the same scenario takes 99 s on this machine, see Results). Full profile: 8 minutes, twice the slowest full-profile scenario on this machine (S4, 145.4 s in `evals/results/scenarios-full-duckdb-2026-10-11.json`) times the 1.5 slowdown the small profile showed on the runner (7.3 minutes, rounded up), because `eval-full.yml` has not run on GitHub yet. The freshness step: 122 minutes, twice the wall time of a 60-minute local run (61 min 7 s, `wall_time_s` in `evals/results/freshness-local-full-prod-guards-2026-10-11.json`; the first run's was about 61 minutes too, observed by hand), the longest the input allows.
+Scenario step timeouts come from measured runs of the Free plan design. Small profile: 5 minutes, twice the slowest scenario step measured on GitHub's `ubuntu-latest` runner so far (S4, 148 s, when this machine took 99 s; at `d581069` the runner's slowest step was S5 at 127 s and S4 took 124 s, against 86.7 s for S4 here, see Results). Full profile: 9 minutes, twice the slowest full-profile scenario on this machine (S4, 161.0 s in `evals/results/scenarios-full-duckdb-2026-10-11.json`) times 1.5, the larger runner slowdown of the slowest small-profile step (148 s against 99 s; 127 s against 86.7 s is 1.46), so 8.05 minutes rounded up, because `eval-full.yml` has not run on GitHub yet. The freshness step: 122 minutes, twice the wall time of a 60-minute local run (61 min 7 s, `wall_time_s` in `evals/results/freshness-local-full-prod-guards-2026-10-11.json`; the first run's was about 61 minutes too, observed by hand), the longest the input allows.
 
 ## Production setup
 
@@ -512,12 +512,12 @@ Command: `peoplelake eval scenarios --profile full --chunks 20 --reference .data
 
 | Scenario | Identical models (of 10) | Oracle rows mismatched | Warn checks at quiescence | Deliveries | Runs | Duration |
 |---|---:|---:|---:|---:|---:|---:|
-| B baseline | 10 | 0 | 0 | 100000 | 21 | 129.8 s |
-| S1 duplicate-client-retries | 10 | 0 | 0 | 111000 | 21 | 139.7 s |
-| S2 duplicate-lake-redelivery | 10 | 0 | 0 | 100000 | 21 | 103 s |
-| S3 late-arrival | 10 | 0 | 0 | 100000 | 22 | 106.5 s |
-| S4 recovery-step-failures | 10 | 0 | 0 | 100000 | 21 | 145.4 s |
-| S5 recovery-warehouse-rebuild | 10 | 0 | 0 | 100000 | 23 | 113.7 s |
+| B baseline | 10 | 0 | 0 | 100000 | 21 | 106 s |
+| S1 duplicate-client-retries | 10 | 0 | 0 | 111000 | 21 | 105.9 s |
+| S2 duplicate-lake-redelivery | 10 | 0 | 0 | 100000 | 21 | 123.7 s |
+| S3 late-arrival | 10 | 0 | 0 | 100000 | 22 | 120.6 s |
+| S4 recovery-step-failures | 10 | 0 | 0 | 100000 | 21 | 161 s |
+| S5 recovery-warehouse-rebuild | 10 | 0 | 0 | 100000 | 23 | 115.1 s |
 
 All scenarios identical to the reference digests: **yes**.
 
@@ -527,12 +527,12 @@ Command: `peoplelake eval scenarios --profile small --chunks 10 --reference .dat
 
 | Scenario | Identical models (of 10) | Oracle rows mismatched | Warn checks at quiescence | Deliveries | Runs | Duration |
 |---|---:|---:|---:|---:|---:|---:|
-| B baseline | 10 | 0 | 0 | 10000 | 11 | 62.2 s |
-| S1 duplicate-client-retries | 10 | 0 | 0 | 11100 | 11 | 78.6 s |
-| S2 duplicate-lake-redelivery | 10 | 0 | 0 | 10000 | 11 | 64.9 s |
-| S3 late-arrival | 10 | 0 | 0 | 10000 | 12 | 60.1 s |
-| S4 recovery-step-failures | 10 | 0 | 0 | 10000 | 11 | 98.8 s |
-| S5 recovery-warehouse-rebuild | 10 | 0 | 0 | 10000 | 13 | 57.3 s |
+| B baseline | 10 | 0 | 0 | 10000 | 11 | 44.9 s |
+| S1 duplicate-client-retries | 10 | 0 | 0 | 11100 | 11 | 44.4 s |
+| S2 duplicate-lake-redelivery | 10 | 0 | 0 | 10000 | 11 | 43.6 s |
+| S3 late-arrival | 10 | 0 | 0 | 10000 | 12 | 47.4 s |
+| S4 recovery-step-failures | 10 | 0 | 0 | 10000 | 11 | 86.7 s |
+| S5 recovery-warehouse-rebuild | 10 | 0 | 0 | 10000 | 13 | 52 s |
 
 All scenarios identical to the reference digests: **yes**.
 <!-- results:end -->

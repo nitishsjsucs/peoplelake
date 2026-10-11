@@ -58,10 +58,10 @@ jobs:
           name: reference-digests-full
       - run: uv run --project pipeline peoplelake auth dev-keys
       - name: Scenario ${{ matrix.scenario }} on the full profile
-        # Twice the slowest full-profile scenario measured locally (S4, 145.4 s in
-        # evals/results/scenarios-full-duckdb-2026-10-11.json) times the small profile's measured slowdown on
-        # this runner (1.5), rounded up; eval-full has not run on GitHub yet (see README CI).
-        timeout-minutes: 8
+        # Twice the slowest full-profile scenario measured locally (S4, 161.0 s in
+        # evals/results/scenarios-full-duckdb-2026-10-11.json) times the small profile's larger measured
+        # slowdown on this runner (1.5), rounded up; eval-full has not run on GitHub yet (see README CI).
+        timeout-minutes: 9
         run: >
           uv run --project pipeline peoplelake eval scenarios --profile full --chunks 20
           --scenarios ${{ matrix.scenario }} --reference reference-digests-full.json
