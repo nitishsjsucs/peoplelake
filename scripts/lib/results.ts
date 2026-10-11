@@ -51,6 +51,24 @@ export interface FreshnessReport {
   /** Production: the ledger must hold every delivered unique event, or no percentiles are reported. */
   ledger_coverage?: { delivered_unique_events: number; ledger_published_events: number; complete: boolean };
   target_15_minutes_p95_met?: boolean;
+  /** Local runs: the Coordinator's automatic-run guards and the sources' post interval in effect. */
+  run_guards?: { run_min_interval_s: number; auto_runs_max_per_day: number; production_values: boolean };
+  tick_seconds?: number;
+  delivery?: { tick_seconds?: number | null };
+  wall_time_s?: number;
+}
+
+/** How a freshness run was paced: the run guards and the sources' post interval (older local results did
+ * not record the guards; they ran with wrangler.jsonc's local values of the time). */
+export function freshnessCadence(r: FreshnessReport): string | null {
+  if (r.target !== "local") return null;
+  const tick = r.tick_seconds ?? r.delivery?.tick_seconds ?? null;
+  const posts = tick === null ? "" : ` Sources posted every ${tick} s (production: every 10 s).`;
+  if (!r.run_guards) {
+    return `Run guards: not recorded in this file; the run used wrangler.jsonc's local values of the time, set wide (no minimum interval between automatic runs, 100,000 automatic runs a day), not the production 240 s and 30.${posts}`;
+  }
+  const g = r.run_guards;
+  return `Run guards: ${g.run_min_interval_s} s minimum interval between automatic runs, ${g.auto_runs_max_per_day.toLocaleString("en-US")} automatic runs a day (${g.production_values ? "the production values" : "set wide, not the production 240 s and 30"}).${posts}${r.wall_time_s !== undefined ? ` Wall time ${Math.floor(r.wall_time_s / 60)} min ${Math.round(r.wall_time_s % 60)} s.` : ""}`;
 }
 
 export interface AskReport {
@@ -147,6 +165,8 @@ export function renderScenarioReport(r: ScenarioReport, file: string): string {
 export function renderFreshnessReport(r: FreshnessReport, file: string): string {
   const o = r.overall;
   const details: string[] = [];
+  const cadence = freshnessCadence(r);
+  if (cadence) details.push(cadence);
   if (r.components) {
     details.push(`p95 split: first receipt to run start ${fmtS(r.components.receive_to_run_start.p95_s)}, run start to commit ${fmtS(r.components.run_start_to_commit.p95_s)}.`);
   }
@@ -165,7 +185,7 @@ export function renderFreshnessReport(r: FreshnessReport, file: string): string 
   return [
     `#### Freshness, ${r.target}, ${r.profile} profile (${r.date})`,
     "",
-    `Command: \`${r.command}\`. Method: ${r.method}. Engine: ${r.engine}. Stand-ins: ${r.stand_ins}.${r.machine ? ` Machine: ${r.machine}.` : ""}${r.rate_events_per_s !== undefined ? ` Rate: ${r.rate_events_per_s} events per second.` : ""} Source: \`${file}\`.`,
+    `Command: \`${r.command}\`. Method: ${r.method}. Engine: ${r.engine}. Stand-ins: ${r.stand_ins}${r.target === "local" && !r.stand_ins.includes("Miniflare") ? "; and wrangler dev (Miniflare Workers, Durable Objects, R2, Queue and Workflows)" : ""}.${r.machine ? ` Machine: ${r.machine}.` : ""}${r.rate_events_per_s !== undefined ? ` Rate: ${r.rate_events_per_s} events per second.` : ""} Source: \`${file}\`.`,
     "",
     "| Events | Duration | Runs | p50 | p90 | p95 | p99 | max | Within 15 min | p95 excluding first 5 min |",
     "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",

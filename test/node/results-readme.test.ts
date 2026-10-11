@@ -132,6 +132,20 @@ describe("results renderer", () => {
     expect(findProseViolations(text)).toEqual([]);
   });
 
+  it("says how a local freshness run was paced, and that older results ran with wide guards", () => {
+    const old = renderResults([{ file: "evals/results/f.json", report: { ...freshness, delivery: { tick_seconds: 1 } } }]);
+    expect(old).toContain("Run guards: not recorded in this file; the run used wrangler.jsonc's local values of the time, set wide");
+    expect(old).toContain("Sources posted every 1 s (production: every 10 s).");
+    const paced = renderResults([
+      {
+        file: "evals/results/g.json",
+        report: { ...freshness, run_guards: { run_min_interval_s: 240, auto_runs_max_per_day: 30, production_values: true }, tick_seconds: 10, wall_time_s: 3725 },
+      },
+    ]);
+    expect(paced).toContain("Run guards: 240 s minimum interval between automatic runs, 30 automatic runs a day (the production values). Sources posted every 10 s (production: every 10 s). Wall time 62 min 5 s.");
+    expect(findProseViolations(paced)).toEqual([]);
+  });
+
   it("renders the production ledger coverage", () => {
     const text = renderResults([
       {

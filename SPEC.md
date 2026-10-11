@@ -18,6 +18,8 @@ Built a replayable workforce data platform that unified simulated HR, recruiting
 * Built retry-safe orchestration with Cloudflare Workflows, targeting 15-minute p95 data freshness and identical warehouse outputs across five duplicate-delivery, late-arrival, and recovery scenarios.
 ```
 
+**Not for use as written (fixer, 2026-10-11).** This block is the original text and stays here as the acceptance criteria. Two of its phrases are untrue under the Workers Free plan ("Basin Pipelines", twice; section 0.1 has the replacement), and several state production work that has not run yet (section 0.2 lists each phrase's evidence today and wording that is true now). Any copy of the resume, and any task text that still calls this wording current, must be changed outside this repository.
+
 Each phrase maps to code plus a test or eval (full map in section 15.6). Summary:
 
 | Claim | Where it becomes true | Proof |
@@ -42,7 +44,31 @@ Summary sentence:  "... performance data using Cloudflare Workers, R2, and Apach
 Bullet 1:          "... approximately 100,000 workforce events into BigQuery through Cloudflare Workers and an Apache Iceberg lake on R2."
 ```
 
-Every other phrase stays as written: Workflows, BigQuery, dbt, the 15-minute p95 target, the five scenarios and the 100,000 events all fit the Free plan budgets in section 29.5. Apache Iceberg names the table format of `peoplelake.raw_events` (pyiceberg locally, Basin Catalog on R2 in production) and is central to this project. Durable Objects and Queues, which the sibling projects' Worker configs on this machine also use, are left out of the wording to keep project stacks distinct.
+Every other phrase stays as written once the go-live has run: Workflows, BigQuery, dbt, the 15-minute p95 target, the five scenarios and the 100,000 events all fit the Free plan budgets in section 29.5. Until then section 0.2 applies. Apache Iceberg names the table format of `peoplelake.raw_events` (pyiceberg locally, Basin Catalog on R2 in production) and is central to this project. Durable Objects and Queues, which the sibling projects' Worker configs on this machine also use, are left out of the wording to keep project stacks distinct.
+
+### 0.2 Claim status until the go-live (fixer, 2026-10-11)
+Nothing has run against Cloudflare production or Google Cloud (the doctor's read-only checks aside), so phrases that describe production work are not yet true. Each phrase, its evidence today, and what makes it true:
+
+| Phrase | Evidence today | What is still needed |
+|---|---|---|
+| "using Cloudflare Workers, Basin Pipelines, and R2" (summary and bullet 1) | untrue: Basin Pipelines is Workers Paid only and is not used; the Worker, LandingRoller and R2 landing run on Miniflare (`wrangler dev`) in every local eval | the section 0.1 wording, and the production deploy |
+| "Integrated BigQuery and dbt", "into BigQuery" | dbt models, tests and evals verified on DuckDB; the BigQuery target compiles and parses offline (`peoplelake dev bq-compile`); billing is not yet enabled on the project | `npm run prod:e2e` with `prod verify` passing (100,000 unique events in `peoplelake_staging.stg_events`, digests equal to the local reference) |
+| incremental processing, historical employee records, consistent workforce reporting, five metrics, reconciliation for rehires and retroactive corrections | verified on DuckDB in CI (reference digests, R1 to R11 with tamper tests, the oracle on all 468 rows) | true now for DuckDB; BigQuery after `prod:e2e` |
+| "retry-safe orchestration with Cloudflare Workflows" | verified on Miniflare's Workflows (vitest Workflow tests, scenario S4 on both profiles) | production Workflows run during `prod:e2e` |
+| "targeting 15-minute p95 data freshness" | a target; measured on the local stand-ins only (README Results: one run with wide run guards and 1 s source ticks, one at the production cadence of 240 s and 10 s ticks) | the production p95 from the single `prod:e2e` delivery |
+| "identical warehouse outputs across five ... scenarios" | proven on DuckDB (all six legs, both profiles) | `eval scenarios --target prod-drill` on BigQuery, rendered into README Results, saying which engine each result came from |
+
+Wording that is true today (for any use before the go-live evidence is committed):
+
+```text
+Summary sentence:  "... performance data using Cloudflare Workers, R2, and Apache Iceberg. Built dbt models
+                    (verified on DuckDB, BigQuery target compiled) supporting incremental processing, ..."
+Bullet 1:          "... approximately 100,000 workforce events through Cloudflare Workers and an Apache Iceberg
+                    lake, verified end to end on a local Workers runtime, with a BigQuery target compiled offline."
+Bullet 3:          "Built retry-safe orchestration with Cloudflare Workflows (verified locally), targeting 15-minute
+                    p95 data freshness and identical warehouse outputs on DuckDB across five duplicate-delivery,
+                    late-arrival, and recovery scenarios."
+```
 
 ## 1. Goals and non-goals
 
@@ -216,6 +242,8 @@ Every process runs in UTC: `TZ=UTC` in npm scripts, `uv run` wrappers and CI `en
 
 ## 4. Exact file tree
 
+**Partly superseded (section 29; marked by the fixer):** the lake and infra entries flagged `[superseded]` below were removed by revision 3; the tree that exists is the repository itself (`src/worker/lake/` holds `landing-roller.ts`, `landing-keys.ts` and `lake-events.ts`; `infra/cloudflare/` is gone).
+
 ```text
 peoplelake/
   README.md                         # status, mermaid, local/prod setup, matrix, Results, "no front end" note unless the dashboard lands
@@ -250,9 +278,9 @@ peoplelake/
     golden/canonical-json.json      # payloads and their expected canonical bytes and sha256, asserted by vitest and pytest
   infra/
     cloudflare/
-      stream-schema.json            # Basin structured stream schema (section 6.2)
-      pipeline.sql                  # INSERT INTO peoplelake_raw_sink SELECT <explicit columns> FROM peoplelake_raw_stream;
-      r2-notification.md            # rule definition and rationale (optimization only)
+      stream-schema.json            # [superseded, deleted] Basin structured stream schema (section 6.2)
+      pipeline.sql                  # [superseded, deleted] INSERT INTO peoplelake_raw_sink SELECT ... FROM peoplelake_raw_stream;
+      r2-notification.md            # [superseded, deleted] rule definition and rationale (optimization only)
     gcp/
       README.md                     # what bootstrap-gcp creates
       cloudbuild.yaml               # docker build + push, options.logging CLOUD_LOGGING_ONLY
@@ -277,10 +305,10 @@ peoplelake/
       ingest/routes.ts              # POST /v1/ingest/:source
       ingest/normalize.ts           # per-source envelope -> RawRecord
       ingest/canonical-json.ts      # canonical JSON (integers only) + sha256
-      lake/sink.ts                  # LakeSink, BasinStreamSink, LocalRollingSink
-      lake/sink-roller.ts           # SinkRoller Durable Object (local stand-in)
+      lake/sink.ts                  # [superseded: landing-roller.ts, landing-keys.ts] LakeSink, BasinStreamSink, LocalRollingSink
+      lake/sink-roller.ts           # [superseded: LandingRoller in landing-roller.ts] SinkRoller Durable Object
       lake/lake-events.ts           # queue consumer for R2-notification-shaped messages
-      lake/catalog-poll.ts          # Iceberg REST loadTable against Basin Catalog (production trigger)
+      lake/catalog-poll.ts          # [superseded, deleted] Iceberg REST loadTable against Basin Catalog
       orchestration/coordinator.ts  # Coordinator Durable Object (SQLite)
       orchestration/coordinator-sql.ts
       orchestration/warehouse-run.ts# WarehouseRunWorkflow
@@ -1270,6 +1298,7 @@ Removed from setup: Basin Pipelines streams, sinks and pipelines (revision 2 ste
 doctor changes: no "Workers Paid" probe; FAIL if the deployed Worker (fixer: its settings and schedules through the Workers scripts API with wrangler's OAuth token, GETs only, not a local rendered file) has a `pipelines` binding, a CPU limit, Logpush, Durable Object classes other than the two, or any cron but `*/5 * * * *`; the Basin Catalog table exists and its newest `peoplelake.landing-through` cursor is reported; `GET /api/ops/budget` (this repo's Durable Object rows read and written today, automatic runs today, failure backoff state, neurons today, BigQuery bytes this month) is printed against the planning shares; Google checks cover the `peoplelake` names, that this repo's service accounts hold no project-level role other than `roles/bigquery.jobUser` and `roles/logging.logWriter`, no default expiration on `peoplelake_*` datasets, and bytes billed this month by the `peoplelake-*` service accounts (`region-us.INFORMATION_SCHEMA.JOBS_BY_PROJECT` as the owner, itself capped at 1 GB).
 
 ### 21.1 `npm run setup:prod` (`scripts/setup-prod.ts`, idempotent, `--dry-run` prints every command and API call with secrets redacted)
+**Superseded where section 21.0 differs (marked by the fixer):** steps 7 to 10 (stream, sink, pipeline, R2 notification) and the compaction half of step 5 do not exist on the Workers Free plan; `PL_R2_SINK_TOKEN` and the Worker secret `R2_CATALOG_TOKEN` are gone. The steps below are revision 2.
 Reads `.prod/config.env` and `.prod/secrets.env`, writes `.prod/state.json`. Each step is check-then-create. Secret values are passed on stdin or in temp files with mode 600, never in argv.
 1. Preflight: tool versions; `.prod` file modes; `wrangler whoami`; `gcloud` installed, logged in, ADC present with `quota_project_id` equal to `PL_GCP_PROJECT`; required keys present.
 2. workers.dev subdomain: `GET /accounts/{id}/workers/subdomain` with the token from `wrangler auth token --json`; if none, `PUT` with `PL_WORKERS_SUBDOMAIN`. wrangler does the same interactively, and its OAuth scope `workers_scripts:write` covers subdomains [V wrangler source].
@@ -1308,6 +1337,7 @@ Flags: `--only cloudflare` (2 to 14), `--only gcp` (15), `--only worker` (16). `
 10. Write `.prod/gcp.json`.
 
 ### 21.3 `npm run doctor` (`scripts/doctor.ts` plus `peoplelake prod doctor-gcp`)
+**Superseded where section 21.0 differs (marked by the fixer):** there is no Workers Paid probe and no stream, sink, pipeline, notification rule or catalog poll check; `/api/ops/ai` and `/api/ops/dispatch` check configuration only unless `--with-ai` or `--with-dispatch` is given; README "What the doctor checks" is current.
 Prints PASS, FAIL, MISSING or UNKNOWN per check, and for every non-pass the exact command or console step from section 20:
 - Local: node >= 22.18, npm, uv 0.12.x, Python 3.12, wrangler 4.149.0 from `node_modules`, `TZ=UTC` in scripts, ports 8791/9241/8150 free, `.dev.vars` and dev keys, llama-server binary and GGUF (optional).
 - Secrets on disk: `.prod/*` mode 600; names present; values never printed.
@@ -1405,7 +1435,7 @@ New risks (revision 3):
 29. **Workflows retention on Free is 3 days.** Instance history disappears after that; the Coordinator ledger and `reports/runs/<run_id>.json` keep the evidence.
 30. **Zero Trust seats and login.** One-time PIN is not added yet; every persona address takes one of the 50 Free seats shared by the account.
 31. **Rename blast radius.** `pl_` to `peoplelake_` touches dbt, the loader, digests, drills and tests; `test_bootstrap_plan.py` and a grep test for `pl_` dataset literals catch misses.
-32. **Stale local results.** The committed scenario and freshness results were produced by the revision 2 landing (500-event batches, per-record SinkRoller rows, 1-minute cron). Commit 9 of section 23.0 re-records them; until then README Results describe the earlier code.
+32. **Stale local results.** Resolved in `6ef6509` (commit 9 of section 23.0): every committed local result was re-recorded on the Free plan code. The first 60-minute freshness run used the wide local run guards; README Results says so, and a run at the production cadence is recorded separately.
 
 ## 25. Verification log (2026-10-10)
 | Fact | How |
