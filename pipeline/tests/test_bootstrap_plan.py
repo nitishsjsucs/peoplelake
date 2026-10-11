@@ -6,7 +6,7 @@ import subprocess
 from types import SimpleNamespace
 
 import pytest
-from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import NotFound, PermissionDenied
 
 from peoplelake.prod.bootstrap_gcp import (
     ALLOWED_PROJECT_ROLES,
@@ -71,11 +71,23 @@ class FakeBigQuery:
         )
 
 
+def service_disabled(api: str) -> PermissionDenied:
+    """What the real clients raise when the project has not enabled the API (403 SERVICE_DISABLED)."""
+    return PermissionDenied(
+        f"{api} has not been used in project peoplelake-123 before or it is disabled. reason: SERVICE_DISABLED"
+    )
+
+
 class FakePolicyTags:
+    """On an empty project the Data Catalog API is disabled (FakeRunner lists only BigQuery as enabled),
+    so every read raises as the real client does."""
+
     def __init__(self, exists: bool):
         self.exists = exists
 
     def list_taxonomies(self, parent):
+        if not self.exists:
+            raise service_disabled("Data Catalog API")
         return (
             [SimpleNamespace(display_name="peoplelake-sensitivity", name=f"{parent}/taxonomies/77")]
             if self.exists
@@ -83,6 +95,8 @@ class FakePolicyTags:
         )
 
     def list_policy_tags(self, parent):
+        if not self.exists:
+            raise service_disabled("Data Catalog API")
         return [
             SimpleNamespace(display_name=t, name=f"{parent}/policyTags/{t}") for t in ("compensation", "performance")
         ]
@@ -93,6 +107,8 @@ class FakeDataPolicies:
         self.exists = exists
 
     def list_data_policies(self, parent):
+        if not self.exists:
+            raise service_disabled("BigQuery Data Policy API")
         ids = ["peoplelake_mask_compensation", "peoplelake_mask_performance"] if self.exists else []
         return [SimpleNamespace(data_policy_id=i) for i in ids]
 
@@ -146,7 +162,16 @@ def test_plan_on_an_empty_project_creates_everything_without_mutating(tmp_path, 
     }
     assert ("cloud run job", "peoplelake-runner") in created
     assert any(s == "dispatcher key" for s, _ in created)
+    assert {t for s, t in created if s == "policy tags"} == {"compensation", "performance"}
     assert not any(a.kind == "fail" for a in actions)
+    # The runner can read every secret the job is deployed with, including the ones created in this run.
+    for secret in ("peoplelake-r2-catalog-token", "peoplelake-runner-client-id", "peoplelake-runner-client-secret"):
+        bindings = [m for m in gcloud.mutations if f"secrets add-iam-policy-binding {secret} " in m]
+        assert len(bindings) == 1, secret
+        assert "--member=serviceAccount:peoplelake-runner@peoplelake-123.iam.gserviceaccount.com" in bindings[0]
+        assert "--role=roles/secretmanager.secretAccessor" in bindings[0]
+    job = gcloud.mutations.index(next(m for m in gcloud.mutations if "run jobs deploy" in m))
+    assert max(i for i, m in enumerate(gcloud.mutations) if "secrets add-iam-policy-binding" in m) < job
     # Plan mode: only read-only gcloud commands ran.
     mutating = {"create", "deploy", "enable", "add-iam-policy-binding", "submit", "set-cleanup-policies", "add"}
     for argv in runner.calls:
@@ -160,6 +185,45 @@ def test_plan_on_an_empty_project_creates_everything_without_mutating(tmp_path, 
         assert kwargs["stdin"] is subprocess.DEVNULL
         assert kwargs["env"]["CLOUDSDK_CORE_SHOULD_PROMPT_TO_ENABLE_API"] == "false"
         assert kwargs["env"]["CLOUDSDK_CORE_DISABLE_PROMPTS"] == "1"
+
+
+def test_the_plan_never_reads_through_an_api_the_project_has_not_enabled(tmp_path, monkeypatch):
+    """The real project has 8 of the 11 APIs disabled: `--plan` must print the plan, not crash on a 403."""
+    boot, _, _ = bootstrap(tmp_path, monkeypatch, exists=False)
+
+    class Untouchable:
+        def __getattr__(self, name):
+            raise AssertionError(f"plan read a disabled API: {name}")
+
+    boot.clients.policy_tags = Untouchable()
+    actions = boot.run()
+    created = {(a.step, a.target) for a in actions if a.kind == "create"}
+    assert ("taxonomy", "peoplelake-sensitivity") in created
+    assert {("data policies", "peoplelake_mask_compensation"), ("data policies", "peoplelake_mask_performance")} <= (
+        created
+    )
+
+
+def test_the_plan_survives_an_api_reported_enabled_that_still_refuses(tmp_path, monkeypatch):
+    """`services list` can say enabled while the client still answers SERVICE_DISABLED (propagation)."""
+    boot, runner, _ = bootstrap(tmp_path, monkeypatch, exists=False)
+    original = runner.__call__
+
+    def all_enabled(argv, **kwargs):
+        if "services list" in " ".join(argv):
+            return subprocess.CompletedProcess(argv, 0, "\n".join(SERVICES), "")
+        return original(argv, **kwargs)
+
+    boot.g.runner = all_enabled
+    actions = boot.run()
+    assert ("taxonomy", "peoplelake-sensitivity") in {(a.step, a.target) for a in actions if a.kind == "create"}
+
+
+def test_outside_plan_mode_a_disabled_api_error_propagates(tmp_path, monkeypatch):
+    boot, _, _ = bootstrap(tmp_path, monkeypatch, exists=False)
+    boot.g.plan = False
+    with pytest.raises(PermissionDenied):
+        boot.client_read("datacatalog.googleapis.com", lambda: boot.clients.policy_tags.list_taxonomies("p"))
 
 
 def test_plan_on_a_complete_project_creates_nothing(tmp_path, monkeypatch):

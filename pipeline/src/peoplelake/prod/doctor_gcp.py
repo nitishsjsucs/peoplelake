@@ -40,6 +40,7 @@ from .bootstrap_gcp import (
     TAXONOMY,
     GcpConfig,
     all_datasets,
+    api_disabled,
     build_bucket,
     extra_project_roles,
     key_creation_blocked,
@@ -97,11 +98,6 @@ class ReadOnlyGcloud:
             stdin=subprocess.DEVNULL,
             env={**os.environ, **GCLOUD_ENV},
         )
-
-
-def api_disabled(exc: BaseException) -> bool:
-    text = str(exc)
-    return "SERVICE_DISABLED" in text or "has not been used in project" in text or "it is disabled" in text
 
 
 def month_bytes_billed(client) -> int:  # noqa: ANN001

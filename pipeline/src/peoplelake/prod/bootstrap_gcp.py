@@ -22,7 +22,7 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from ..envfile import read_env_file
 from ..paths import repo_root
@@ -76,6 +76,15 @@ PROJECT_ROLES = {
     "peoplelake-build": ("roles/logging.logWriter",),
 }
 ALLOWED_PROJECT_ROLES = frozenset({"roles/bigquery.jobUser", "roles/logging.logWriter"})
+
+
+T = TypeVar("T")
+
+
+def api_disabled(exc: BaseException) -> bool:
+    """A Google client error that means the API is not enabled on the project yet."""
+    text = str(exc)
+    return "SERVICE_DISABLED" in text or "has not been used in project" in text or "it is disabled" in text
 
 
 def build_bucket(project: str) -> str:
@@ -263,6 +272,22 @@ class Bootstrap:
         self.actions: list[Action] = []
         self.tags: dict[str, str] = {}
         self.taxonomy: str | None = None
+        # APIs enabled when bootstrap started (read by `services`). In plan mode nothing gets enabled, so a
+        # client read behind a still-disabled API is skipped and the step records what it would create.
+        self.enabled_apis: set[str] = set(SERVICES)
+
+    def client_read(self, api: str, read: Callable[[], T]) -> T | None:
+        """Run a Google client read; in plan mode None stands for "the API is not enabled yet", since a
+        project with the API disabled can hold none of its resources. Outside plan mode `services` has
+        enabled every API before this runs, so any error propagates."""
+        if self.g.plan and api not in self.enabled_apis:
+            return None
+        try:
+            return read()
+        except Exception as exc:
+            if self.g.plan and api_disabled(exc):
+                return None
+            raise
 
     def act(self, step: str, kind: str, target: str, detail: str = "") -> None:
         self.actions.append(Action(step, kind, target, detail))
@@ -331,6 +356,7 @@ class Bootstrap:
     # 2 ------------------------------------------------------------------------------------------------
     def services(self) -> None:
         enabled = set(self.g.read(["services", "list", "--enabled", "--format=value(config.name)"]).stdout.split())
+        self.enabled_apis = enabled
         missing = [s for s in SERVICES if s not in enabled]
         if missing:
             self.g.mutate(["services", "enable", *missing])
@@ -347,9 +373,15 @@ class Bootstrap:
         for name, hours in all_datasets():
             ref = f"{self.c.project}.{name}"
             labels = {**LABELS, "drill": "true" if name.endswith("_drill") else "false"}
-            try:
-                ds = bq.get_dataset(ref)
-            except NotFound:
+
+            def get(ref: str = ref) -> Any:
+                try:
+                    return bq.get_dataset(ref)
+                except NotFound:
+                    return None
+
+            ds = self.client_read("bigquery.googleapis.com", get)
+            if ds is None:
                 if not self.g.plan:
                     ds = bigquery.Dataset(ref)
                     ds.location = self.c.bq_location
@@ -394,7 +426,8 @@ class Bootstrap:
     def taxonomy_and_policies(self) -> None:
         parent = f"projects/{self.c.project}/locations/us"
         ptm = self.clients.policy_tags
-        found = next((t for t in ptm.list_taxonomies(parent=parent) if t.display_name == TAXONOMY), None)
+        taxonomies = self.client_read("datacatalog.googleapis.com", lambda: list(ptm.list_taxonomies(parent=parent)))
+        found = next((t for t in taxonomies or [] if t.display_name == TAXONOMY), None)
         if found is None:
             if self.g.plan:
                 self.act("taxonomy", "create", TAXONOMY, "FINE_GRAINED_ACCESS_CONTROL")
@@ -435,7 +468,10 @@ class Bootstrap:
                 self.tags[tag] = f"(new)/policyTags/({tag})"
                 self.act("policy tags", "create", tag)
         dps = self.clients.data_policies
-        have = {p.data_policy_id for p in dps.list_data_policies(parent=parent)}
+        listed = self.client_read(
+            "bigquerydatapolicy.googleapis.com", lambda: list(dps.list_data_policies(parent=parent))
+        )
+        have = {p.data_policy_id for p in listed or []}
         for policy_id, (tag, expression) in DATA_POLICIES.items():
             if policy_id in have:
                 self.act("data policies", "exists", policy_id)
@@ -513,9 +549,15 @@ class Bootstrap:
         ]
         for name, email, role in grants:
             ref = f"{self.c.project}.{name}"
-            try:
-                ds = bq.get_dataset(ref)
-            except NotFound:
+
+            def get(ref: str = ref) -> Any:
+                try:
+                    return bq.get_dataset(ref)
+                except NotFound:
+                    return None
+
+            ds = self.client_read("bigquery.googleapis.com", get)
+            if ds is None:
                 self.act("dataset access", "create", f"{role} {email} on {name}", "after the dataset exists")
                 continue
             if any(e.entity_id == email and e.role == role for e in ds.access_entries):
@@ -590,13 +632,15 @@ class Bootstrap:
                     ["secrets", "create", secret, "--replication-policy=automatic", "--data-file=-"], stdin=value
                 )
                 self.act("secrets", "create", secret)
-                continue
-            current = self.g.read(["secrets", "versions", "access", "latest", f"--secret={secret}"])
-            if current.returncode == 0 and current.stdout == value:
-                self.act("secrets", "exists", secret, "latest version current")
             else:
-                self.g.mutate(["secrets", "versions", "add", secret, "--data-file=-"], stdin=value)
-                self.act("secrets", "update", secret, "new version")
+                current = self.g.read(["secrets", "versions", "access", "latest", f"--secret={secret}"])
+                if current.returncode == 0 and current.stdout == value:
+                    self.act("secrets", "exists", secret, "latest version current")
+                else:
+                    self.g.mutate(["secrets", "versions", "add", secret, "--data-file=-"], stdin=value)
+                    self.act("secrets", "update", secret, "new version")
+            # Every secret, new or existing: the runner job is deployed with --set-secrets for all three, so a
+            # secret created in this run needs the binding before the job deploy (idempotent).
             self.g.mutate(
                 [
                     "secrets",
