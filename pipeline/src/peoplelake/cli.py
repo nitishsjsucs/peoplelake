@@ -432,16 +432,24 @@ def _cmd_eval_freshness(args: argparse.Namespace) -> int:
     rate = None if args.rate == "auto" else float(args.rate)
     try:
         report = run_freshness(
-            args.profile, minutes, workdir=data_dir() / "eval", rate=rate, tick_seconds=args.tick_seconds
+            args.profile,
+            minutes,
+            workdir=data_dir() / "eval",
+            rate=rate,
+            tick_seconds=args.tick_seconds,
+            run_min_interval_seconds=args.run_min_interval,
+            auto_runs_max_per_day=args.auto_runs_max_per_day,
         )
     except EvalError as exc:
         print(f"eval freshness: {exc}", file=sys.stderr)
         return 1
     date = datetime.now(UTC).strftime("%Y-%m-%d")
+    # A run at the production cadence is named apart from one with the wide local guards.
+    cadence = "-prod-guards" if report["run_guards"]["production_values"] else ""
     out = (
         Path(args.out)
         if args.out
-        else repo_root() / "evals" / "results" / f"freshness-local-{args.profile}-{date}.json"
+        else repo_root() / "evals" / "results" / f"freshness-local-{args.profile}{cadence}-{date}.json"
     )
     write(report, out, "peoplelake eval freshness " + " ".join(sys.argv[3:]))
     print(json.dumps({"p95_s": report["overall"]["p95_s"], "events": report["overall"]["events"], "out": str(out)}))
@@ -742,6 +750,16 @@ def build_parser() -> argparse.ArgumentParser:
     fr.add_argument("--rate", default="auto", help="events per second, or auto = events / duration")
     fr.add_argument(
         "--tick-seconds", type=float, default=1.0, help="local live delivery: post every N seconds (default 1)"
+    )
+    fr.add_argument(
+        "--run-min-interval",
+        type=int,
+        help="local: RUN_MIN_INTERVAL_SECONDS for wrangler dev (default: wrangler.jsonc's local 0; production 240)",
+    )
+    fr.add_argument(
+        "--auto-runs-max-per-day",
+        type=int,
+        help="local: AUTO_RUNS_MAX_PER_DAY for wrangler dev (default: wrangler.jsonc's local 100000; production 30)",
     )
     fr.add_argument("--from-delivery", help="production: the prod:e2e delivery id (default: the latest)")
     fr.add_argument("--out")

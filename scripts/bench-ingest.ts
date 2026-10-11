@@ -7,8 +7,11 @@
 // zod in jitless mode as in workerd, timing each request with process.cpuUsage(). Warm numbers come from `--iterations`
 // requests per size and source in one process after 30 unmeasured warm-up requests; "first request"
 // numbers come from `--fresh` new processes per size and source, without and with the module-scope
-// prewarm the Worker runs at startup (src/worker/ingest/prewarm-core.ts). It reports and never gates CI: Node on this machine is not
-// workerd on Cloudflare's CPUs.
+// prewarm the Worker runs at startup (src/worker/ingest/prewarm-core.ts). It also times the other paths
+// bound by 10 ms of CPU (`OTHER_PATHS`: the per-request config parse, a full 200-run page, the metrics
+// artifact hash at its cap, the dispatch assertion). It does not time Hono routing, the Access JWT
+// verification or the Durable Object RPC (they need workerd). It reports and never gates CI: Node on this
+// machine is not workerd on Cloudflare's CPUs.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { arch, cpus, loadavg, platform } from "node:os";
@@ -88,6 +91,100 @@ async function request(source: Source, text: string, size: number): Promise<{ ms
   for (const r of records) RawRecord.parse(r);
   const ndjson = toNdjson(records);
   return { ms: cpuMs(t0), bytes: Buffer.byteLength(ndjson) };
+}
+
+// -- Other paths bound by the 10 ms limit (a request or a Workflow step) --------------------------------
+
+/** Each returns the operation to time, prepared outside the measurement. */
+const OTHER_PATHS: Record<string, { detail: string; prepare: () => Promise<() => unknown> }> = {
+  "per-request config": {
+    detail: "parseConfig on a production-shaped env (role map of 7 people and 5 tokens) after the startup prewarm, on every request",
+    prepare: async () => {
+      const { parseConfig, prewarmConfig } = await import("../src/worker/config.ts");
+      prewarmConfig();
+      const emails = Object.fromEntries(Array.from({ length: 7 }, (_, i) => [`person${i}@example.com`, ["viewer"]]));
+      const tokens = Object.fromEntries(["source:hris", "source:ats", "source:talent", "runner", "operator"].map((r, i) => [`token${i}.access`, r]));
+      const env = {
+        ENVIRONMENT: "production",
+        AUTH_MODE: "access",
+        LAKE_MODE: "basin",
+        RUNNER_DISPATCH: "cloudrun",
+        RUNS_ENABLED: "true",
+        ACCESS_TEAM_DOMAIN: "https://example.cloudflareaccess.com",
+        ACCESS_AUD: "0123abcd",
+        ACCESS_ROLE_MAP: JSON.stringify({ emails, service_tokens: tokens }),
+        EVAL_FAULTS_ENABLED: "false",
+        GCP_PROJECT: "example-project",
+        GCP_DISPATCHER_KEY: "{}",
+      };
+      return () => parseConfig(env, "peoplelake.example.workers.dev");
+    },
+  },
+  "GET /api/runs?format=full&limit=200": {
+    detail: "the full format of 200 run rows (digests, checks, options parsed) serialized as the response body",
+    prepare: async () => {
+      const { full, MAX_RUNS_PER_PAGE } = await import("../src/worker/api/run-format.ts");
+      const digests = JSON.stringify(Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`model_${i}`, "a".repeat(64)])));
+      const checks = JSON.stringify({ error: Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`recon_error_${i}`, 0])), warn: Object.fromEntries(Array.from({ length: 4 }, (_, i) => [`recon_warn_${i}`, 0])) });
+      const rows = Array.from({ length: MAX_RUNS_PER_PAGE }, (_, i) => ({
+        run_id: `r-mgk3x2-${String(i + 1).padStart(6, "0")}`, seq: i + 1, load_seq: 1_790_000_000_000 + i, mode: "incremental", reason: "lake-event", status: "committed",
+        requested_at: 1_790_000_000_000 + i, started_at: 1_790_000_000_000 + i, finished_at: 1_790_000_100_000 + i, published_at: 1_790_000_100_000 + i,
+        from_snapshot: "8443817436452096001", to_snapshot: "8443817436452096002", rows_inserted: 1700, duplicates_skipped: 0, transform_skipped: 0, transform_skip_reason: null,
+        load_attempts: 1, transform_attempts: 1, digests_json: digests, checks_json: checks, metrics_key: `reports/metrics/r-${i}.json`, error: null,
+        options_json: null, landing_through: `landing/raw_events/g1/r${String(i).padStart(10, "0")}.ndjson`, steps_used: 8,
+      })) as unknown as Parameters<typeof full>[0][];
+      return () => JSON.stringify({ runs: rows.map(full), max_per_page: MAX_RUNS_PER_PAGE });
+    },
+  },
+  "PUT metrics artifact at the cap": {
+    detail: "SHA-256 of an artifact at MAX_ARTIFACT_BYTES (the PUT checks it; the Workflow's verify step hashes it again)",
+    prepare: async () => {
+      const { sha256Hex } = await import("../src/worker/ingest/canonical-json.ts");
+      const { MAX_ARTIFACT_BYTES } = await import("../src/shared/free-budget.ts");
+      const text = "x".repeat(MAX_ARTIFACT_BYTES);
+      return () => sha256Hex(text);
+    },
+  },
+  "dispatch assertion (RS256)": {
+    detail: "signAssertion: import the dispatcher's PKCS8 key and sign the JWT bearer assertion (the dispatch step, once a token expires)",
+    prepare: async () => {
+      const { generateKeyPair, exportPKCS8 } = await import("jose");
+      const { signAssertion } = await import("../src/worker/orchestration/gcp-token.ts");
+      const { privateKey } = await generateKeyPair("RS256", { extractable: true });
+      const key = { client_email: "peoplelake-dispatcher@p.iam.gserviceaccount.com", private_key: await exportPKCS8(privateKey), private_key_id: "k1" };
+      return () => signAssertion(key, Math.floor(Date.now() / 1000));
+    },
+  },
+};
+
+async function timeOnce(op: () => unknown): Promise<number> {
+  const t0 = process.cpuUsage();
+  await op();
+  return cpuMs(t0);
+}
+
+async function otherChild(name: string): Promise<void> {
+  crypto.randomUUID();
+  const op = await (OTHER_PATHS[name] ?? { prepare: async () => () => undefined }).prepare();
+  process.stdout.write(`${JSON.stringify({ ms: await timeOnce(op) })}\n`);
+}
+
+async function otherPaths(root: string, iterations: number, freshRuns: number) {
+  const out = [];
+  for (const [name, probe] of Object.entries(OTHER_PATHS)) {
+    const op = await probe.prepare();
+    for (let i = 0; i < WARMUP; i++) await op();
+    const ms: number[] = [];
+    for (let i = 0; i < iterations; i++) ms.push(await timeOnce(op));
+    const first = Array.from({ length: freshRuns }, () => {
+      const res = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--other", name], { cwd: root, encoding: "utf8", env: { ...process.env, TZ: "UTC" } });
+      if (res.status !== 0) throw new Error(`child failed: ${res.stderr}`);
+      return (JSON.parse(res.stdout.trim().split("\n").pop() ?? "{}") as { ms: number }).ms;
+    });
+    out.push({ path: name, detail: probe.detail, warm_p50_ms: round(percentile(ms, 50)), warm_p99_ms: round(percentile(ms, 99)), first_call_fresh_ms: range(first) });
+    console.error(`bench-ingest: ${name}: warm p99 ${round(percentile(ms, 99))} ms`);
+  }
+  return out;
 }
 
 async function child(): Promise<void> {
@@ -188,6 +285,7 @@ async function main(): Promise<void> {
     free_cpu_limit_ms: FREE_CPU_MS_PER_REQUEST,
     batch_limit: (await import("../src/shared/contracts.ts")).MAX_BATCH_EVENTS,
     sizes: rows,
+    other_paths: await otherPaths(root, iterations, freshRuns),
   };
   const out = arg("--out") ?? join(root, "evals", "results", `ingest-cpu-${date}.json`);
   mkdirSync(join(out, ".."), { recursive: true });
@@ -196,7 +294,7 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  (process.argv.includes("--child") ? child() : main()).catch((err: unknown) => {
+  (process.argv.includes("--other") ? otherChild(arg("--other") ?? "") : process.argv.includes("--child") ? child() : main()).catch((err: unknown) => {
     console.error(`bench-ingest: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   });

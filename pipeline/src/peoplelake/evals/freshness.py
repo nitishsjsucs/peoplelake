@@ -75,11 +75,23 @@ def run_freshness(
     rate: float | None = None,
     tick_seconds: float = LOCAL_TICK_SECONDS,
     quiesce_timeout: float = 1800.0,
+    run_min_interval_seconds: int | None = None,
+    auto_runs_max_per_day: int | None = None,
 ) -> dict:
+    """Without the guard options the local stack runs with wrangler.jsonc's local guards, set wide
+    (no minimum interval, 100,000 automatic runs a day); `--run-min-interval 240 --auto-runs-max-per-day 30`
+    with `--tick-seconds 10` gives the production cadence on the local stand-ins."""
     ds = generate(get_profile(profile))
     items = canonical_order(envelopes_from_dataset(ds))
     rate = rate or len(items) / (duration_minutes * 60)
-    stack = LocalStack(mode="live", profile=profile, state_dir=workdir / "freshness")
+    guards = run_guards(run_min_interval_seconds, auto_runs_max_per_day)
+    wall_start = time.monotonic()
+    stack = LocalStack(
+        mode="live",
+        profile=profile,
+        state_dir=workdir / "freshness",
+        extra_vars={k: str(v) for k, v in guards["vars"].items()},
+    )
     stack.reset_state()
     started_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     stack.up()
@@ -154,7 +166,14 @@ def run_freshness(
         "engine": "duckdb",
         "profile": profile,
         "method": "ledger histograms of first receipt (10 s buckets) against the publishing run's commit time",
-        "stand_ins": "pyiceberg SqlCatalog, local runner process, ticker for cron (the LandingRoller landing with 60 s rolls is the production code)",
+        "stand_ins": (
+            "wrangler dev (Miniflare Workers, Durable Objects, R2, Queue and Workflows), pyiceberg SqlCatalog, local "
+            "runner process polling every 0.5 s (production: a Cloud Run execution per dispatch), ticker for cron, "
+            "DuckDB; the LandingRoller landing with 60 s rolls is the production code"
+        ),
+        "run_guards": guards["recorded"],
+        "tick_seconds": tick_seconds,
+        "wall_time_s": round(time.monotonic() - wall_start, 1),
         "machine": f"{platform.system()} {platform.machine()}",
         "started_at": started_at,
         "events": len(items),
@@ -183,6 +202,26 @@ def run_freshness(
         },
         "ports_busy_after_stack_down": busy,
         "target_15_minutes_p95_met": (summarize(values)["p95_s"] or 0) <= 900,
+    }
+
+
+def run_guards(run_min_interval_seconds: int | None, auto_runs_max_per_day: int | None) -> dict:
+    """The Coordinator's automatic-run guards for a local freshness run: `vars` passed to wrangler dev,
+    `recorded` in the result (wrangler.jsonc's local values when not overridden)."""
+    vars_: dict[str, int] = {}
+    if run_min_interval_seconds is not None:
+        vars_["RUN_MIN_INTERVAL_SECONDS"] = run_min_interval_seconds
+    if auto_runs_max_per_day is not None:
+        vars_["AUTO_RUNS_MAX_PER_DAY"] = auto_runs_max_per_day
+    local = {"RUN_MIN_INTERVAL_SECONDS": 0, "AUTO_RUNS_MAX_PER_DAY": 100_000}
+    merged = {**local, **vars_}
+    return {
+        "vars": vars_,
+        "recorded": {
+            "run_min_interval_s": merged["RUN_MIN_INTERVAL_SECONDS"],
+            "auto_runs_max_per_day": merged["AUTO_RUNS_MAX_PER_DAY"],
+            "production_values": merged == {"RUN_MIN_INTERVAL_SECONDS": 240, "AUTO_RUNS_MAX_PER_DAY": 30},
+        },
     }
 
 

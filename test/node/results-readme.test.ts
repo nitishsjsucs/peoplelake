@@ -88,6 +88,14 @@ describe("results renderer", () => {
     expect(text).toContain("| 50 (the limit) | 0.75 to 0.81 | 2.8 to 3.7 | 7.8 to 12.2 | 2.8 to 3.3 | 30 to 34 KB |");
     expect(text).toContain("allows 10 ms of CPU per request");
     expect(findProseViolations(text)).toEqual([]);
+    const other = renderResults([
+      {
+        file: "evals/results/ingest-cpu-2026-10-11.json",
+        report: { ...ingest, other_paths: [{ path: "dispatch assertion (RS256)", detail: "signAssertion", warm_p99_ms: 0.81, first_call_fresh_ms: [2.05, 2.51] }] },
+      },
+    ]);
+    expect(other).toContain("Other paths bound by the 10 ms limit");
+    expect(other).toContain("| dispatch assertion (RS256) | signAssertion | 0.81 | 2.05 to 2.51 |");
   });
 
   it("renders every report with its command and date, and no dashes in prose", () => {

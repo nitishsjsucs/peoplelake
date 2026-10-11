@@ -1,5 +1,6 @@
 import { env, reset } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { MAX_ARTIFACT_BYTES } from "../../src/shared/free-budget.ts";
 import { coordinatorStub } from "../../src/worker/orchestration/coordinator.ts";
 import { loadOk } from "../helpers/runner.ts";
 import { call } from "../helpers/tokens.ts";
@@ -147,6 +148,11 @@ describe("runner interface", () => {
     const ok = await put(sha);
     expect(await ok.json()).toEqual({ key: `reports/metrics/${run_id}.json`, sha256: sha, bytes: body.length });
     expect(await (await env.REPORTS_BUCKET.get(`reports/metrics/${run_id}.json`))?.text()).toBe(body);
+    // The cap is about twice the full-profile snapshot (124 KB), so hashing stays far inside 10 ms of CPU.
+    const big = "x".repeat(MAX_ARTIFACT_BYTES + 1);
+    const tooBig = await call(`/internal/runs/${run_id}/artifacts/metrics?sha256=${"0".repeat(64)}`, "runner", { method: "PUT", body: big });
+    expect(tooBig.status).toBe(413);
+    expect(MAX_ARTIFACT_BYTES).toBe(256 * 1024);
   });
 });
 

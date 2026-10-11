@@ -8,7 +8,9 @@ import atsFixture from "../../../contracts/fixtures/source-ats.valid.json";
 import hrisFixture from "../../../contracts/fixtures/source-hris.valid.json";
 import rawRecordFixture from "../../../contracts/fixtures/raw-record.valid.json";
 import talentFixture from "../../../contracts/fixtures/source-talent.valid.json";
+import { prewarmConfig } from "../config.ts";
 import { type PrewarmReport, prewarmSchemas } from "./prewarm-core.ts";
 
 /** Runs once when the module is first imported (isolate startup), before any request is handled. */
+prewarmConfig(); // the role map parser parseConfig uses on every request
 export const PREWARMED: PrewarmReport = prewarmSchemas({ hris: hrisFixture, ats: atsFixture, talent: talentFixture, rawRecord: rawRecordFixture });

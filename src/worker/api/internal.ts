@@ -1,6 +1,7 @@
 // Runner interface (SPEC 7.3, 29.4.1): claim, heartbeat, result, metrics artifact, and the landing roll
 // files the runner's committer appends to the Iceberg table. Mounted in every environment.
 import { LoadResult, TransformResult } from "../../shared/contracts.ts";
+import { MAX_ARTIFACT_BYTES } from "../../shared/free-budget.ts";
 import type { App } from "../app.ts";
 import { requireRole } from "../app.ts";
 import { sha256Hex } from "../ingest/canonical-json.ts";
@@ -8,7 +9,6 @@ import { LANDING_PREFIX } from "../lake/landing-keys.ts";
 import { coordinatorStub } from "../orchestration/coordinator.ts";
 import { metricsKey } from "../reports.ts";
 
-const MAX_ARTIFACT_BYTES = 5 * 1024 * 1024;
 const LAKE_FILES = "/internal/lake/files";
 const MAX_FILES_PER_LIST = 1000;
 

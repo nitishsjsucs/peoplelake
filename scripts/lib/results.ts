@@ -114,6 +114,8 @@ export interface IngestCpuReport {
     first_request_after_prewarm_ms: [number, number];
     ndjson_bytes: [number, number];
   }[];
+  /** Other paths bound by 10 ms of CPU (a request or a Workflow step), when the result has them. */
+  other_paths?: { path: string; detail: string; warm_p99_ms: number; first_call_fresh_ms: [number, number] }[];
 }
 
 export type Report = ScenarioReport | FreshnessReport | AskReport | ParityReport | IngestCpuReport;
@@ -216,6 +218,16 @@ export function renderIngestCpuReport(r: IngestCpuReport, file: string): string 
     "| Events per request | Warm p50 (ms) | Warm p99 (ms) | First request, fresh process (ms) | First request after prewarm (ms) | NDJSON per request |",
     "|---:|---|---|---|---|---|",
     ...rows,
+    ...(r.other_paths?.length
+      ? [
+          "",
+          "Other paths bound by the 10 ms limit (same method; Hono routing, Access JWT verification and Durable Object calls are not timed here):",
+          "",
+          "| Path | What is timed | Warm p99 (ms) | First call, fresh process (ms) |",
+          "|---|---|---:|---|",
+          ...r.other_paths.map((o) => `| ${o.path} | ${o.detail} | ${o.warm_p99_ms} | ${span(o.first_call_fresh_ms)} |`),
+        ]
+      : []),
   ].join("\n");
 }
 

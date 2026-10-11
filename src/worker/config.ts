@@ -27,6 +27,12 @@ const RoleMapSchema = z
   .strict();
 export type RoleMap = z.infer<typeof RoleMapSchema>;
 
+/** zod builds the role map parser on first use; parseConfig runs on every request, so the Worker entry
+ * builds it at isolate startup (with the ingest prewarm) instead of in the first request's 10 ms. */
+export function prewarmConfig(): void {
+  RoleMapSchema.parse({ emails: { "prewarm@peoplelake.local": ["viewer"] }, service_tokens: { "prewarm.access": "runner" } });
+}
+
 export interface AppConfig {
   readonly environment: "local" | "production";
   readonly authMode: "dev" | "access";

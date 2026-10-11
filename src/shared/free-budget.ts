@@ -141,6 +141,9 @@ export const ALLOWANCES = {
 /** Per-invocation limits on the Workers Free plan (not shared): CPU per request or step, subrequests. */
 export const FREE_CPU_MS = 10;
 export const FREE_EXTERNAL_SUBREQUESTS = 50;
+/** The metrics artifact PUT's size limit: about twice the full-profile snapshot (124 KB, 468 rows), since
+ * the PUT and the Workflow's verify step hash it within 10 ms of CPU (npm run bench:ingest times it). */
+export const MAX_ARTIFACT_BYTES = 256 * 1024;
 
 // -- Peak-day estimators (SPEC 29.5) ------------------------------------------------------------------
 
