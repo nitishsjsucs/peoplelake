@@ -24,7 +24,7 @@ v1 is built and verified end to end on the local stack (every item of the build 
 | CI | `ci.yml` runs on GitHub on every push of `main` and has passed every run so far, the small-profile scenario matrix included; `eval-full.yml` (weekly and on demand) has not run yet |
 | Workers AI and `/api/ask` | done: `AiProvider` with a deterministic stub (CI), llama-server (local) and Workers AI through AI Gateway (production, mocked in tests), `POST /api/ask` answering only from the committed metrics snapshot, `/api/ops/ai` gateway check; the 60-question ask eval (`peoplelake eval ask`) scores each provider through the Worker: stub and llama-server results recorded (see Results), Workers AI runs after the production setup |
 | Workers Free plan budget | done: `npm run budget` computes every peak-day estimate from the repo's constants and production config against the Free allowances and this repo's planning shares (table below), `--check` runs in CI, `predeploy-check` and the doctor refuse anything that needs Workers Paid |
-| Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | built for the Workers Free plan and tested offline (dry run against fake runners, fake Google clients, rendered config bundles with `wrangler deploy --dry-run`); not run against real accounts yet, see Production setup |
+| Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | built for the Workers Free plan and tested offline (dry run against fake runners, fake Google clients, rendered config bundles with `wrangler deploy --dry-run`); the read-only doctor ran against the owner's real Cloudflare and Google Cloud logins on 2026-10-11 and lists what is still missing (see Where the accounts stand); setup itself has not run |
 | MetricFlow semantic layer | done on DuckDB: semantic models over the three facts the mart reads, the five metrics (plus the two offer components), and a parity check that MetricFlow's answers equal `metrics_workforce_monthly` on all 468 rows (both profiles, see Results); the definitions parse for BigQuery too, but no MetricFlow service runs in production |
 | Dashboard | done: React 19 + Vite 8 in `web/`, built to `web/dist` and served by the Worker as static assets (Overview, Runs with jobs and attempts, Metrics with a 36-month SVG trend and the 468-row table, Checks); reads only `/api/*`; behind Cloudflare Access in production |
 
@@ -330,7 +330,7 @@ Production runs on the Cloudflare Workers **Free** plan (Workers, Durable Object
 
 ### Steps only a person can do (in order)
 
-Done already: the account stays on the Workers Free plan; R2 is activated with a card; `npx wrangler login` (OAuth) is done and the workers.dev subdomain is registered (Workflows need one); the Zero Trust organization exists on the Free plan; gcloud and bq are installed and logged in with application default credentials; the Google Cloud project has no parent organization, so the dispatcher key can be created.
+Done already (on 2026-10-11 the doctor confirmed the login, the subdomain, R2, the team domain, the gcloud login and the quota project; see Where the accounts stand): the account stays on the Workers Free plan; R2 is activated with a card; `npx wrangler login` (OAuth) is done and the workers.dev subdomain is registered (Workflows need one); the Zero Trust organization exists on the Free plan; gcloud and bq are installed and logged in with application default credentials, whose quota project is already the shared project; the Google Cloud project has no parent organization, so the dispatcher key can be created.
 
 Cloudflare:
 1. Zero Trust, Integrations, Identity providers, Add new identity provider, **One-time PIN** (new organizations do not get it automatically). The owner and the persona addresses sign in with it; each person who signs in takes one of the 50 Free seats.
@@ -341,7 +341,7 @@ Google Cloud:
 
 4. Enable billing on the project by linking an open billing account (console, Billing, Account management, or `gcloud billing projects link <project> --billing-account=<OPEN_ACCOUNT_ID>`). Bootstrap refuses to run until this is true.
 5. (Recommended) A budget with e-mail alerts on that billing account, for example $5 with 50, 90 and 100% thresholds, because four repos share the free tiers.
-6. `gcloud auth application-default set-quota-project <project>` (Data Catalog and BigQuery Data Policy calls through application default credentials need a quota project); `npm run doctor` checks it.
+6. `gcloud auth application-default set-quota-project <project>` (Data Catalog and BigQuery Data Policy calls through application default credentials need a quota project); `npm run doctor` checks it (it found this already set on 2026-10-11).
 
 Local files (gitignored; setup keeps them mode 600 and refuses to continue if it cannot):
 
@@ -390,6 +390,16 @@ Then (the owner's operator):
 | Google Cloud (`peoplelake prod doctor-gcp`) | gcloud login, the project, the ADC quota project, billing, the 11 APIs, the key creation policy, the four service accounts and that they hold no project-level role beyond the two allowed, the build bucket, the 12 datasets (time travel, no default expiration), policy tags and data masking, the three secrets, the Artifact Registry repository, the Cloud Run job and its last execution, bytes billed this month against the 275 GB guard, and the go-live evidence (reported, not failed, before go-live) |
 
 It ends with a summary that lists every check not passing under its fix, in the order of the steps above. It exits 1 on any FAIL, MISSING or UNKNOWN; WARN and INFO do not fail it.
+
+### Where the accounts stand
+
+`npm run doctor` on 2026-10-11 at 10:17 UTC (code of commit `7bf5054`), read only, against the owner's logins with no `.prod` files yet: 55 checks, 22 pass, 1 fail, 22 missing, 2 unknown, 1 warning, 7 informational; exit 1.
+
+- Passing: the local toolchain and ports, the Workers Free plan rules and budget, the wrangler OAuth login (one account), the workers.dev subdomain, R2 (bucket listing works), gcloud and its login, the application default credentials' quota project (equal to the shared project), the project itself, no organization policy on service account keys, and no project-level role held by a `peoplelake-*` account. With the team domain given in the environment (`PL_ACCESS_TEAM_DOMAIN`), the Zero Trust team domain publishes its signing keys.
+- Failing, for a person: billing is still disabled on the Google Cloud project (step 4).
+- Missing, for a person: `.prod/config.env` and `.prod/secrets.env` (step 7) with the R2 token (step 2) and the setup token (step 3). The One-time PIN login method (step 1) cannot be confirmed until the setup token exists.
+- Missing, for `npm run setup:prod` once those are done: both R2 buckets, Basin Catalog, the Iceberg table, both queues, the service tokens, AI Gateway, the Access application and the Worker on Cloudflare; on Google Cloud 8 of the 11 APIs (BigQuery, BigQuery Storage and BigQuery Data Policy are already on), the four service accounts, the build bucket, the 12 datasets, policy tags and data masking, the three secrets, the Artifact Registry repository and the Cloud Run job.
+- Reported only: the go-live evidence (`prod:e2e` freshness and the BigQuery drill) comes with step 10.
 
 ### What `setup:prod` does for you
 
