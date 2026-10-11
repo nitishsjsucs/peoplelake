@@ -154,14 +154,18 @@ class GcpConfig:
         project = config.get("PL_GCP_PROJECT", "")
         if not project:
             raise SystemExit("PL_GCP_PROJECT is missing from .prod/config.env")
+        # state.json is written by `npm run setup:prod` (scripts/lib/prod-state.ts): the account's real
+        # subdomain and the Basin Catalog URI and warehouse it read from wrangler. config.env overrides
+        # only the catalog values (setup does the same when wrangler's output cannot be parsed).
+        catalog = state.get("catalog") or {}
         return cls(
             project=project,
             region=config.get("PL_GCP_REGION", "us-central1"),
             bq_location=config.get("PL_BQ_LOCATION", "US"),
             owner_email=config.get("PL_OWNER_EMAIL", ""),
-            workers_subdomain=config.get("PL_WORKERS_SUBDOMAIN", state.get("workers_subdomain", "")),
-            catalog_uri=state.get("catalog_uri", config.get("PL_R2_CATALOG_URI", "")),
-            warehouse=state.get("warehouse", config.get("PL_R2_WAREHOUSE", "")),
+            workers_subdomain=state.get("workers_subdomain") or config.get("PL_WORKERS_SUBDOMAIN", ""),
+            catalog_uri=config.get("PL_R2_CATALOG_URI") or catalog.get("uri", ""),
+            warehouse=config.get("PL_R2_WAREHOUSE") or catalog.get("warehouse", ""),
             secrets=secrets,
         )
 
@@ -260,12 +264,29 @@ class Bootstrap:
             f"billingEnabled={billing or 'unknown'}"
             + ("" if billing.lower() == "true" else "; link an open billing account (README production setup) first"),
         )
-        adc = (
-            Path(os.environ.get("CLOUDSDK_CONFIG", Path.home() / ".config" / "gcloud"))
-            / "application_default_credentials.json"
-        )
-        quota = json.loads(adc.read_text()).get("quota_project_id") if adc.exists() else None
+        from . import adc
+
+        _, quota = adc.adc_quota_project()
         self.act("preflight", "check" if quota == p else "fail", "ADC quota project", f"quota_project_id={quota}")
+        # The Cloud Run job's environment needs what the Cloudflare part of setup recorded in state.json;
+        # a job deployed without them could never reach the Worker or Basin Catalog.
+        unknown = [
+            name
+            for name, value in (
+                ("workers.dev subdomain", self.c.workers_subdomain),
+                ("Basin Catalog URI", self.c.catalog_uri),
+                ("Basin Catalog warehouse", self.c.warehouse),
+            )
+            if not value
+        ]
+        self.act(
+            "preflight",
+            "fail" if unknown else "check",
+            "runner job settings",
+            f"unknown: {', '.join(unknown)}; run npm run setup:prod -- --only cloudflare first (it writes .prod/state.json)"
+            if unknown
+            else "subdomain and Basin Catalog recorded",
+        )
         parent = self.g.read(["projects", "describe", p, "--format=value(parent.type)"]).stdout.strip()
         if parent == "organization":
             policy = self.g.read(

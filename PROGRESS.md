@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Builder 3 is migrating production to the Cloudflare Workers Free plan (SPEC section 29, ADR 0009) with the nine commits of SPEC 23.0. Done: commits 1 (LandingRoller landing in both environments, Basin Pipelines removed), 2 (the runner commits landing rolls with a snapshot-summary cursor) 3 (50-event batches, schema prewarm, 10 s production ticks, ingest CPU benchmark) 4 (Free plan guards in the Coordinator) 5 (Workers AI `max_tokens`, the daily neuron cap and a resumable ask eval) 6 (`peoplelake` names, scoped grants, the build identity and 1 GB query caps in the shared Google Cloud project) 7 (setup and doctor for the Workers Free plan, `npm run budget`) 8 (README, ADR 0003 and runbooks for the Free plan design) and 9 (every local result re-recorded on the Free plan design, CI scenario timeouts re-measured). The migration's nine commits are done, and `eval-full.yml` now has the optional freshness job SPEC 17 describes. Next: the owner's go-live (SPEC 20.2 and 20.5). Everything before builder 3 (the 18 core commits and the four below the cut) is done and verified on the local stack only; production go-live waits for the migration and the owner's accounts.
+Builder 4 is finishing the production setup and doctor for the Workers Free plan. Builder 3's Free plan migration (the nine commits of SPEC 23.0 plus the `eval-full` freshness job) is done and every local result was re-recorded on it. Builder 4 so far: commit 1 (bootstrap read the Basin Catalog URI and warehouse from keys `.prod/state.json` never has, so the Cloud Run job would have been deployed without them; fixed, and the ADC quota project is read through google-auth instead of opening the credential file). Next: the doctor runs read-only against the real logins before anything is provisioned and prints exactly what is missing; then README and PROGRESS record what it reported. After that, only the owner's go-live (SPEC 20.2 and 20.5) remains. Everything is verified on the local stack only; nothing has run against Cloudflare production or Google Cloud.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -75,7 +75,11 @@ Freshness result: `peoplelake eval freshness --target local --duration 60m` (ful
 
 10. `ci(eval-full): the optional local freshness run behind freshness_minutes`. Found after commit 9: `eval-full.yml` declared the `freshness_minutes` input since the CI commit, but no job used it (SPEC 17: an optional freshness run, default 20 minutes, that reports only). New `freshness` job: skipped when the input is 0, 20 minutes on the weekly schedule (no inputs there), the value validated as 1 to 60 in the step (passed through `env`, never interpolated into the script), `peoplelake eval freshness --target local`, stack down always, the result and the stack logs uploaded. Its timeout is 122 minutes, twice the measured wall time of commit 9's 60-minute local run (60 min 43 s), the longest the input allows. The workflow parses as YAML (PyYAML); the step's validation and command ran here with `FRESHNESS_MINUTES=2` (100,000 events in 2 minutes, p95 55 s, ports free afterwards; not a committed result); `actionlint` is not installed here and the job has not run on GitHub yet. README's CI table and timeout paragraph name it.
 
+## Builder 4 (production setup and doctor against the real logins)
+1. `fix(prod): bootstrap reads the catalog and subdomain from the state setup writes; ADC through google-auth`. Found by reading `GcpConfig.load` against `scripts/lib/prod-state.ts`: `setup:prod` writes `.prod/state.json` with `catalog: {uri, warehouse}`, but bootstrap read the keys `catalog_uri` and `warehouse`, which never exist, so unless the operator also put `PL_R2_CATALOG_URI` and `PL_R2_WAREHOUSE` in `.prod/config.env`, `gcloud run jobs deploy` would have set both to empty strings and every runner execution would have failed to open Basin Catalog. It now reads `state.catalog` (config.env still overrides, as in setup), takes the workers.dev subdomain setup recorded from the account before the configured one, and its preflight fails ("runner job settings", naming `npm run setup:prod -- --only cloudflare`) when the subdomain, catalog URI or warehouse is unknown, so a real run stops before creating anything. The ADC quota project check no longer opens `~/.config/gcloud/application_default_credentials.json` itself: `prod/adc.py` asks `google.auth.default()` (the way every Google client in the repo authenticates; it also honours `GOOGLE_APPLICATION_CREDENTIALS`). Tests: the config loads the catalog and subdomain from the committed fixture state (fails on the previous code), config.env overrides the catalog, bootstrap fails exactly on "runner job settings" without a catalog, and `adc_quota_project` with loaded, quota-less and missing credentials; the bootstrap tests stub the helper instead of writing a fake credential file.
+
 ## Next
+- Builder 4: the doctor reads the real accounts before setup (every command and request read only) and prints exactly what is missing; README and PROGRESS record what it reported.
 - The owner's go-live (SPEC 20.2 and 20.5).
 - After the first `eval-full` run on GitHub: set its scenario timeout to twice the runner's slowest full-profile step, and check the freshness job's duration. `ci.yml` already runs on GitHub on every push the owner's loop makes.
 - Not exercised against real services yet: Basin Catalog, production Workflows, the Cloud Run Job, BigQuery, Workers AI and Access (including the dashboard sign-in). The S5 BigQuery drill skips its point-in-time half (no scratch `_pit` datasets).
@@ -85,13 +89,13 @@ Freshness result: `peoplelake eval freshness --target local --duration 60m` (ful
 |---|---|
 | `npm run typecheck` | pass (worker, worker tests, node, web) |
 | `npm run typegen:check` | pass |
-| `npm test` (vitest) | pass: 21 files, 249 tests (worker 12 files in workerd, node 7, web 2) |
+| `npm test` (vitest) | pass: 21 files, 249 tests (worker 12 files in workerd, node 7, web 2); run at the start of builder 4, this commit changes no TypeScript |
 | `npm run check:prose` | pass |
 | `npm run contracts:check` | pass |
 | `npm run results:check` | pass |
 | `npm run deploy:dry-run` | pass (predeploy-check now also applies the Free plan rules) |
 | `npm run budget -- --check` | pass: every estimate within its planning share, all config rules hold |
-| `npm run test:py` (pytest, all markers) | pass: 267 passed (265 without the e2e marker, 2 e2e) |
+| `npm run test:py` (pytest, all markers) | pass: 267 at the start of builder 4 (full suite); after this commit's change `test_bootstrap_plan.py` (14, 3 of them new) and `test_bq_caps.py` pass; the full suite runs again in the next commit |
 | `ruff check`, `ruff format --check` | pass |
 | `npm run doctor -- --local-only` | pass (including the Free plan rules and the budget) |
 | `peoplelake dev clean-clone-check` | pass at `1602029` (commit 6); this commit adds no file the runner or warehouse needs |
@@ -99,7 +103,7 @@ Freshness result: `peoplelake eval freshness --target local --duration 60m` (ful
 | `peoplelake eval freshness --target local --duration 60m` | recorded: p95 69 s, 60 of 60 runs committed, cross-check agrees |
 | `npm run bench:ingest` | recorded: 50-event requests within the 10 ms Free limit (worst 3.86 ms, first after the prewarm) |
 | `eval-full.yml` freshness step command (2 minutes, locally) | pass; result not committed |
-| CI on GitHub (`gh run list`, read-only) | `ci.yml`: 10 runs, all passed, the latest on commit 8; small-profile scenario steps 143 s to 148 s in the last four |
+| CI on GitHub (`gh run list`, read-only) | `ci.yml`: 11 runs, all passed, the latest on `cde5cf4`; `eval-full.yml` has not run yet (weekly on Mondays, or on demand) |
 | `npm run setup:prod -- --dry-run` | not run against the real accounts (the hard rule forbids running setup); its dry run is tested offline with fake runners |
 | Ports 8791, 9241, 8150 after the run | free; no wrangler, workerd, runner or ticker process of this repo left |
 

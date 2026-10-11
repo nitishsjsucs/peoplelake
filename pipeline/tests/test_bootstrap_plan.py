@@ -1,6 +1,7 @@
 """bootstrap-gcp in plan mode against fake clients: the expected actions, no mutations, idempotent."""
 
 import json
+import shutil
 import subprocess
 from types import SimpleNamespace
 
@@ -94,11 +95,10 @@ class FakeDataPolicies:
         return [SimpleNamespace(data_policy_id=i) for i in ids]
 
 
-def bootstrap(tmp_path, monkeypatch, exists: bool, billing: str = "True", sandbox_expiration: bool = False):
-    adc = tmp_path / "gcloud"
-    adc.mkdir()
-    (adc / "application_default_credentials.json").write_text(json.dumps({"quota_project_id": "peoplelake-123"}))
-    monkeypatch.setenv("CLOUDSDK_CONFIG", str(adc))
+def bootstrap(
+    tmp_path, monkeypatch, exists: bool, billing: str = "True", sandbox_expiration: bool = False, catalog_uri: str = "x"
+):
+    monkeypatch.setattr("peoplelake.prod.adc.adc_quota_project", lambda: (True, "peoplelake-123"))
     prod = tmp_path / ".prod"
     prod.mkdir()
     if exists:
@@ -107,7 +107,7 @@ def bootstrap(tmp_path, monkeypatch, exists: bool, billing: str = "True", sandbo
         project="peoplelake-123",
         owner_email="owner@example.com",
         workers_subdomain="nitish",
-        catalog_uri="https://catalog.example",
+        catalog_uri="https://catalog.example" if catalog_uri else "",
         warehouse="acct_peoplelake-lake",
         secrets={
             "PL_R2_CATALOG_TOKEN": "token-value",
@@ -259,3 +259,49 @@ def test_the_plan_refuses_while_billing_is_disabled(tmp_path, monkeypatch):
     assert {a.step for a in actions} == {"preflight"}
     assert any(a.kind == "fail" and a.target == "billing" for a in actions)
     assert gcloud.mutations == []
+
+
+def test_config_reads_the_catalog_and_subdomain_from_the_state_setup_writes(tmp_path):
+    """state.json has setup:prod's shape (scripts/lib/prod-state.ts): `catalog.uri`, `catalog.warehouse`."""
+    from peoplelake.paths import repo_root
+
+    prod = tmp_path / ".prod"
+    prod.mkdir()
+    shutil.copy(repo_root() / "scripts" / "fixtures" / "prod-state.example.json", prod / "state.json")
+    (prod / "config.env").write_text("PL_GCP_PROJECT=peoplelake-123\nPL_WORKERS_SUBDOMAIN=configured\n")
+    state = json.loads((prod / "state.json").read_text())
+    config = GcpConfig.load(prod)
+    assert config.catalog_uri == state["catalog"]["uri"] != ""
+    assert config.warehouse == state["catalog"]["warehouse"] != ""
+    # setup records the account's real subdomain, which wins over the configured one
+    assert config.workers_subdomain == state["workers_subdomain"]
+    (prod / "config.env").write_text("PL_GCP_PROJECT=p\nPL_R2_CATALOG_URI=https://override\nPL_R2_WAREHOUSE=w\n")
+    assert (GcpConfig.load(prod).catalog_uri, GcpConfig.load(prod).warehouse) == ("https://override", "w")
+
+
+def test_bootstrap_stops_before_a_runner_job_without_the_catalog(tmp_path, monkeypatch):
+    boot, _, _ = bootstrap(tmp_path, monkeypatch, exists=False, catalog_uri="")
+    actions = boot.run()
+    failed = [a for a in actions if a.kind == "fail"]
+    assert [a.target for a in failed] == ["runner job settings"]
+    assert "Basin Catalog URI" in failed[0].detail and "--only cloudflare" in failed[0].detail
+
+
+def test_adc_quota_project_comes_from_google_auth(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    import google.auth
+    from google.auth.exceptions import DefaultCredentialsError
+
+    from peoplelake.prod.adc import adc_quota_project
+
+    monkeypatch.setattr(google.auth, "default", lambda: (NS(quota_project_id="q-1"), None))
+    assert adc_quota_project() == (True, "q-1")
+    monkeypatch.setattr(google.auth, "default", lambda: (NS(), None))
+    assert adc_quota_project() == (True, None)
+
+    def missing():
+        raise DefaultCredentialsError("none")
+
+    monkeypatch.setattr(google.auth, "default", missing)
+    assert adc_quota_project() == (False, None)
