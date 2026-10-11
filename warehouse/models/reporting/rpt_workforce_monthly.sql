@@ -1,3 +1,7 @@
+{%- if target.type == 'bigquery' -%}
+{#- Authorized view: analysts read pl_reporting without access to pl_core (SPEC 11.7). -#}
+{{ config(grant_access_to=[{'project': target.project, 'dataset': pl_with_suffix('pl_core') | trim}]) }}
+{%- endif %}
 {#- Reporting view over the metrics mart. Department cells with headcount below 5 are nulled. -#}
 select
     m.month,

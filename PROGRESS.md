@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Commit 6 of 18 (core) done: metrics and reconciliation checks.
+Commit 7 of 18 (core) done: BigQuery configs and loader (offline).
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -18,8 +18,10 @@ Commit 6 of 18 (core) done: metrics and reconciliation checks.
 
 6. Metrics and reconciliation: R1 to R11 as singular dbt tests plus an as-of consistency check, `ops_anomalies`, `ops_delivery_stats`, `ops_event_freshness`, reporting views with small-cell suppression, tamper tests proving each check fires, `peoplelake dev reference-digests`. Measured in this session: small profile 10,000 events, all dbt tests pass with 0 warnings, incremental equals full refresh (6.5 s); full profile 100,000 events, same result (10.3 s).
 
+7. BigQuery: policy tags with `persist_docs` on restricted columns, authorized reporting views (`grant_access_to` on `pl_core`), offline compile of both branches (`peoplelake dev bq-compile`: 27 models and 94 tests parse as BigQuery with sqlglot), token-based ORDER BY NULLS lint (`peoplelake dev lint-sql`), manifest assertions, `BigQueryWarehouse` (Parquet load job to a stage table, stats, MERGE on `delivery_id`, load log, stage dropped even on failure) tested against a fake client. Nothing has run against BigQuery (no credentials on this machine).
+
 ## Next
-7. BigQuery configs (policy tags, authorized views), offline compiles, SQL lint, manifest assertions, BigQuery loader.
+8. Lake: local Iceberg committer (stand-in) and incremental reader with Basin catalog config.
 
 ## Check status (last run at this commit)
 | Check | Result |
@@ -28,7 +30,8 @@ Commit 6 of 18 (core) done: metrics and reconciliation checks.
 | `npm run typegen:check` | pass |
 | `npm test` | pass (4 files, 42 tests) |
 | `npm run check:prose` | pass |
-| `npm run test:py` (pytest) | pass (141 tests) |
+| `npm run test:py` (pytest) | pass (162 tests) |
+| `peoplelake dev bq-compile` | pass (both branches) |
 | dbt unit tests (`dbt test --select test_type:unit` after `dbt run --empty`) | pass (10) |
 | `ruff check` | pass |
 | `peoplelake generate --profile small --check` | pass |
@@ -48,4 +51,5 @@ Commit 6 of 18 (core) done: metrics and reconciliation checks.
 - `fct_workforce_monthly` and the metrics read `int_hris__*` tables (full rebuilds) rather than `dim_employee_history`, so one bucketed model failing never leaves another reading stale history.
 - R1 and R2 subtract inferred spell exits and R3 checks structure only, so error-level checks hold while late data is in flight (a rehire arriving before the prior termination); R11 reports those cases. A missing prior spell is an anomaly (warn), not an R3 error.
 - Extra error-level check `recon_history_as_of_matches_snapshot` exercises `pl_employee_as_of` against `fct_workforce_monthly` at seven month ends.
+- The BigQuery MERGE inserts an explicit column list instead of `INSERT ROW` (the stage carries `_pl_snapshot_id` and an ordering column, the target five `_pl_*` columns); `QUALIFY` is paired with `WHERE TRUE`.
 - Correction events carry `effectiveDate` = the corrected date for date corrections and the target's date for value corrections; rescinds carry the target's date. The one-event-per-day rule is asserted on business events (hire, rehire, termination, transfer, job and FTE change) for both original and corrected dates.

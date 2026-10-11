@@ -138,6 +138,37 @@ def _cmd_reference_digests(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_bq_compile(args: argparse.Namespace) -> int:
+    from .devtools.bq_offline import BRANCHES, compile_branch
+    from .paths import data_dir
+
+    root = Path(args.workdir) if args.workdir else data_dir() / "bq-compile"
+    failed = False
+    for branch in BRANCHES:
+        report = compile_branch(branch, root / branch)
+        status = "ok" if report.ok else "FAILED"
+        print(
+            f"{branch}: {report.compiled_models} models and {report.compiled_tests} tests compiled for BigQuery offline;"
+            f" sqlglot parse and ORDER BY lint {status}"
+        )
+        for err in report.parse_errors:
+            print(f"  parse: {err}")
+        for v in report.order_violations:
+            print(f"  lint: {v.file}:{v.line} ORDER BY item without NULLS FIRST/LAST: {v.item}")
+        failed = failed or not report.ok
+    return 1 if failed else 0
+
+
+def _cmd_lint_sql(args: argparse.Namespace) -> int:
+    from .devtools.lint_sql import lint_compiled
+
+    violations = lint_compiled(Path(args.compiled_dir))
+    for v in violations:
+        print(f"{v.file}:{v.line} ORDER BY item without NULLS FIRST/LAST: {v.item}")
+    print(f"lint-sql: {len(violations)} violation(s)")
+    return 1 if violations else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="peoplelake", description="PeopleLake pipelines")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -175,6 +206,13 @@ def build_parser() -> argparse.ArgumentParser:
     ref.add_argument("--workdir")
     ref.add_argument("--out")
     ref.set_defaults(func=_cmd_reference_digests)
+
+    bqc = dev_sub.add_parser("bq-compile", help="offline BigQuery compile (both branches), sqlglot parse and SQL lint")
+    bqc.add_argument("--workdir")
+    bqc.set_defaults(func=_cmd_bq_compile)
+    lint = dev_sub.add_parser("lint-sql", help="require NULLS FIRST/LAST on every ORDER BY item of compiled SQL")
+    lint.add_argument("compiled_dir")
+    lint.set_defaults(func=_cmd_lint_sql)
 
     dig = sub.add_parser("digest", help="output digests of the 10 published models (open only after `stack down`)")
     dig.add_argument("--duckdb")

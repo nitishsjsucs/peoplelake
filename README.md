@@ -15,7 +15,7 @@ v1 is under construction and this repository is published while it is built. Thi
 | Contracts and canonical JSON golden | done: zod contracts generate `contracts/*.schema.json`; pydantic mirrors; fixtures and a canonical JSON golden asserted by vitest (in workerd) and pytest |
 | DuckDB loader and output digests | done: idempotent load on `delivery_id`, UTC sessions, engine-independent digests for the 10 published models |
 | dbt models, five metrics, reconciliation checks | done on DuckDB: staging, spells, SCD2 history with per-model bucket cursors, facts, metrics mart, reporting and ops models, 10 unit tests, reconciliation checks R1 to R11 |
-| BigQuery configs and offline compile | not started |
+| BigQuery configs and offline compile | done offline: dbt-bigquery profiles, policy tags, authorized views, int64 range `insert_overwrite`, both compile branches parse as BigQuery, ORDER BY lint, BigQuery loader tested against a fake client; nothing has run on BigQuery yet |
 | Local Iceberg lake | not started |
 | Worker: auth, ingest, sinks | not started (only `GET /v1/health` exists) |
 | Orchestration: Coordinator, Workflow, dispatchers | not started |
@@ -115,6 +115,9 @@ uv run --project pipeline peoplelake digest     # digests of the 10 published mo
 
 # SPEC 15.4 in one command: straight load, incremental build with unit tests, full refresh, equal digests
 uv run --project pipeline peoplelake dev reference-digests --profile small --out .data/reference/reference-digests-small.json
+
+# BigQuery SQL without credentials: both compile branches, sqlglot parse, ORDER BY NULLS lint
+uv run --project pipeline peoplelake dev bq-compile
 ```
 
 ### Five metrics and reconciliation
