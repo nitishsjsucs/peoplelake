@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-All 18 core commits done, plus the recorded 60-minute local freshness result. Production go-live waits on the owner's accounts (README Production setup).
+All 18 core commits done, plus the recorded 60-minute local freshness result. Builder 2 is working below the core cut (SPEC 23 items 19 to 22). Production go-live waits on the owner's accounts (README Production setup).
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -44,6 +44,9 @@ All 18 core commits done, plus the recorded 60-minute local freshness result. Pr
 
 Freshness result: `peoplelake eval freshness --target local --duration 60m` (full profile, 100,000 events at 27.8 per second, started 2026-10-11T03:46:12Z, code of commit `685ba53` in a git worktree under `.data/`) gave p50 48 s, p95 78 s, max 93 s on the local stand-ins; 121 runs, all committed, 61 transforms skipped; ledger and `ops_event_freshness` histograms agree on all 100,000 events. Recorded in `evals/results/freshness-local-full-2026-10-11.json` and rendered into README Results (the renderer now also shows the p95 split, committed runs and the cross-check). Commits 16 to 18 changed the stack only additively (ask route, ops reset, drill target), so the number stands for HEAD.
 
+## Builder 2 (below the core cut)
+- Fix: `peoplelake eval scenarios` named its default results file `scenarios-<profile>-duckdb-<date>.json` whatever the engine, so a `--target prod-drill` run (engine bigquery) would have overwritten the same day's DuckDB results and `doctor-gcp`'s go-live evidence check (`scenarios-*-bigquery-*.json`) could never pass. The name now comes from the report's engine (`results_name`, tested).
+
 ## Next
 - Below the core cut (not built): the 60-question ask eval, the dashboard, MetricFlow.
 - Owner go-live (needs accounts): README Production setup steps 1 to 14, then `npm run prod:e2e`, the BigQuery drill, `prod demo-masking`, `prod drill-restore`; CI runs once the repository is pushed.
@@ -58,7 +61,7 @@ Freshness result: `peoplelake eval freshness --target local --duration 60m` (ful
 | `npm run contracts:check` | pass |
 | `npm run results:check` | pass |
 | `npm run deploy:dry-run` | pass (rendered production config bundles) |
-| `npm run test:py` (pytest, all markers) | pass: 228 passed, 0 skipped, including the e2e stack test (about 3 minutes) |
+| `npm run test:py` (pytest, all markers) | at the previous commit: 228 passed, 0 skipped, including the e2e stack test. At this commit: `pytest -m "not e2e" pipeline/tests` 231 passed, 3 skipped (the stack tests skip while a full-profile scenario run in a worktree holds ports 8791 and 9241; the count includes 6 not-yet-committed ask eval tests) |
 | `ruff check`, `ruff format --check` | pass |
 | `peoplelake dev bq-compile` | pass (both branches: 27 models and 94 tests compile, sqlglot parse and ORDER BY lint) |
 | `peoplelake generate --profile small --check` | pass |

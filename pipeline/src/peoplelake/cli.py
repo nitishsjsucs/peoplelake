@@ -289,7 +289,7 @@ def _cmd_eval_scenarios(args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
     from .devtools.reference import reference_digests
-    from .evals.scenarios import EvalError, run_scenario, scenarios_report, write_report
+    from .evals.scenarios import EvalError, results_name, run_scenario, scenarios_report, write_report
     from .paths import data_dir, repo_root
     from .sim.plan import SCENARIOS
 
@@ -315,11 +315,10 @@ def _cmd_eval_scenarios(args: argparse.Namespace) -> int:
     command = "peoplelake eval scenarios " + " ".join(sys.argv[3:])
     report = scenarios_report(results, profile=args.profile, reference=reference, command=command.strip())
     date = datetime.now(UTC).strftime("%Y-%m-%d")
-    suffix = "" if len(wanted) == len(SCENARIOS) else "-" + "-".join(wanted)
     out = (
         Path(args.out)
         if args.out
-        else repo_root() / "evals" / "results" / f"scenarios-{args.profile}-duckdb-{date}{suffix}.json"
+        else repo_root() / "evals" / "results" / results_name(args.profile, report["engine"], date, wanted)
     )
     write_report(report, out)
     print(json.dumps({"passed": report["passed"], "out": str(out)}))

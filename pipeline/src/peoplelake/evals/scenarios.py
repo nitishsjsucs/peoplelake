@@ -334,6 +334,15 @@ def scenarios_report(results: list[dict], *, profile: str, reference: dict, comm
     }
 
 
+def results_name(profile: str, engine: str, date: str, scenarios: list[str]) -> str:
+    """`scenarios-<profile>-<engine>-<date>[-<ids>].json`: the engine comes from the report, so a BigQuery
+    drill never overwrites a DuckDB result and `doctor-gcp` finds it as go-live evidence."""
+    from ..sim.plan import SCENARIOS
+
+    suffix = "" if sorted(scenarios) == sorted(SCENARIOS) else "-" + "-".join(scenarios)
+    return f"scenarios-{profile}-{engine}-{date}{suffix}.json"
+
+
 def write_report(report: dict, out: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

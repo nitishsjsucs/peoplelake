@@ -88,3 +88,19 @@ def test_plans_are_deterministic(small):
             [(r.source, len(r.envelopes)) for r in c] for c in b.chunks
         ]
         assert a.planned == b.planned
+
+
+def test_results_file_is_named_after_the_engine_that_produced_it() -> None:
+    from fnmatch import fnmatch
+
+    from peoplelake.evals.scenarios import results_name
+
+    every = list(SCENARIOS)
+    assert results_name("small", "duckdb", "2026-10-11", every) == "scenarios-small-duckdb-2026-10-11.json"
+    drill = results_name("small", "bigquery", "2026-10-11", every)
+    assert drill == "scenarios-small-bigquery-2026-10-11.json"
+    assert fnmatch(drill, "scenarios-*-bigquery-*.json")  # the doctor-gcp go-live evidence pattern
+    assert results_name("full", "duckdb", "2026-10-11", ["B", "S2"]) == "scenarios-full-duckdb-2026-10-11-B-S2.json"
+    assert (
+        results_name("small", "duckdb", "2026-10-11", list(reversed(every))) == "scenarios-small-duckdb-2026-10-11.json"
+    )
