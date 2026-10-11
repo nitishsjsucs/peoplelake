@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { format, prodFileChecks, versionAtLeast } from "../../scripts/doctor.ts";
-import { readEnvFile, redact, SERVICE_TOKENS, upsertEnv } from "../../scripts/setup-prod.ts";
+import { finalRunsEnabled, readEnvFile, redact, SERVICE_TOKENS, upsertEnv } from "../../scripts/setup-prod.ts";
 
 describe("setup:prod helpers", () => {
   it("never shows secret values in a printed command", () => {
@@ -19,6 +19,14 @@ describe("setup:prod helpers", () => {
     expect(readEnvFile(path)).toEqual({ A: "1", B: "3", C: "4" });
     expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(readFileSync(path, "utf8")).not.toContain("B=2");
+  });
+
+  it("enables runs only after a passing bootstrap and honours --runs-enabled false", () => {
+    expect(finalRunsEnabled(true, undefined)).toBe(true);
+    expect(finalRunsEnabled(false, undefined)).toBe(false);
+    expect(finalRunsEnabled(true, "false")).toBe(false);
+    expect(finalRunsEnabled(false, "true")).toBe(false);
+    expect(() => finalRunsEnabled(true, "no")).toThrow(/true or false/);
   });
 
   it("creates one service token per source, the runner and the doctor", () => {

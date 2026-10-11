@@ -1,4 +1,4 @@
-// npm run setup:prod -- [--dry-run] [--only cloudflare|gcp|worker]
+// npm run setup:prod -- [--dry-run] [--only cloudflare|gcp|worker] [--runs-enabled false]
 //
 // Idempotent production provisioning (SPEC 21.1). Reads .prod/config.env and .prod/secrets.env, writes
 // .prod/state.json (all mode 600). Every step checks before it creates. `--dry-run` runs the read-only
@@ -58,6 +58,12 @@ export function upsertEnv(path: string, values: Record<string, string>): void {
 }
 
 /** Replace secret values in a command line for printing. */
+/** Runs are enabled only after a passing Google Cloud bootstrap, and `--runs-enabled false` keeps them off. */
+export function finalRunsEnabled(gcpBootstrapPassed: boolean, override: string | undefined): boolean {
+  if (override !== undefined && override !== "true" && override !== "false") throw new Error("--runs-enabled must be true or false");
+  return gcpBootstrapPassed && override !== "false";
+}
+
 export function redact(argv: string[], secrets: string[]): string {
   return argv
     .map((a) => (secrets.some((s) => s.length > 0 && a.includes(s)) ? "<redacted>" : a))
@@ -442,7 +448,7 @@ class Setup {
     return res.ok && existsSync(gcp) && (JSON.parse(readFileSync(gcp, "utf8")) as { passed?: boolean }).passed === true;
   }
 
-  async all(only: string | undefined): Promise<void> {
+  async all(only: string | undefined, runsOverride?: string): Promise<void> {
     this.preflight();
     let ids: Record<string, string> = {};
     if (!only || only === "cloudflare") {
@@ -476,7 +482,7 @@ class Setup {
         for (const [name, meta] of Object.entries(SERVICE_TOKENS)) ids[name] = this.secrets[`${meta.env}_CLIENT_ID`] ?? name;
       }
       this.roleMap(ids);
-      this.state.runs_enabled = this.state.gcp_bootstrap_passed;
+      this.state.runs_enabled = finalRunsEnabled(this.state.gcp_bootstrap_passed, runsOverride);
       this.saveState();
       const key = join(this.prod, "gcp-dispatcher-key.json");
       const secrets: Record<string, string> = { R2_CATALOG_TOKEN: this.secrets["PL_R2_CATALOG_TOKEN"] ?? "" };
@@ -500,7 +506,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     console.error("--only must be cloudflare, gcp or worker");
     process.exit(2);
   }
-  setup.all(only).catch((err: unknown) => {
+  setup.all(only, arg("--runs-enabled")).catch((err: unknown) => {
     console.error(`setup:prod: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   });

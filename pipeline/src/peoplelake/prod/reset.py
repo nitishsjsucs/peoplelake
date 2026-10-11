@@ -30,5 +30,5 @@ def reset(config: GcpConfig, confirm: str, *, drop_lake: bool = True) -> dict:
             basin_catalog(s.r2_catalog_uri or "", s.r2_warehouse or "", s.r2_catalog_token or "").drop_table(TABLE_ID)
             lake = "dropped peoplelake.raw_events (the sink recreates it on its next roll)"
         except Exception as exc:  # noqa: BLE001 - dropping a sink-created table is unverified (SPEC risk 16)
-            lake = f"could not drop the Basin table ({type(exc).__name__}); follow docs/runbooks/prod-reset.md for a new table name"
+            lake = f"could not drop the Basin table ({type(exc).__name__}); follow docs/runbooks/prod-reset.md step 2 (new table name)"
     return {"bigquery_tables_dropped": len(dropped), "lake": lake}

@@ -193,7 +193,7 @@ GitHub Actions run CI only and hold no cloud credentials (`permissions: contents
 
 | Workflow | Job | What it proves |
 |---|---|---|
-| `ci.yml` | node | generated Worker types current, typecheck, vitest (Worker tests in workerd, node tests), contracts current, prose check |
+| `ci.yml` | node | generated Worker types current, typecheck, vitest (Worker tests in workerd, node tests), contracts current, prose check, the production config rendered from a fixture state bundles (`npm run deploy:dry-run`) |
 | `ci.yml` | python | ruff, pytest without the dbt and end-to-end markers |
 | `ci.yml` | dbt | small profile generated with its pinned sha256, reference digests (straight load, `dbt run --empty`, build with unit tests, full refresh, equal digests), dbt-level tests, offline BigQuery compiles with sqlglot parse and ORDER BY lint; uploads the reference digests |
 | `ci.yml` | clean-clone | clones the commit to a temp directory: `uv sync --locked`, `dbt parse`, smoke tests (nothing gitignored is relied on) |
@@ -282,6 +282,12 @@ Then:
 workers.dev subdomain registration, R2 buckets `peoplelake-lake` and `peoplelake-reports`, Basin Catalog on the lake bucket with snapshot expiration and compaction, Queues `peoplelake-lake-events` and its dead-letter queue, the Basin stream `peoplelake_raw_stream`, sink `peoplelake_raw_sink` (Iceberg table `peoplelake.raw_events`, 60 s rolls) and pipeline, the R2 notification rule, five Access service tokens (`pl-source-hris`, `pl-source-ats`, `pl-source-talent`, `pl-runner`, and `pl-doctor` for the operator checks), AI Gateway `peoplelake`, a fail-closed first deploy (every request 401, no runs), the Access application with an owner policy and a service-auth policy, everything in Google Cloud through `peoplelake prod bootstrap-gcp` (APIs, twelve datasets with time travel, policy tags and masking policies, service accounts and roles, secrets, Artifact Registry, the runner image built by Cloud Build, the Cloud Run Job, the dispatcher key), and the final deploy with the real Access AUD, the role map and `RUNS_ENABLED=true` only if the Google Cloud bootstrap passed. Files it writes: `.prod/state.json`, `.prod/secrets.env` (service token secrets), `.prod/gcp.json`, `.prod/gcp-dispatcher-key.json`, all mode 600.
 
 Deploy only with `npm run deploy` (render, safety check, `wrangler deploy --env production`): the top-level Worker in `wrangler.jsonc` is named `peoplelake-local` with `workers_dev: false`, so a plain `wrangler deploy` can never replace production. `npm run deploy:runner` rebuilds the runner image and updates the job.
+
+## Decisions and runbooks
+
+Architecture decision records in [docs/adr](docs/adr): [warehouse-level idempotency](docs/adr/0001-warehouse-level-idempotency.md), [Workflows orchestrate, Cloud Run executes](docs/adr/0002-workflows-orchestrate-cloud-run-executes.md), [labeled local stand-ins](docs/adr/0003-local-stand-ins-are-labeled.md), [bucketed replace with per-model cursors](docs/adr/0004-bucketed-replace-with-per-model-cursors.md), [engine-independent digests](docs/adr/0005-engine-independent-output-digests.md), [Access JWT on every request](docs/adr/0006-verify-access-jwt-on-every-request.md), [metrics against an oracle](docs/adr/0007-metrics-checked-against-an-oracle.md), [one process owns the local warehouse](docs/adr/0008-one-process-owns-the-local-warehouse.md).
+
+Runbooks in [docs/runbooks](docs/runbooks): [replay from the lake](docs/runbooks/replay.md), [restore with BigQuery time travel](docs/runbooks/restore.md), [rotate credentials](docs/runbooks/rotate-tokens.md), [full production reset](docs/runbooks/prod-reset.md). The production ones have not been exercised against real accounts.
 
 ## Results
 

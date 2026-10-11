@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Commit 17 of 18 (core) done: production tooling; the 60-minute local freshness measurement is still running.
+Commit 18 of 18 (core) done: ADRs and runbooks; the 60-minute local freshness measurement is still running and gets its own commit when it finishes.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -40,21 +40,26 @@ Commit 17 of 18 (core) done: production tooling; the 60-minute local freshness m
 
 17. Production: `scripts/render-wrangler.ts` and `scripts/predeploy-check.ts` (placeholders from `.prod/state.json`, unsafe configs refused), `npm run deploy:dry-run` (fixture state, bundles with `wrangler deploy --dry-run`, also in CI), `scripts/setup-prod.ts` (steps 1 to 17 of SPEC 21.1, idempotent, `--dry-run` with secrets redacted, `--only cloudflare|gcp|worker`), `scripts/doctor.ts` (local, `.prod` files, Cloudflare and Access checks, then `peoplelake prod doctor-gcp`), `peoplelake prod bootstrap-gcp|doctor-gcp|deploy-runner|verify|e2e|drill-restore|demo-masking|reset`, `infra/gcp/` (Cloud Build config, cleanup policy, README), the BigQuery drill target for `eval scenarios --target prod-drill` (impersonated pl-runner, `_drill` datasets emptied per scenario), `POST /api/ops/reset` (operator, confirmation, new generation), service tokens may hold the operator role. Checked offline in this session: `npm run setup:prod -- --dry-run` walks all 17 steps without credentials, the rendered production config bundles, bootstrap plan tests against fake clients (empty and complete projects), restore drill SQL parses as BigQuery. Nothing has run against Cloudflare production or Google Cloud (no logins or credentials here).
 
+18. Docs: ADRs 0001 to 0008 in `docs/adr`, runbooks `replay`, `restore`, `rotate-tokens`, `prod-reset` in `docs/runbooks` (claims checked against the code; the production ones are not exercised), README links, local versus production matrix and production setup. `npm run setup:prod -- --only worker --runs-enabled false` keeps runs off on a redeploy (the reset runbook's first step; `npm run deploy` alone re-enables runs after a passing bootstrap).
+
 ## Next
-18. Docs: ADRs 0001 to 0008, runbooks, README production setup and local versus production matrix; then record the 60-minute freshness result.
+- Record the 60-minute local freshness result (`evals/results/freshness-local-full-*.json`, `npm run results:readme`).
+- Below the core cut (not built): the 60-question ask eval, the dashboard, MetricFlow.
+- Owner go-live (needs accounts): README Production setup steps 1 to 14, then `npm run prod:e2e`, the BigQuery drill, `prod demo-masking`, `prod drill-restore`; CI runs once the repository is pushed.
 
 ## Check status (last run at this commit)
 | Check | Result |
 |---|---|
 | `npm run typecheck` | pass |
 | `npm run typegen:check` | pass |
-| `npm test` | pass (worker 12 files and node 6 files) |
-| `npm run check:prose` | pass |
-| `npm run test:py` (pytest) | pass (186 tests incl. 1 e2e stack test; about 50 s on an idle machine, 287 s at load average 27) |
-| `peoplelake dev bq-compile` | pass (both branches) |
-| dbt unit tests (`dbt test --select test_type:unit` after `dbt run --empty`) | pass (10) |
-| `ruff check` | pass |
-| `peoplelake generate --profile small --check` | pass |
+| `npm test` (vitest) | pass: 18 files, 180 tests (worker 12 files in workerd, node 6 files) |
+| `npm run check:prose` | pass (18 Markdown files) |
+| `npm run contracts:check` | pass |
+| `npm run results:check` | pass |
+| `npm run deploy:dry-run` | pass (rendered production config bundles) |
+| `pytest -m "not e2e"` | pass: 224 passed, 3 skipped (the stack cleanup tests skip while the freshness run holds ports 8791 and 9241), 1 e2e deselected; the e2e stack test passed at commit 15 and is rerun after the freshness run |
+| `ruff check`, `ruff format --check` | pass |
+| `peoplelake dev bq-compile`, dbt unit tests, `generate --check` | pass at commit 15; unchanged since |
 
 ## Deviations from SPEC.md
 - `tsconfig.worker-test.json` holds the worker test project's types (`@cloudflare/vitest-plugin/types`) so `tsconfig.worker.json` keeps `types: []` for source; `npm run typecheck` runs all three configs.
@@ -89,6 +94,8 @@ Commit 17 of 18 (core) done: production tooling; the 60-minute local freshness m
 - `wrangler basin catalog ... --token` and `wrangler pipelines sinks create --catalog-token` only accept the token on the command line; setup passes it there and redacts it in every printed line (all other secrets go through mode 600 files).
 - `npm run deploy` is `setup:prod --only worker` (render with the real state, safety check, deploy with `--secrets-file`).
 - `prod:e2e` is one command (`peoplelake prod e2e`): refuse when production already holds runs, live delivery, wait for quiescence, `prod verify`, production freshness from that delivery.
+- `setup:prod` accepts `--runs-enabled false` so an operator can redeploy with runs off (needed by the reset runbook).
+- The reset fallback (SPEC risk 16, a new table name) is a code change listed in `docs/runbooks/prod-reset.md`: the table name is a literal in the contracts, the catalog poll, the sink and the runner.
 - On the BigQuery drill, S5 runs the full rebuild and records the point-in-time half as skipped (it needs scratch datasets that bootstrap does not create).
 - CI job-level `timeout-minutes` are not set (none were measured); only the scenario steps carry measured timeouts. S5 was not measured on the full profile, so its `eval-full` leg may need a longer timeout after the first run.
 - The README results renderer landed with commit 13 (planned for 15) so the scenario results could be rendered when they were recorded.

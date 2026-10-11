@@ -1,0 +1,8 @@
+# Runbook: full production reset
+
+Needed only before a second `npm run prod:e2e`: delivering the same 100,000 event ids again would time duplicates that change no published row, and `prod:e2e` refuses to run while production already holds events.
+
+1. Disable runs: `npm run setup:prod -- --only worker --runs-enabled false` redeploys with `RUNS_ENABLED=false` (a plain `npm run deploy` turns runs back on when the Google Cloud bootstrap passed). Wait until `GET /api/status` shows `"active_run_id": null`.
+2. `uv run --project pipeline peoplelake prod reset --confirm peoplelake` drops every table in the six production datasets and tries to drop `peoplelake.raw_events` from Basin Catalog through Iceberg REST. Whether Basin Catalog allows that drop is not verified. If the command reports that it could not, the fallback is a new table name, which is a code change: replace `raw_events` in `scripts/setup-prod.ts` (`--table`), `src/worker/lake/catalog-poll.ts`, `src/shared/contracts.ts` and `pipeline/src/peoplelake/contracts.py` (the `LoadResult` table literal), `pipeline/src/peoplelake/lake/catalog.py` and `pipeline/src/peoplelake/warehouse/loader.py`; run `npm run contracts:gen`, the tests, delete the pipeline `peoplelake_raw_pipeline` and the sink `peoplelake_raw_sink`, then `npm run setup:prod -- --only cloudflare` (recreates them on the new table) and `npm run deploy:runner`.
+3. Reset the Coordinator ledger with `POST /api/ops/reset` and body `{"confirm": "peoplelake"}` (operator). Run ids carry the Coordinator generation, so new ids never collide with retained Workflow instances.
+4. Re-enable runs with `npm run setup:prod -- --only worker`, then `npm run doctor`.
