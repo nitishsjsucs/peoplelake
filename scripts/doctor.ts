@@ -24,7 +24,7 @@ import { stripVTControlCharacters } from "node:util";
 import { budgetRows, CLOUDFLARE_PLANNING_SHARE, overBudget } from "../src/shared/free-budget.ts";
 import { budgetInputsFromConfig, freePlanConfigProblems } from "./lib/free-plan.ts";
 import type { ProdState } from "./lib/prod-state.ts";
-import { bucketListed, type Exec, queueInfoNames, GATEWAY, type Http, LAKE_BUCKET, QUEUES, readEnvFile, realExec, realHttp, REPORTS_BUCKET, SERVICE_TOKENS, WORKER } from "./setup-prod.ts";
+import { accessCookieProblems, bucketListed, type Exec, queueInfoNames, GATEWAY, type Http, LAKE_BUCKET, QUEUES, readEnvFile, realExec, realHttp, REPORTS_BUCKET, SERVICE_TOKENS, WORKER } from "./setup-prod.ts";
 
 export type Status = "PASS" | "FAIL" | "MISSING" | "UNKNOWN" | "WARN" | "INFO";
 export interface Check {
@@ -468,6 +468,14 @@ export async function cloudflareChecks(root: string, deps: DoctorDeps, opts: { w
     const apps = await deps.http("GET", `${API}/accounts/${account}/access/apps`, setupToken);
     const app = ((apps.json?.result ?? []) as { name: string; aud?: string }[]).find((a) => a.name === WORKER);
     out.push(apps.ok ? (app ? { name: "Access application peoplelake", status: "PASS" } : { name: "Access application peoplelake", status: "MISSING", fix: SETUP_FIX }) : { name: "Access application peoplelake", status: "UNKNOWN", detail: `HTTP ${apps.status}`, fix: step(README_STEP.setupToken) });
+    if (app) {
+      const cookie = accessCookieProblems(app as unknown as Record<string, unknown>);
+      out.push(
+        cookie.length === 0
+          ? { name: "Access session cookie SameSite Lax and HttpOnly", status: "PASS" }
+          : { name: "Access session cookie settings", status: "FAIL", detail: cookie.join("; "), fix: "Zero Trust, Access, Applications, peoplelake, Settings, Cookie settings: SameSite Lax, HttpOnly on" },
+      );
+    }
     if (app && state && app.aud !== state.access.aud) out.push({ name: "Access AUD in .prod/state.json", status: "FAIL", detail: "differs from the application's", fix: "npm run setup:prod -- --only cloudflare, then npm run deploy" });
   }
 

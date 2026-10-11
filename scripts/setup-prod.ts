@@ -31,6 +31,17 @@ export const SERVICE_TOKENS = {
   "peoplelake-doctor": { env: "PL_CF_DOCTOR", role: "operator" },
 } as const;
 
+/** Session cookie settings of the Access application: the CF_Authorization cookie is never sent on
+ * cross-site subrequests and is not readable from scripts (the Worker also refuses cross-site requests). */
+export const ACCESS_COOKIE = { same_site_cookie_attribute: "lax", http_only_cookie_attribute: true } as const;
+
+/** Differences between an Access application's cookie settings and ACCESS_COOKIE. */
+export function accessCookieProblems(app: Record<string, unknown>): string[] {
+  return Object.entries(ACCESS_COOKIE)
+    .filter(([k, v]) => app[k] !== v)
+    .map(([k, v]) => `${k} is ${JSON.stringify(app[k] ?? null)}, want ${JSON.stringify(v)}`);
+}
+
 export const REQUIRED_CONFIG = ["PL_CF_ACCOUNT_ID", "PL_WORKERS_SUBDOMAIN", "PL_ACCESS_TEAM_DOMAIN", "PL_OWNER_EMAIL", "PL_GCP_PROJECT"] as const;
 /** One R2 token (Admin Read & Write, for the runner's Basin Catalog commits) and the Cloudflare setup token. */
 export const REQUIRED_SECRETS = ["PL_CF_SETUP_TOKEN", "PL_R2_CATALOG_TOKEN"] as const;
@@ -469,11 +480,19 @@ export class Setup {
         domain: host,
         destinations: [{ type: "public", uri: host }],
         session_duration: "24h",
+        ...ACCESS_COOKIE,
         policies,
       });
       app = created.json?.result as { id: string; name: string; aud: string } | undefined;
       if (!app && !this.dryRun) throw new Error(`could not create the Access application (HTTP ${created.status})`);
-    } else this.say(`  exists: ${app.id}`);
+    } else {
+      this.say(`  exists: ${app.id}`);
+      // An application created before these settings: setup never rewrites an existing application (an
+      // update replaces its whole configuration), so it says exactly what to change; the doctor checks it.
+      for (const problem of accessCookieProblems(app as unknown as Record<string, unknown>)) {
+        this.say(`  WARN ${problem}: Zero Trust, Access, Applications, peoplelake, Settings, Cookie settings (SameSite Lax, HttpOnly on)`);
+      }
+    }
     if (app && !app.aud && !this.dryRun) {
       // Whether the create response carries `aud` is unverified (SPEC 25); the application itself does.
       const got = await this.api("GET", `${base}/${app.id}`, token);

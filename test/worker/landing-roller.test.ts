@@ -163,7 +163,7 @@ describe("landing routes", () => {
     expect(listed.truncated).toBe(false);
     const after = (await (await call(`/internal/lake/files?prefix=${prefix}&after=${rollKey(gen, 1)}`, "runner")).json()) as { files: { key: string }[] };
     expect(after.files.map((f) => f.key)).toEqual([rollKey(gen, 2)]);
-    const other = (await (await call("/internal/lake/files?prefix=landing/raw_events/g1/", "operator")).json()) as { files: unknown[] };
+    const other = (await (await call("/internal/lake/files?prefix=landing/raw_events/g1/", "runner")).json()) as { files: unknown[] };
     expect(other.files).toEqual([]);
     expect((await call("/internal/lake/files?prefix=reports/", "runner")).status).toBe(400);
     const body = await (await call(`/internal/lake/files/${rollKey(gen, 1)}`, "runner")).text();
@@ -172,6 +172,10 @@ describe("landing routes", () => {
     expect((await call("/internal/dev/landing/flush", "runner", { method: "POST" })).status).toBe(403);
     expect((await call("/internal/lake/files", "hris")).status).toBe(403);
     expect((await call("/internal/lake/files", "viewer")).status).toBe(403);
+    // Raw landing payloads (salaries, ratings) are for the runner's committer only, not the operator or
+    // the doctor's long-lived operator token.
+    expect((await call("/internal/lake/files", "operator")).status).toBe(403);
+    expect((await call(`/internal/lake/files/${rollKey(gen, 1)}`, "operator")).status).toBe(403);
   });
 
   it("mounts the lake file routes in production too, and the flush route only locally", async () => {

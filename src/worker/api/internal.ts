@@ -13,8 +13,9 @@ const LAKE_FILES = "/internal/lake/files";
 const MAX_FILES_PER_LIST = 1000;
 
 export function mountInternalApi(app: App): void {
-  // Landing rolls in key order after an optional cursor, under a prefix inside landing/raw_events/.
-  app.get(LAKE_FILES, requireRole("runner", "operator"), async (c) => {
+  // Landing rolls in key order after an optional cursor, under a prefix inside landing/raw_events/. Runner
+  // only: the files carry unmasked compensation and performance payloads, and only the committer reads them.
+  app.get(LAKE_FILES, requireRole("runner"), async (c) => {
     const prefix = c.req.query("prefix") ?? LANDING_PREFIX;
     if (!prefix.startsWith(LANDING_PREFIX)) return c.json({ error: "prefix_outside_landing" }, 400);
     const after = c.req.query("after");
@@ -34,7 +35,7 @@ export function mountInternalApi(app: App): void {
     return c.json({ prefix, files, truncated: cursor !== undefined });
   });
 
-  app.get(`${LAKE_FILES}/*`, requireRole("runner", "operator"), async (c) => {
+  app.get(`${LAKE_FILES}/*`, requireRole("runner"), async (c) => {
     const key = decodeURIComponent(c.req.path.slice(LAKE_FILES.length + 1));
     if (!key.startsWith(LANDING_PREFIX)) return c.json({ error: "not_found" }, 404);
     const obj = await c.env.LAKE_BUCKET.get(key);

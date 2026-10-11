@@ -1,4 +1,5 @@
-// Hono app assembly: config (fail closed) -> public health -> Access JWT verification -> role-gated routes.
+// Hono app assembly: config (fail closed) -> public health -> cross-site refusal for state-changing requests
+// -> Access JWT verification -> role-gated routes.
 import { Hono, type MiddlewareHandler } from "hono";
 import { ACCESS_HEADER, AuthError, verifyAccessJwt } from "./auth/access.ts";
 import { hasRole, type Principal, principalFromClaims } from "./auth/roles.ts";
@@ -35,6 +36,23 @@ export const authMiddleware: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
 };
 
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** Cross-site request refusal for every state-changing request (runs before authentication). In
+ * production a browser's Access session cookie becomes a valid Cf-Access-Jwt-Assertion, so a page on any
+ * other site (any *.workers.dev page is cross-site: workers.dev is on the Public Suffix List) could
+ * otherwise POST /api/ops/reset, /api/replay or /api/runs with the owner's session, and `c.req.json()`
+ * ignores Content-Type, so a text/plain form post needs no preflight. Browsers send Sec-Fetch-Site and
+ * Origin on such requests; the machine clients (runner, sources, doctor) send neither and pass. */
+export const crossSiteMiddleware: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if (SAFE_METHODS.has(c.req.method)) return next();
+  const site = c.req.header("sec-fetch-site");
+  if (site !== undefined && site !== "same-origin" && site !== "none") return c.json({ error: "cross_site_request" }, 403);
+  const origin = c.req.header("origin");
+  if (origin !== undefined && origin !== new URL(c.req.url).origin) return c.json({ error: "cross_site_request" }, 403);
+  await next();
+};
+
 export function requireRole(...roles: Role[]): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     if (!hasRole(c.get("principal"), roles)) return c.json({ error: "forbidden" }, 403);
@@ -54,6 +72,7 @@ export function createApp(mount: (app: App) => void = () => {}): App {
     if (!c.get("config").devRoutes) return c.json({ error: "not_found" }, 404);
     await next();
   });
+  app.use("*", crossSiteMiddleware);
   app.use("*", authMiddleware);
   app.get("/v1/health/auth", (c) => {
     const p = c.get("principal");

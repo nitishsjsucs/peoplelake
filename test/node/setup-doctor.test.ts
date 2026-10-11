@@ -22,7 +22,7 @@ import {
   versionAtLeast,
 } from "../../scripts/doctor.ts";
 import { parsePersonaEmails } from "../../scripts/lib/free-plan.ts";
-import { bucketListed, buildRoleMap, type Exec, finalRunsEnabled, parseCatalogInfo, queueInfoNames, readEnvFile, redact, SERVICE_TOKENS, Setup, upsertEnv } from "../../scripts/setup-prod.ts";
+import { ACCESS_COOKIE, bucketListed, buildRoleMap, type Exec, finalRunsEnabled, parseCatalogInfo, queueInfoNames, readEnvFile, redact, SERVICE_TOKENS, Setup, upsertEnv } from "../../scripts/setup-prod.ts";
 
 describe("setup:prod helpers", () => {
   it("never shows secret values in a printed command", () => {
@@ -205,6 +205,7 @@ describe("setup:prod on the Workers Free plan (SPEC 21.0)", () => {
     expect(log).toMatch(/would call: POST .*\/access\/service_tokens \{"name":"peoplelake-source-hris"/);
     expect(log).toContain('"email":{"email":"owner+hr@example.com"}');
     expect(log).toContain('"domain":"peoplelake.example.workers.dev","destinations":[{"type":"public","uri":"peoplelake.example.workers.dev"}]');
+    expect(log).toContain('"same_site_cookie_attribute":"lax","http_only_cookie_attribute":true');
   });
 
   it("reads the AUD tag from the application when the create response has none", async () => {
@@ -284,6 +285,8 @@ describe("doctor: read only, before and after setup", () => {
     tokens?: string[];
     gateway?: boolean;
     app?: boolean;
+    /** The application's session cookie settings (SameSite Lax, HttpOnly) unless false. */
+    appCookie?: boolean;
   }
 
   function fakeDeps(w: World) {
@@ -318,7 +321,7 @@ describe("doctor: read only, before and after setup", () => {
         if (url.endsWith("/access/identity_providers")) return w.idps === "forbidden" ? { ok: false, status: 403, json: {} } : { ok: true, status: 200, json: { result: (w.idps ?? []).map((type) => ({ type })) } };
         if (url.endsWith("/access/service_tokens")) return { ok: true, status: 200, json: { result: (w.tokens ?? []).map((name) => ({ name, id: name })) } };
         if (url.includes("/ai-gateway/gateways/")) return w.gateway ? { ok: true, status: 200, json: { result: {} } } : { ok: false, status: 404, json: {} };
-        if (url.endsWith("/access/apps")) return { ok: true, status: 200, json: { result: w.app ? [{ name: "peoplelake", aud: "aud-1" }] : [] } };
+        if (url.endsWith("/access/apps")) return { ok: true, status: 200, json: { result: w.app ? [{ name: "peoplelake", aud: "aud-1", ...(w.appCookie === false ? {} : ACCESS_COOKIE) }] : [] } };
         return { ok: false, status: 500, json: {} };
       },
       probe: async (url, headers) => {
@@ -427,6 +430,8 @@ describe("doctor: read only, before and after setup", () => {
     expect(forbidden["One-time PIN login method"]?.status).toBe("WARN");
     const otp = byName(await cloudflareChecks(dir, readOnly(fakeDeps({ idps: ["onetimepin"] }).deps), { env }));
     expect(otp["One-time PIN login method"]?.status).toBe("PASS");
+    const loose = byName(await cloudflareChecks(dir, readOnly(fakeDeps({ app: true, appCookie: false }).deps), { env }));
+    expect(loose["Access session cookie settings"]).toMatchObject({ status: "FAIL", detail: 'same_site_cookie_attribute is null, want "lax"; http_only_cookie_attribute is null, want true' });
   });
 
   it("after setup, every check passes, live checks included", async () => {

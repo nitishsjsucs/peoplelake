@@ -73,3 +73,27 @@ describe("role gates", () => {
     expect((await fetchAs("/gated/viewer-or-runner", "hris")).status).toBe(403);
   });
 });
+
+describe("cross-site request refusal", () => {
+  const reset = (headers: Record<string, string>) =>
+    call("/api/ops/reset", "operator", { method: "POST", body: '{"confirm":"peoplelake","x":"="}', headers: { "content-type": "text/plain", ...headers } });
+
+  it("refuses a state-changing request another site's page makes with the owner's session", async () => {
+    // A text/plain form post (no preflight) carrying a valid Access assertion, as a browser would send it.
+    expect((await reset({ "sec-fetch-site": "cross-site", origin: "https://evil.example.workers.dev" })).status).toBe(403);
+    expect((await reset({ "sec-fetch-site": "same-site" })).status).toBe(403);
+    expect((await reset({ origin: "https://evil.example.workers.dev" })).status).toBe(403);
+    expect(await (await reset({ origin: "null" })).json()).toEqual({ error: "cross_site_request" });
+    for (const path of ["/api/replay", "/api/runs"]) {
+      const res = await call(path, "operator", { method: "POST", headers: { "sec-fetch-site": "cross-site" } });
+      expect(res.status).toBe(403);
+    }
+  });
+
+  it("lets same-origin pages, machine clients and reads through", async () => {
+    // Same origin (the dashboard) and no browser headers at all (runner, sources, doctor) reach the route.
+    expect((await reset({ "sec-fetch-site": "same-origin", origin: "http://127.0.0.1" })).status).not.toBe(403);
+    expect((await call("/api/runs", "operator", { method: "POST" })).status).toBe(202);
+    expect((await call("/api/runs", "viewer", { headers: { "sec-fetch-site": "cross-site" } })).status).toBe(200);
+  });
+});
