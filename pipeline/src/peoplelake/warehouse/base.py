@@ -19,6 +19,7 @@ class LoadStats:
     raw_max_load_seq: int | None
     min_effective_date_new: str | None
     received_histogram_10s: list[tuple[int, int]] = field(default_factory=list)
+    bytes_billed: int | None = None  # BigQuery only: bytes billed by the load's queries (the guard sums them)
 
 
 class Warehouse(Protocol):

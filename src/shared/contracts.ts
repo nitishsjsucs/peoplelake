@@ -389,6 +389,8 @@ export const LoadResultSucceeded = z
     received_histogram_10s: Histogram10s,
     warehouse: Engine,
     duration_ms: nonNegInt(),
+    // BigQuery loads: bytes billed by the load's queries; the Coordinator's monthly guard sums them.
+    bytes_billed: nonNegInt().optional(),
   })
   .strict();
 export const LoadResult = z.union([LoadResultSucceeded, z.object(failedOrExpired).strict()]);

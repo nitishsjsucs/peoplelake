@@ -1,16 +1,32 @@
 // Coordinator Durable Object (singleton "global", SQLite): the run ledger, the job queue with leases,
-// single-flight run requests, watermarks, the landed roll cursor and eval faults (SPEC 8.1, 29.4.3). Every method that can be retried
-// is idempotent: enqueueJob on (run, kind, attempt), completeJob on terminal jobs, commitRun on
-// committed runs.
+// single-flight run requests, watermarks, the landed roll cursor, eval faults and the Workers Free plan
+// guards (SPEC 8.1, 29.4.3). Every method that can be retried is idempotent: enqueueJob on (run, kind,
+// attempt), completeJob on terminal jobs, commitRun on committed runs, noteRoll on landed keys.
+//
+// Free plan guards on automatic runs (a lake event or the cron backstop): a minimum interval between
+// automatic run starts (a trigger inside it becomes a pending run the alarm starts later), exponential
+// backoff after consecutive failed runs, a daily cap, and, for every run, a monthly BigQuery guard that
+// lets a run load but skips its transform when the month's billed bytes plus one transform would pass
+// the cap. Operator runs and replays bypass all but the BigQuery guard. Every SQL call goes through
+// MeteredSql; queries are indexed so rows read stay flat as the ledger grows.
 import { DurableObject } from "cloudflare:workers";
 import type { FaultSpec, JobKind, JobSpec, RunMode } from "../../shared/contracts.ts";
+import { BQ_TRANSFORM_RESERVE_BYTES, backoffMinutes, USAGE_FLUSH_MS } from "../../shared/free-budget.ts";
 import { type AppConfig, parseConfig } from "../config.ts";
 import { landingPrefix } from "../lake/landing-keys.ts";
 import type { LandingRoll } from "../lake/landing-roller.ts";
-import { COORDINATOR_DDL, type JobRow, type RunRow } from "./coordinator-sql.ts";
+import { MeteredSql, type SqlUsage, utcDay } from "../lib/metered-sql.ts";
+import { COORDINATOR_ADDED_COLUMNS, COORDINATOR_DDL, type JobRow, type RunRow } from "./coordinator-sql.ts";
 
 export const COORDINATOR_NAME = "global";
 const DISPATCH_QUIET_MS = 90_000;
+
+/** Run reasons that are automatic triggers; the Free plan guards apply only to these. */
+export const AUTOMATIC_REASONS = ["lake-event", "cron", "pending-auto"] as const;
+
+export function isAutomatic(reason: string): boolean {
+  return (AUTOMATIC_REASONS as readonly string[]).includes(reason);
+}
 
 export interface RunParams {
   run_id: string;
@@ -49,9 +65,15 @@ export interface CommitInput {
   rows_inserted: number;
   duplicates_skipped: number;
   transform_skipped: boolean;
+  /** Why the transform did not run: nothing new ("no_new_data") or the monthly BigQuery guard ("bq_budget"). */
+  transform_skip_reason?: string | null;
   digests: Record<string, string> | null;
   checks: { error: Record<string, number>; warn: Record<string, number> } | null;
   metrics_key: string | null;
+  /** The committer's landing cursor at to_snapshot; the cron backstop compares it with landed_through. */
+  landing_through?: string | null;
+  /** Workflow steps the run used, including the release step after the commit. */
+  steps_used?: number;
 }
 
 export interface ExpiredResult {
@@ -70,6 +92,43 @@ export interface RequestRunResult {
   reason?: string;
 }
 
+/** Guard values in effect (production: SPEC 29.6; local: wide). */
+export interface Guards {
+  runMinIntervalSeconds: number;
+  failureBackoffBaseMinutes: number;
+  failureBackoffMaxMinutes: number;
+  autoRunsMaxPerDay: number;
+  bqMonthlyBytesCap: number;
+}
+
+export interface TransformBudget {
+  ok: boolean;
+  month: string;
+  bytes_billed: number;
+  reserve_bytes: number;
+  cap_bytes: number;
+}
+
+export interface BudgetReport {
+  day: string;
+  sql: SqlUsage;
+  runs: {
+    started_today: number;
+    automatic_today: number;
+    automatic_max_per_day: number;
+    min_interval_seconds: number;
+    last_automatic_started_at: number | null;
+    pending_automatic: boolean;
+    consecutive_failures: number;
+    failure_backoff_until: number | null;
+    workflow_steps_today: number;
+  };
+  bigquery: TransformBudget;
+  landing: { landed_through: string | null; committed_through: string | null };
+}
+
+type Block = { reason: "daily_cap" | "failure_backoff" } | { reason: "min_interval"; until: number };
+
 export function runIdFor(generation: number, seq: number): string {
   return `r-${generation.toString(36)}-${String(seq).padStart(6, "0")}`;
 }
@@ -78,14 +137,38 @@ export function coordinatorStub(env: Env): DurableObjectStub<Coordinator> {
   return env.COORDINATOR.get(env.COORDINATOR.idFromName(COORDINATOR_NAME));
 }
 
+function utcMonth(ms: number): string {
+  return utcDay(ms).slice(0, 7);
+}
+
+function utcDayStart(ms: number): number {
+  return Date.parse(`${utcDay(ms)}T00:00:00.000Z`);
+}
+
 export class Coordinator extends DurableObject<Env> {
-  readonly #sql: SqlStorage;
+  readonly #db: MeteredSql;
+  #testGuards: Partial<Guards> = {};
+  #lastUsageFlush = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.#sql = ctx.storage.sql;
-    for (const ddl of COORDINATOR_DDL) this.#sql.exec(ddl);
+    this.#db = new MeteredSql(ctx.storage.sql);
+    this.#migrate();
     if (this.#get("generation") === null) this.#set("generation", String(Math.floor(Date.now() / 1000)));
+    const saved = this.#get("sql_usage");
+    this.#db.restore(saved ? (JSON.parse(saved) as SqlUsage) : null);
+  }
+
+  #migrate(): void {
+    for (const ddl of COORDINATOR_DDL) this.#db.run(ddl);
+    // Columns added after a local state may have been created (nothing is deployed; local only).
+    for (const [table, column, type] of COORDINATOR_ADDED_COLUMNS) {
+      try {
+        this.#db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      } catch {
+        // the column exists already
+      }
+    }
   }
 
   // -- small helpers ------------------------------------------------------------------------------
@@ -94,17 +177,25 @@ export class Coordinator extends DurableObject<Env> {
     return parseConfig(this.env as unknown as Record<string, unknown>, null);
   }
 
+  #guards(): Guards {
+    return { ...this.#config().guards, ...this.#testGuards };
+  }
+
   #get(key: string): string | null {
-    const row = this.#sql.exec<{ value: string | null }>("SELECT value FROM state WHERE key = ?", key).toArray()[0];
-    return row?.value ?? null;
+    return this.#db.first<{ value: string | null }>("SELECT value FROM state WHERE key = ?", key)?.value ?? null;
   }
 
   #set(key: string, value: string | null): void {
     if (value === null) {
-      this.#sql.exec("DELETE FROM state WHERE key = ?", key);
+      this.#db.run("DELETE FROM state WHERE key = ?", key);
       return;
     }
-    this.#sql.exec("INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", key, value);
+    this.#db.run("INSERT INTO state (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", key, value);
+  }
+
+  /** Writes only when the value changes (rows read are cheap on the Free plan, rows written are not). */
+  #setIfChanged(key: string, value: string | null): void {
+    if (this.#get(key) !== value) this.#set(key, value);
   }
 
   #incr(key: string, by = 1): void {
@@ -112,19 +203,19 @@ export class Coordinator extends DurableObject<Env> {
   }
 
   #run(runId: string): RunRow | null {
-    return this.#sql.exec<RunRow>("SELECT * FROM runs WHERE run_id = ?", runId).toArray()[0] ?? null;
+    return this.#db.first<RunRow>("SELECT * FROM runs WHERE run_id = ?", runId);
   }
 
   #job(jobId: string): JobRow | null {
-    return this.#sql.exec<JobRow>("SELECT * FROM jobs WHERE job_id = ?", jobId).toArray()[0] ?? null;
+    return this.#db.first<JobRow>("SELECT * FROM jobs WHERE job_id = ?", jobId);
   }
 
   #watermark(name: string): string | null {
-    return this.#sql.exec<{ value: string | null }>("SELECT value FROM watermarks WHERE name = ?", name).toArray()[0]?.value ?? null;
+    return this.#db.first<{ value: string | null }>("SELECT value FROM watermarks WHERE name = ?", name)?.value ?? null;
   }
 
   #setWatermark(name: string, value: string, runId: string, now: number): void {
-    this.#sql.exec(
+    this.#db.run(
       `INSERT INTO watermarks (name, value, run_id, updated_at) VALUES (?, ?, ?, ?)
        ON CONFLICT (name) DO UPDATE SET value = excluded.value, run_id = excluded.run_id, updated_at = excluded.updated_at`,
       name,
@@ -144,20 +235,23 @@ export class Coordinator extends DurableObject<Env> {
     if (current === null || at < current) await this.ctx.storage.setAlarm(at);
   }
 
+  /** When the pending automatic run may start (the minimum interval after the last automatic start). */
+  #pendingAutoDue(): number | null {
+    if (this.#get("pending_auto") === null) return null;
+    return Number(this.#get("last_auto_run_started_at") ?? "0") + this.#guards().runMinIntervalSeconds * 1000;
+  }
+
   #nextDeadline(cfg: AppConfig): number | null {
-    const claimMs = cfg.jobs.claimTimeoutSeconds * 1000;
-    const runMs = cfg.jobs.runTimeoutMinutes * 60_000;
-    const row = this.#sql
-      .exec<{ next: number | null }>(
-        `SELECT min(deadline) AS next FROM (
-           SELECT created_at + ? AS deadline FROM jobs WHERE status = 'queued'
-           UNION ALL SELECT lease_until FROM jobs WHERE status = 'claimed'
-           UNION ALL SELECT started_at + ? FROM runs WHERE status = 'active')`,
-        claimMs,
-        runMs,
-      )
-      .one();
-    return row.next;
+    const queued = this.#db.first<{ t: number }>("SELECT created_at AS t FROM jobs WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1");
+    const claimed = this.#db.first<{ t: number | null }>("SELECT min(lease_until) AS t FROM jobs WHERE status = 'claimed'");
+    const active = this.#db.first<{ t: number }>("SELECT started_at AS t FROM runs WHERE status = 'active' ORDER BY started_at ASC LIMIT 1");
+    const deadlines = [
+      queued ? queued.t + cfg.jobs.claimTimeoutSeconds * 1000 : null,
+      claimed?.t ?? null,
+      active ? active.t + cfg.jobs.runTimeoutMinutes * 60_000 : null,
+      this.#pendingAutoDue(),
+    ].filter((t): t is number => t !== null);
+    return deadlines.length > 0 ? Math.min(...deadlines) : null;
   }
 
   async #startWorkflow(runId: string, params: RunParams): Promise<void> {
@@ -190,6 +284,59 @@ export class Coordinator extends DurableObject<Env> {
     }
   }
 
+  #flushUsage(now: number): void {
+    if (now - this.#lastUsageFlush < USAGE_FLUSH_MS) return;
+    this.#lastUsageFlush = now;
+    this.#set("sql_usage", JSON.stringify(this.#db.usage()));
+  }
+
+  // -- guards ---------------------------------------------------------------------------------------
+
+  #automaticOn(day: string): number {
+    const raw = this.#get("auto_runs_day");
+    const parsed = raw ? (JSON.parse(raw) as { day: string; count: number }) : null;
+    return parsed?.day === day ? parsed.count : 0;
+  }
+
+  #failureBackoffUntil(): number | null {
+    const failures = Number(this.#get("consecutive_failures") ?? "0");
+    if (failures <= 0) return null;
+    const g = this.#guards();
+    const minutes = backoffMinutes(failures, g.failureBackoffBaseMinutes, g.failureBackoffMaxMinutes);
+    return minutes > 0 ? Number(this.#get("last_failure_at") ?? "0") + minutes * 60_000 : null;
+  }
+
+  #automaticBlock(now: number): Block | null {
+    const g = this.#guards();
+    if (this.#automaticOn(utcDay(now)) >= g.autoRunsMaxPerDay) return { reason: "daily_cap" };
+    const backoffUntil = this.#failureBackoffUntil();
+    if (backoffUntil !== null && now < backoffUntil) return { reason: "failure_backoff" };
+    const lastAuto = Number(this.#get("last_auto_run_started_at") ?? "0");
+    const until = lastAuto + g.runMinIntervalSeconds * 1000;
+    if (lastAuto > 0 && g.runMinIntervalSeconds > 0 && now < until) return { reason: "min_interval", until };
+    return null;
+  }
+
+  #bqMonth(now: number): { month: string; bytes: number } {
+    const raw = this.#get("bq_bytes_month");
+    const parsed = raw ? (JSON.parse(raw) as { month: string; bytes: number }) : null;
+    const month = utcMonth(now);
+    return parsed?.month === month ? parsed : { month, bytes: 0 };
+  }
+
+  #addBqBytes(now: number, bytes: number): void {
+    if (!(bytes > 0)) return;
+    const m = this.#bqMonth(now);
+    this.#set("bq_bytes_month", JSON.stringify({ month: m.month, bytes: m.bytes + bytes }));
+  }
+
+  /** The monthly BigQuery guard: a transform may run while billed bytes plus one transform stay under the cap. */
+  transformBudget(now: number = Date.now()): TransformBudget {
+    const m = this.#bqMonth(now);
+    const cap = this.#guards().bqMonthlyBytesCap;
+    return { ok: m.bytes + BQ_TRANSFORM_RESERVE_BYTES <= cap, month: m.month, bytes_billed: m.bytes, reserve_bytes: BQ_TRANSFORM_RESERVE_BYTES, cap_bytes: cap };
+  }
+
   // -- runs -----------------------------------------------------------------------------------------
 
   generation(): number {
@@ -208,10 +355,24 @@ export class Coordinator extends DurableObject<Env> {
   ): Promise<RequestRunResult> {
     const cfg = this.#config();
     if (!cfg.runsEnabled) return { run_id: null, started: false, reason: "runs_disabled" };
+    const automatic = isAutomatic(reason) && mode === "incremental" && Object.keys(options).length === 0;
+    if (automatic) {
+      const block = this.#automaticBlock(now);
+      if (block !== null) {
+        if (block.reason === "min_interval") {
+          this.#setIfChanged("pending_auto", "1");
+          await this.#armAlarm(block.until);
+        }
+        return { run_id: this.#get("active_run_id"), started: false, reason: block.reason };
+      }
+    }
     const active = this.#get("active_run_id");
     if (active !== null) {
       const pending = this.#get("pending_mode");
-      this.#set("pending_mode", pending === "replay" || mode === "replay" ? "replay" : "incremental");
+      this.#setIfChanged("pending_mode", pending === "replay" || mode === "replay" ? "replay" : "incremental");
+      // An operator's pending request is never subject to the automatic guards.
+      const kind = this.#get("pending_kind");
+      this.#setIfChanged("pending_kind", automatic && kind !== "operator" ? "auto" : "operator");
       return { run_id: active, started: false, reason: "single_flight" };
     }
     const generation = this.generation();
@@ -220,7 +381,14 @@ export class Coordinator extends DurableObject<Env> {
     this.ctx.storage.transactionSync(() => {
       this.#set("run_seq", String(seq));
       this.#set("active_run_id", runId);
-      this.#sql.exec(
+      this.#set("last_run_started_at", String(now));
+      if (automatic) {
+        const day = utcDay(now);
+        this.#set("auto_runs_day", JSON.stringify({ day, count: this.#automaticOn(day) + 1 }));
+        this.#set("last_auto_run_started_at", String(now));
+        if (this.#get("pending_auto") !== null) this.#set("pending_auto", null);
+      }
+      this.#db.run(
         `INSERT INTO runs (run_id, seq, load_seq, mode, reason, status, requested_at, started_at, options_json)
          VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
         runId,
@@ -252,20 +420,19 @@ export class Coordinator extends DurableObject<Env> {
     let from = run.mode === "replay" ? null : this.#watermark("raw_events");
     const rewind = this.#faults().find((f) => f.kind === "rewind_watermark" && f.run_seq === run.seq);
     if (rewind && cfg.evalFaultsEnabled && run.mode === "incremental") {
-      const committed = this.#sql
-        .exec<{ to_snapshot: string | null }>(
-          "SELECT to_snapshot FROM runs WHERE status = 'committed' AND to_snapshot IS NOT NULL AND options_json IS NULL ORDER BY seq DESC",
-        )
-        .toArray();
-      from = committed[rewind.snapshots ?? 1]?.to_snapshot ?? null;
+      const back = rewind.snapshots ?? 1;
+      const committed = this.#db.all<{ to_snapshot: string | null }>(
+        "SELECT to_snapshot FROM runs WHERE status = 'committed' AND to_snapshot IS NOT NULL AND options_json IS NULL ORDER BY seq DESC LIMIT ?",
+        back + 1,
+      );
+      from = committed[back]?.to_snapshot ?? null;
     }
     const transformed = this.#watermark("transformed_through_seq");
-    const previous = this.#sql
-      .exec<{ digests_json: string | null; metrics_key: string | null; to_snapshot: string | null }>(
-        "SELECT digests_json, metrics_key, to_snapshot FROM runs WHERE status = 'committed' AND digests_json IS NOT NULL AND options_json IS NULL ORDER BY seq DESC LIMIT 1",
-      )
-      .toArray()[0];
-    this.#sql.exec("UPDATE runs SET from_snapshot = ? WHERE run_id = ?", from, runId);
+    const published = this.#get("published_json");
+    const previous = published
+      ? (JSON.parse(published) as { digests: Record<string, string> | null; metrics_key: string | null; to_snapshot: string | null })
+      : null;
+    this.#db.run("UPDATE runs SET from_snapshot = ? WHERE run_id = ?", from, runId);
     return {
       run_id: run.run_id,
       seq: run.seq,
@@ -276,7 +443,7 @@ export class Coordinator extends DurableObject<Env> {
       landing_prefix: landingPrefix(this.generation()),
       transformed_through_seq: transformed === null ? null : Number(transformed),
       previous: {
-        digests: previous?.digests_json ? (JSON.parse(previous.digests_json) as Record<string, string>) : null,
+        digests: previous?.digests ?? null,
         metrics_key: previous?.metrics_key ?? null,
         to_snapshot: previous?.to_snapshot ?? null,
       },
@@ -300,9 +467,15 @@ export class Coordinator extends DurableObject<Env> {
       if (!scratch && c.transformed_through_seq !== null) {
         this.#setWatermark("transformed_through_seq", String(c.transformed_through_seq), runId, now);
       }
-      this.#sql.exec(
+      if (!scratch && c.landing_through) this.#setIfChanged("committed_through", c.landing_through);
+      if (!scratch && c.digests !== null) {
+        this.#set("published_json", JSON.stringify({ digests: c.digests, metrics_key: c.metrics_key, to_snapshot: c.to_snapshot, run_id: runId }));
+      }
+      if (this.#get("consecutive_failures") !== null) this.#set("consecutive_failures", null);
+      this.#db.run(
         `UPDATE runs SET status = 'committed', finished_at = ?, published_at = ?, from_snapshot = ?, to_snapshot = ?,
-           rows_inserted = ?, duplicates_skipped = ?, transform_skipped = ?, digests_json = ?, checks_json = ?, metrics_key = ?
+           rows_inserted = ?, duplicates_skipped = ?, transform_skipped = ?, transform_skip_reason = ?, digests_json = ?,
+           checks_json = ?, metrics_key = ?, landing_through = ?, steps_used = ?
          WHERE run_id = ?`,
         now,
         now,
@@ -311,28 +484,36 @@ export class Coordinator extends DurableObject<Env> {
         c.rows_inserted,
         c.duplicates_skipped,
         c.transform_skipped ? 1 : 0,
+        c.transform_skip_reason ?? null,
         c.digests ? JSON.stringify(c.digests) : null,
         c.checks ? JSON.stringify(c.checks) : null,
         c.metrics_key,
+        c.landing_through ?? null,
+        c.steps_used ?? null,
         runId,
       );
       if (!scratch) {
-        this.#sql.exec(
-          `UPDATE run_freshness SET published_by = ?, published_at = ?
-           WHERE published_by IS NULL AND run_id IN (SELECT run_id FROM runs WHERE seq <= ?)`,
-          runId,
-          now,
-          run.seq,
-        );
+        // Single-flight: every unpublished bucket belongs to this run or an earlier one (indexed on published_by).
+        this.#db.run("UPDATE run_freshness SET published_by = ?, published_at = ? WHERE published_by IS NULL", runId, now);
       }
     });
     return { committed: true, duplicate: false };
   }
 
-  failRun(runId: string, error: string, now: number = Date.now()): { failed: boolean } {
+  failRun(runId: string, error: string, now: number = Date.now(), stepsUsed?: number): { failed: boolean } {
     const run = this.#run(runId);
     if (run === null || run.status !== "active") return { failed: false };
-    this.#sql.exec("UPDATE runs SET status = 'failed', finished_at = ?, error = ? WHERE run_id = ?", now, error.slice(0, 2000), runId);
+    this.ctx.storage.transactionSync(() => {
+      this.#db.run(
+        "UPDATE runs SET status = 'failed', finished_at = ?, error = ?, steps_used = ? WHERE run_id = ?",
+        now,
+        error.slice(0, 2000),
+        stepsUsed ?? null,
+        runId,
+      );
+      this.#incr("consecutive_failures");
+      this.#set("last_failure_at", String(now));
+    });
     return { failed: true };
   }
 
@@ -341,24 +522,27 @@ export class Coordinator extends DurableObject<Env> {
     this.#set("active_run_id", null);
     const pending = this.#get("pending_mode") as RunMode | null;
     if (pending === null) return { released: true, next: null };
+    const kind = this.#get("pending_kind");
     this.#set("pending_mode", null);
-    return { released: true, next: await this.requestRun("pending", pending, now) };
+    if (kind !== null) this.#set("pending_kind", null);
+    return { released: true, next: await this.requestRun(kind === "auto" ? "pending-auto" : "pending", pending, now) };
   }
 
   // -- jobs -----------------------------------------------------------------------------------------
 
   async enqueueJob(runId: string, kind: JobKind, attempt: number, input: JobSpec["input"], now: number = Date.now()): Promise<JobSpec> {
-    const existing = this.#sql
-      .exec<{ input_json: string }>("SELECT input_json FROM jobs WHERE run_id = ? AND kind = ? AND attempt = ?", runId, kind, attempt)
-      .toArray()[0];
+    const existing = this.#db.first<{ input_json: string }>(
+      "SELECT input_json FROM jobs WHERE run_id = ? AND kind = ? AND attempt = ?",
+      runId,
+      kind,
+      attempt,
+    );
     if (existing) return JSON.parse(existing.input_json) as JobSpec;
     const run = this.#run(runId);
     if (run === null) throw new Error(`unknown run ${runId}`);
     const cfg = this.#config();
     const faults = cfg.evalFaultsEnabled
-      ? this.#faults().filter(
-          (f) => f.run_seq === run.seq && (f.attempt ?? 1) === attempt && faultAppliesTo(f, kind),
-        )
+      ? this.#faults().filter((f) => f.run_seq === run.seq && (f.attempt ?? 1) === attempt && faultAppliesTo(f, kind))
       : [];
     const spec: JobSpec = {
       job_id: `${runId}-${kind}-a${attempt}`,
@@ -372,7 +556,7 @@ export class Coordinator extends DurableObject<Env> {
       ...(faults.length > 0 ? { faults } : {}),
     };
     this.ctx.storage.transactionSync(() => {
-      this.#sql.exec(
+      this.#db.run(
         "INSERT INTO jobs (job_id, run_id, kind, attempt, status, input_json, created_at) VALUES (?, ?, ?, ?, 'queued', ?, ?)",
         spec.job_id,
         runId,
@@ -381,7 +565,7 @@ export class Coordinator extends DurableObject<Env> {
         JSON.stringify(spec),
         now,
       );
-      this.#sql.exec(`UPDATE runs SET ${kind}_attempts = ? WHERE run_id = ?`, attempt, runId);
+      this.#db.run(`UPDATE runs SET ${kind}_attempts = ? WHERE run_id = ?`, attempt, runId);
     });
     await this.#armAlarm(now + cfg.jobs.claimTimeoutSeconds * 1000);
     return spec;
@@ -399,18 +583,16 @@ export class Coordinator extends DurableObject<Env> {
 
   noteDispatch(jobId: string, ref: string | null, now: number = Date.now()): void {
     this.#set("last_dispatch_at", String(now));
-    this.#sql.exec("UPDATE jobs SET dispatch_ref = ? WHERE job_id = ?", ref, jobId);
+    this.#db.run("UPDATE jobs SET dispatch_ref = ? WHERE job_id = ?", ref, jobId);
   }
 
   async claimJob(workerId: string, now: number = Date.now()): Promise<JobSpec | null> {
     this.#set("runner_last_seen_at", String(now));
-    const row = this.#sql
-      .exec<JobRow>("SELECT * FROM jobs WHERE status = 'queued' ORDER BY created_at ASC, job_id ASC LIMIT 1")
-      .toArray()[0];
+    const row = this.#db.first<JobRow>("SELECT * FROM jobs WHERE status = 'queued' ORDER BY created_at ASC, job_id ASC LIMIT 1");
     if (!row) return null;
     const cfg = this.#config();
     const leaseUntil = now + cfg.jobs.leaseSeconds * 1000;
-    this.#sql.exec(
+    this.#db.run(
       "UPDATE jobs SET status = 'claimed', claimed_at = ?, claimed_by = ?, lease_until = ? WHERE job_id = ?",
       now,
       workerId,
@@ -427,7 +609,7 @@ export class Coordinator extends DurableObject<Env> {
     const row = this.#job(jobId);
     if (row === null || row.status !== "claimed" || row.claimed_by !== workerId) return { ok: false, lease_until: null };
     const leaseUntil = now + this.#config().jobs.leaseSeconds * 1000;
-    this.#sql.exec("UPDATE jobs SET lease_until = ? WHERE job_id = ?", leaseUntil, jobId);
+    this.#db.run("UPDATE jobs SET lease_until = ? WHERE job_id = ?", leaseUntil, jobId);
     return { ok: true, lease_until: leaseUntil };
   }
 
@@ -441,17 +623,11 @@ export class Coordinator extends DurableObject<Env> {
     }
     const status = result["status"] === "succeeded" ? "succeeded" : "failed";
     this.ctx.storage.transactionSync(() => {
-      this.#sql.exec(
-        "UPDATE jobs SET status = ?, finished_at = ?, result_json = ? WHERE job_id = ?",
-        status,
-        now,
-        JSON.stringify(result),
-        jobId,
-      );
+      this.#db.run("UPDATE jobs SET status = ?, finished_at = ?, result_json = ? WHERE job_id = ?", status, now, JSON.stringify(result), jobId);
       if (row.kind === "load" && status === "succeeded") {
         const histogram = (result["received_histogram_10s"] ?? []) as [number, number][];
         for (const [bucket, events] of histogram) {
-          this.#sql.exec(
+          this.#db.run(
             `INSERT INTO run_freshness (run_id, bucket_start_s, events) VALUES (?, ?, ?)
              ON CONFLICT (run_id, bucket_start_s) DO UPDATE SET events = events + excluded.events`,
             row.run_id,
@@ -459,6 +635,10 @@ export class Coordinator extends DurableObject<Env> {
             events,
           );
         }
+      }
+      if (status === "succeeded") {
+        const billed = row.kind === "load" ? result["bytes_billed"] : (result["dbt"] as { bytes_billed?: unknown } | undefined)?.bytes_billed;
+        if (typeof billed === "number") this.#addBqBytes(now, billed);
       }
     });
     await this.#sendEvent(row.run_id, `${row.kind}-result-a${row.attempt}`, result);
@@ -483,39 +663,30 @@ export class Coordinator extends DurableObject<Env> {
 
   #expire(row: JobRow, why: string, now: number): ExpiredResult {
     const result: ExpiredResult = { job_id: row.job_id, run_id: row.run_id, attempt: row.attempt, status: "expired", error: why };
-    this.#sql.exec(
-      "UPDATE jobs SET status = 'expired', finished_at = ?, result_json = ? WHERE job_id = ?",
-      now,
-      JSON.stringify(result),
-      row.job_id,
-    );
+    this.#db.run("UPDATE jobs SET status = 'expired', finished_at = ?, result_json = ? WHERE job_id = ?", now, JSON.stringify(result), row.job_id);
     this.#incr("lease_expirations");
     return result;
   }
 
-  /** Expire overdue jobs (sending `expired` events) and fail runs past RUN_TIMEOUT_MINUTES. */
+  /** Expire overdue jobs (sending `expired` events), fail runs past RUN_TIMEOUT_MINUTES and start a pending
+   * automatic run whose minimum interval has passed. Every query is indexed. */
   async sweep(now: number = Date.now()): Promise<{ expired: number; timed_out: number }> {
     const cfg = this.#config();
-    const overdue = this.#sql
-      .exec<JobRow>(
-        `SELECT * FROM jobs WHERE (status = 'queued' AND created_at + ? <= ?) OR (status = 'claimed' AND lease_until <= ?)
-         ORDER BY created_at ASC, job_id ASC`,
-        cfg.jobs.claimTimeoutSeconds * 1000,
-        now,
-        now,
-      )
-      .toArray();
+    const overdue = [
+      ...this.#db.all<JobRow>(
+        "SELECT * FROM jobs WHERE status = 'queued' AND created_at <= ? ORDER BY created_at ASC, job_id ASC",
+        now - cfg.jobs.claimTimeoutSeconds * 1000,
+      ),
+      ...this.#db.all<JobRow>("SELECT * FROM jobs WHERE status = 'claimed' AND lease_until <= ?", now),
+    ].sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0) || a.job_id.localeCompare(b.job_id));
     for (const row of overdue) {
       const result = this.#expire(row, row.status === "queued" ? "claim timeout" : "lease expired", now);
       await this.#sendEvent(row.run_id, `${row.kind}-result-a${row.attempt}`, result);
     }
-    const stale = this.#sql
-      .exec<{ run_id: string }>(
-        "SELECT run_id FROM runs WHERE status = 'active' AND started_at + ? <= ?",
-        cfg.jobs.runTimeoutMinutes * 60_000,
-        now,
-      )
-      .toArray();
+    const stale = this.#db.all<{ run_id: string }>(
+      "SELECT run_id FROM runs WHERE status = 'active' AND started_at <= ?",
+      now - cfg.jobs.runTimeoutMinutes * 60_000,
+    );
     for (const { run_id } of stale) {
       this.failRun(run_id, "run timeout", now);
       if (this.#get("test_start_workflows") !== "0") {
@@ -527,13 +698,20 @@ export class Coordinator extends DurableObject<Env> {
       }
       await this.releaseRun(run_id, now);
     }
+    const due = this.#pendingAutoDue();
+    if (due !== null && now >= due && this.#get("active_run_id") === null) {
+      this.#set("pending_auto", null);
+      if (cfg.runsEnabled) await this.requestRun("pending-auto", "incremental", now);
+    }
     const next = this.#nextDeadline(cfg);
     if (next !== null) await this.#armAlarm(Math.max(next, now + 1000));
     return { expired: overdue.length, timed_out: stale.length };
   }
 
   override async alarm(): Promise<void> {
-    await this.sweep(Date.now());
+    const now = Date.now();
+    await this.sweep(now);
+    this.#flushUsage(now);
   }
 
   // -- triggers and signals -------------------------------------------------------------------------
@@ -561,46 +739,53 @@ export class Coordinator extends DurableObject<Env> {
     this.#incr("malformed_lake_events", n);
   }
 
-  /** Cron logic (SPEC 29.4.3): sweeps, a run when a roll landed after the last run started, heartbeat. */
-  async tick(now: number = Date.now()): Promise<{ swept: { expired: number; timed_out: number }; requested: string[] }> {
+  /** Cron every 5 minutes (SPEC 29.4.3): sweeps, the usage flush and the backstop, which requests an
+   * automatic run when a landed roll is past the committed cursor and no run is active. */
+  async tick(now: number = Date.now()): Promise<{ swept: { expired: number; timed_out: number }; requested: string[]; blocked: string | null }> {
     const cfg = this.#config();
     const swept = await this.sweep(now);
+    this.#flushUsage(now);
     const requested: string[] = [];
-    if (!cfg.runsEnabled) return { swept, requested };
-    const lastRoll = this.#get("last_roll_json");
-    const notedAt = lastRoll ? Number((JSON.parse(lastRoll) as { noted_at?: number }).noted_at ?? 0) : 0;
-    const lastStarted = this.#sql.exec<{ s: number | null }>("SELECT max(started_at) AS s FROM runs").one().s;
-    if (notedAt > 0 && (lastStarted === null || notedAt > lastStarted)) {
-      await this.requestRun("cron", "incremental", now);
-      requested.push("cron");
+    let blocked: string | null = null;
+    if (!cfg.runsEnabled) return { swept, requested, blocked };
+    const landed = this.#get("landed_through");
+    const committed = this.#get("committed_through");
+    if (landed !== null && (committed === null || landed > committed) && this.#get("active_run_id") === null) {
+      const res = await this.requestRun("cron", "incremental", now);
+      if (res.started) requested.push("cron");
+      else blocked = res.reason ?? null;
     }
-    if (cfg.heartbeatMinutes > 0 && (lastStarted === null || now - lastStarted >= cfg.heartbeatMinutes * 60_000)) {
+    const lastStarted = this.#get("last_run_started_at");
+    if (cfg.heartbeatMinutes > 0 && (lastStarted === null || now - Number(lastStarted) >= cfg.heartbeatMinutes * 60_000)) {
       await this.requestRun("heartbeat", "incremental", now);
       requested.push("heartbeat");
     }
-    return { swept, requested };
+    return { swept, requested, blocked };
   }
 
   // -- reads ----------------------------------------------------------------------------------------
 
-  listRuns(limit = 50): RunRow[] {
-    return this.#sql.exec<RunRow>("SELECT * FROM runs ORDER BY seq DESC LIMIT ?", Math.max(1, Math.min(limit, 1000))).toArray();
+  /** Newest first, or (with `since`, epoch ms) runs started at or after it, oldest first. At most 200. */
+  listRuns(limit = 50, since: number | null = null): RunRow[] {
+    const n = Math.max(1, Math.min(Number.isFinite(limit) ? limit : 50, 200));
+    if (since !== null) {
+      return this.#db.all<RunRow>("SELECT * FROM runs WHERE started_at >= ? ORDER BY started_at ASC, seq ASC LIMIT ?", since, n);
+    }
+    return this.#db.all<RunRow>("SELECT * FROM runs ORDER BY seq DESC LIMIT ?", n);
   }
 
   getRun(runId: string): { run: RunRow; jobs: JobRow[] } | null {
     const run = this.#run(runId);
     if (run === null) return null;
-    const jobs = this.#sql.exec<JobRow>("SELECT * FROM jobs WHERE run_id = ? ORDER BY kind DESC, attempt ASC", runId).toArray();
+    const jobs = this.#db.all<JobRow>("SELECT * FROM jobs WHERE run_id = ? ORDER BY kind DESC, attempt ASC", runId);
     return { run, jobs };
   }
 
   freshnessRows(sinceMs: number): { run_id: string; bucket_start_s: number; events: number; published_by: string | null; published_at: number | null }[] {
-    return this.#sql
-      .exec<{ run_id: string; bucket_start_s: number; events: number; published_by: string | null; published_at: number | null }>(
-        "SELECT run_id, bucket_start_s, events, published_by, published_at FROM run_freshness WHERE bucket_start_s * 1000 >= ? ORDER BY bucket_start_s ASC",
-        sinceMs,
-      )
-      .toArray();
+    return this.#db.all<{ run_id: string; bucket_start_s: number; events: number; published_by: string | null; published_at: number | null }>(
+      "SELECT run_id, bucket_start_s, events, published_by, published_at FROM run_freshness WHERE bucket_start_s >= ? ORDER BY bucket_start_s ASC",
+      Math.ceil(sinceMs / 1000),
+    );
   }
 
   status(): Record<string, unknown> {
@@ -609,6 +794,8 @@ export class Coordinator extends DurableObject<Env> {
       "run_seq",
       "active_run_id",
       "pending_mode",
+      "pending_kind",
+      "pending_auto",
       "last_ingest_at",
       "last_lake_event_at",
       "runner_last_seen_at",
@@ -624,6 +811,8 @@ export class Coordinator extends DurableObject<Env> {
       "landed_through",
       "landed_rolls",
       "landed_records",
+      "committed_through",
+      "consecutive_failures",
     ];
     const out: Record<string, unknown> = {};
     for (const k of keys) out[k] = this.#get(k);
@@ -632,6 +821,39 @@ export class Coordinator extends DurableObject<Env> {
     const roll = this.#get("last_roll_json");
     out["last_roll"] = roll ? JSON.parse(roll) : null;
     return out;
+  }
+
+  /** Free plan budget state for GET /api/ops/budget (operator). */
+  budget(now: number = Date.now()): BudgetReport {
+    const g = this.#guards();
+    const dayStart = utcDayStart(now);
+    const today = this.#db.first<{ runs: number; steps: number | null }>(
+      "SELECT count(*) AS runs, sum(steps_used) AS steps FROM runs WHERE started_at >= ?",
+      dayStart,
+    );
+    const lastAuto = this.#get("last_auto_run_started_at");
+    return {
+      day: utcDay(now),
+      sql: this.#db.usage(),
+      runs: {
+        started_today: today?.runs ?? 0,
+        automatic_today: this.#automaticOn(utcDay(now)),
+        automatic_max_per_day: g.autoRunsMaxPerDay,
+        min_interval_seconds: g.runMinIntervalSeconds,
+        last_automatic_started_at: lastAuto === null ? null : Number(lastAuto),
+        pending_automatic: this.#get("pending_auto") !== null,
+        consecutive_failures: Number(this.#get("consecutive_failures") ?? "0"),
+        failure_backoff_until: this.#failureBackoffUntil(),
+        workflow_steps_today: today?.steps ?? 0,
+      },
+      bigquery: this.transformBudget(now),
+      landing: { landed_through: this.#get("landed_through"), committed_through: this.#get("committed_through") },
+    };
+  }
+
+  /** SQL rows read and written today by this object. */
+  sqlUsage(): SqlUsage {
+    return this.#db.usage();
   }
 
   // -- tokens, faults, test hooks ---------------------------------------------------------------------
@@ -648,7 +870,7 @@ export class Coordinator extends DurableObject<Env> {
   installFaults(faults: FaultSpec[]): { installed: number } {
     if (!this.#config().evalFaultsEnabled) throw new Error("faults are disabled (EVAL_FAULTS_ENABLED=false)");
     this.#set("faults_json", JSON.stringify(faults));
-    for (const row of this.#sql.exec<{ key: string }>("SELECT key FROM state WHERE key LIKE 'fault_consumed:%'").toArray()) {
+    for (const row of this.#db.all<{ key: string }>("SELECT key FROM state WHERE key LIKE 'fault_consumed:%'")) {
       this.#set(row.key, null);
     }
     return { installed: faults.length };
@@ -668,22 +890,24 @@ export class Coordinator extends DurableObject<Env> {
     return true;
   }
 
-  /** Guarded full reset of the ledger (runbook prod-reset.md). A new generation keeps run ids unique. */
+  /** Guarded full reset of the ledger (runbook prod-reset.md). A new generation keeps run ids unique and
+   * makes the committer list only the new generation's landing rolls. */
   async resetAll(confirm: string, now: number = Date.now()): Promise<{ reset: boolean; generation: number }> {
     if (confirm !== "peoplelake") throw new Error("reset needs confirm=peoplelake");
     if (this.#get("active_run_id") !== null) throw new Error("a run is active; wait for it or disable runs first");
     const previous = this.generation();
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
-    for (const ddl of COORDINATOR_DDL) this.#sql.exec(ddl);
+    this.#migrate();
     const generation = Math.max(Math.floor(now / 1000), previous + 1);
     this.#set("generation", String(generation));
     return { reset: true, generation };
   }
 
-  setTestOptions(options: { startWorkflows: boolean }): void {
+  setTestOptions(options: { startWorkflows?: boolean; guards?: Partial<Guards> }): void {
     if (this.#config().environment !== "local") throw new Error("test options exist only locally");
-    this.#set("test_start_workflows", options.startWorkflows ? null : "0");
+    if (options.startWorkflows !== undefined) this.#set("test_start_workflows", options.startWorkflows ? null : "0");
+    if (options.guards !== undefined) this.#testGuards = { ...options.guards };
   }
 }
 

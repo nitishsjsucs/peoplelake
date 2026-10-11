@@ -33,6 +33,22 @@ export function mountOpsApi(app: App): void {
     });
   });
 
+  // Free plan budget state (SPEC 29.4.3): this repo's Durable Object rows read and written today, run
+  // guards, Workflow steps today and BigQuery bytes this month. `npm run doctor` prints it.
+  app.get("/api/ops/budget", requireRole("operator"), async (c) => {
+    const coordinator = await coordinatorStub(c.env).budget();
+    const landing = await landingRollerStub(c.env).sqlUsage();
+    return c.json({
+      ...coordinator,
+      durable_objects: {
+        rows_read_today: coordinator.sql.rows_read + landing.rows_read,
+        rows_written_today: coordinator.sql.rows_written + landing.rows_written,
+        coordinator: coordinator.sql,
+        landing_roller: landing,
+      },
+    });
+  });
+
   app.get("/api/ops/dispatch", requireRole("operator"), async (c) => {
     const config = c.get("config");
     if (config.runnerDispatch !== "cloudrun") return c.json({ ok: false, mode: "poll", reason: "RUNNER_DISPATCH=poll (local runner)" });

@@ -118,6 +118,7 @@ class BigQueryWarehouse:
         self.project = project
         self.location = location
         self.suffix = suffix
+        self.bytes_billed = 0  # every query this object ran (the monthly guard sums the loads' share)
 
     def dataset(self, base: str) -> str:
         return f"{self.project}.{base}_{self.suffix}" if self.suffix else f"{self.project}.{base}"
@@ -136,6 +137,7 @@ class BigQueryWarehouse:
         config = bigquery.QueryJobConfig(query_parameters=params or [])
         job = self.client.query(sql, job_config=config, location=self.location)
         job.result()
+        self.bytes_billed += int(getattr(job, "total_bytes_billed", None) or 0)
         return job
 
     def ensure_raw(self) -> None:
@@ -153,6 +155,7 @@ class BigQueryWarehouse:
     ) -> LoadStats:
         from google.cloud import bigquery
 
+        billed_before = self.bytes_billed
         stage = f"{self.dataset('pl_raw')}.{stage_name(job_id)}"
         snaps = pa.array(snapshot_ids if snapshot_ids is not None else [None] * batch.num_rows, type=pa.string())
         staged = (
@@ -211,6 +214,7 @@ class BigQueryWarehouse:
             raw_max_load_seq=None if raw_max is None else int(raw_max),
             min_effective_date_new=stats["min_effective_date_new"],
             received_histogram_10s=[(int(h["bucket"]), int(h["n"])) for h in stats["histogram"]],
+            bytes_billed=self.bytes_billed - billed_before,
         )
 
     def fetch_model(self, model: str, suffix: str | None = None) -> pa.Table:

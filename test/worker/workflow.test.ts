@@ -33,12 +33,16 @@ describe("WarehouseRunWorkflow", () => {
       run_id: runId,
       status: "committed",
       transform_skipped: false,
+      transform_skip_reason: null,
       rows_inserted: 10,
       load_attempts: 1,
       transform_attempts: 1,
+      steps_used: 8,
     });
     const ledger = await coordinator().getRun(runId);
     expect(ledger?.run.status).toBe("committed");
+    // A committed run uses exactly 8 Workflow steps (Workers Free: 3,000 a day per account).
+    expect(ledger?.run.steps_used).toBe(8);
     const status = await coordinator().status();
     expect(status["watermark"]).toBe(`snap-${runId}`);
     expect(status["active_run_id"]).toBeNull();
@@ -107,6 +111,38 @@ describe("WarehouseRunWorkflow", () => {
     expect(ledger?.jobs.filter((j) => j.kind === "transform").map((j) => j.status)).toEqual(["failed", "failed", "failed"]);
     expect((await coordinator().status())["active_run_id"]).toBeNull();
     expect((await coordinator().status())["watermark"]).toBeNull();
+    expect(ledger?.run.steps_used).toBe(11); // open, load (2), transform 3 x 2, fail-run, release
+    await instance.dispose();
+  });
+
+  it("a run whose every attempt times out uses at most 25 Workflow steps", async () => {
+    const runId = await coordinator().nextRunId();
+    const instance = await introspectWorkflowInstance(env.WAREHOUSE_RUN, runId);
+    await instance.modify(async (m) => {
+      await m.disableRetryDelays();
+      for (const a of [1, 2, 3]) await m.forceEventTimeout({ name: `wait:load:a${a}` });
+    });
+    await coordinator().requestRun("test");
+    await instance.waitForStatus("errored");
+    const run = (await coordinator().getRun(runId))?.run;
+    expect(run?.status).toBe("failed");
+    expect(run?.steps_used).toBeLessThanOrEqual(25);
+    expect(run?.steps_used).toBe(12); // open, 3 x (dispatch, wait, check), fail-run, release
+    await instance.dispose();
+  });
+
+  it("the monthly BigQuery guard commits the load and skips the transform with bq_budget", async () => {
+    await coordinator().setTestOptions({ guards: { bqMonthlyBytesCap: 1 } });
+    const runner = startRunner(happy);
+    const { runId, instance } = await startRun();
+    await instance.waitForStatus("complete");
+    const claimed = await runner.stop();
+    expect(claimed.map((j) => j.kind)).toEqual(["load"]);
+    expect(await instance.getOutput()).toMatchObject({ transform_skipped: true, transform_skip_reason: "bq_budget", steps_used: 7 });
+    const run = (await coordinator().getRun(runId))?.run;
+    expect([run?.status, run?.transform_skip_reason, run?.steps_used]).toEqual(["committed", "bq_budget", 7]);
+    expect((await coordinator().status())["watermark"]).toBe(`snap-${runId}`);
+    expect((await coordinator().status())["transformed_through_seq"]).toBeNull(); // next month's first run transforms
     await instance.dispose();
   });
 
@@ -162,10 +198,11 @@ describe("WarehouseRunWorkflow", () => {
     await two.instance.waitForStatus("complete");
     const claimed = await runner.stop();
     expect(claimed.map((j) => j.kind)).toEqual(["load", "transform", "load"]);
-    expect(await two.instance.getOutput()).toMatchObject({ transform_skipped: true, transform_attempts: 0 });
+    expect(await two.instance.getOutput()).toMatchObject({ transform_skipped: true, transform_skip_reason: "no_new_data", transform_attempts: 0, steps_used: 6 });
     const run2 = (await coordinator().getRun(two.runId))?.run;
     const run1 = (await coordinator().getRun(one.runId))?.run;
     expect(run2?.transform_skipped).toBe(1);
+    expect(run2?.steps_used).toBe(6);
     expect(run2?.digests_json).toBe(run1?.digests_json);
     expect(run2?.to_snapshot).toBe(run1?.to_snapshot);
     await one.instance.dispose();

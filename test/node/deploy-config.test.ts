@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { PLACEHOLDERS, type ProdState } from "../../scripts/lib/prod-state.ts";
+import { CRON_EXPRESSION, PRODUCTION_GUARDS } from "../../src/shared/free-budget.ts";
 import { predeployProblems } from "../../scripts/predeploy-check.ts";
 import { parseJsonc, renderWrangler } from "../../scripts/render-wrangler.ts";
 
@@ -12,6 +13,22 @@ type Config = {
   workers_dev: boolean;
   env: { production: { name: string; workers_dev: boolean; vars: Record<string, string>; pipelines?: unknown; r2_buckets: { binding: string; bucket_name: string }[] } };
 };
+
+describe("Workers Free plan configuration", () => {
+  type Env = { vars: Record<string, string>; triggers?: { crons: string[] } };
+  const config = parseJsonc<Env & { env: { production: Env } }>(wrangler, "wrangler.jsonc");
+
+  it("declares exactly one cron, every 5 minutes, in every environment", () => {
+    expect(CRON_EXPRESSION).toBe("*/5 * * * *");
+    expect(config.triggers?.crons).toEqual([CRON_EXPRESSION]);
+    expect(config.env.production.triggers?.crons).toEqual([CRON_EXPRESSION]);
+  });
+
+  it("sets the production run guards to the Free plan values (heartbeat off)", () => {
+    const prod = config.env.production.vars;
+    for (const [name, value] of Object.entries(PRODUCTION_GUARDS)) expect(prod[name], name).toBe(String(value));
+  });
+});
 
 describe("production config", () => {
   it("names the local Worker differently from production and keeps it off workers.dev", () => {

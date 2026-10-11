@@ -1,5 +1,5 @@
 """Local stack manager (SPEC 10.4): wrangler dev on 127.0.0.1:8791 (inspector 9241), the runner loop and,
-in live mode, a ticker that calls the local scheduled handler every 60 s. Every process runs in its own
+in live mode, a ticker that calls the local scheduled handler every 300 s (the production cron). Every process runs in its own
 process group and is killed (SIGTERM, then SIGKILL after 5 s) on `stack down`, on exit and on signals.
 While the stack is up, only the runner process opens the DuckDB file (ADR 0008).
 """
@@ -319,9 +319,13 @@ def stop_recorded(state_dir: Path | None = None) -> None:
     path.unlink(missing_ok=True)
 
 
-def ticker(worker_url: str, interval: float = 60.0) -> None:
-    """Calls the local scheduled handler (the stand-in for the Workers cron) every `interval` seconds."""
-    paths = ["/cdn-cgi/handler/scheduled?cron=*+*+*+*+*", "/__scheduled?cron=*+*+*+*+*"]
+TICKER_SECONDS = 300.0  # the production cron `*/5 * * * *` (SPEC 29.4.3)
+
+
+def ticker(worker_url: str, interval: float = TICKER_SECONDS) -> None:
+    """Calls the local scheduled handler (the stand-in for the Workers cron `*/5 * * * *`) every `interval`
+    seconds."""
+    paths = ["/cdn-cgi/handler/scheduled?cron=*/5+*+*+*+*", "/__scheduled?cron=*/5+*+*+*+*"]
     while True:
         for path in paths:
             try:

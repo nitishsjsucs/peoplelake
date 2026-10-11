@@ -145,3 +145,22 @@ def test_recommit_fault_reappends_files(runner):
     _, load = worker.results[-1]
     assert load["lake"]["snapshots_read"] == 3
     assert (load["rows_read"], load["rows_inserted"]) == (7500, 0)
+
+
+def test_worker_client_pages_runs_forward_from_since():
+    from peoplelake.runner.client import WorkerClient
+
+    runs = [{"run_id": f"r-{i}", "seq": i, "started_at": 1000 + i} for i in range(1, 451)]
+    seen = []
+
+    class Paging(WorkerClient):
+        def __init__(self):
+            pass
+
+        def runs(self, limit=200, fmt="full", since=None):
+            seen.append(since)
+            return [r for r in runs if r["started_at"] >= (since or 0)][:200]
+
+    out = Paging().all_runs("summary", since=0)
+    assert [r["seq"] for r in out] == list(range(1, 451))
+    assert seen == [0, 1200, 1399]  # the third page is short, so paging stops

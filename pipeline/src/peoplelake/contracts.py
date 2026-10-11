@@ -473,6 +473,8 @@ class LoadResult(Strict):
     received_histogram_10s: Histogram
     warehouse: Literal["duckdb", "bigquery"]
     duration_ms: NonNegInt
+    bytes_billed: NonNegInt | None = None  # BigQuery loads: the monthly guard sums it with the transforms'
+    _no_null = _omit_not_null("bytes_billed")
 
 
 class DbtStats(Strict):

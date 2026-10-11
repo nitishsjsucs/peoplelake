@@ -11,6 +11,7 @@
 // runner commits the rolls to the Iceberg table (pipeline/src/peoplelake/lake/committer.py).
 import { DurableObject } from "cloudflare:workers";
 import { parseConfig } from "../config.ts";
+import { USAGE_FLUSH_MS } from "../../shared/free-budget.ts";
 import { MeteredSql, type SqlUsage } from "../lib/metered-sql.ts";
 import { coordinatorStub } from "../orchestration/coordinator.ts";
 import { rollKey } from "./landing-keys.ts";
@@ -89,6 +90,7 @@ export class LandingRoller extends DurableObject<Env> {
   /** Since this object started (in memory, so counting costs no row writes). */
   #rollsDone = 0;
   #lakeEventsSent = 0;
+  #lastUsageFlush = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -98,6 +100,15 @@ export class LandingRoller extends DurableObject<Env> {
     );
     this.#db.run(`CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
     this.#bufferedBytes = this.#db.first<{ b: number }>(`SELECT coalesce(sum(length(CAST(ndjson AS BLOB))), 0) AS b FROM buffer`)?.b ?? 0;
+    const saved = this.#state("sql_usage");
+    this.#db.restore(saved ? (JSON.parse(saved) as SqlUsage) : null);
+  }
+
+  /** Persist today's SQL counters at most every 5 minutes (one row write). */
+  #flushUsage(now: number): void {
+    if (now - this.#lastUsageFlush < USAGE_FLUSH_MS) return;
+    this.#lastUsageFlush = now;
+    this.#setState("sql_usage", JSON.stringify(this.#db.usage()));
   }
 
   // -- settings and small helpers ---------------------------------------------------------------------
@@ -230,6 +241,7 @@ export class LandingRoller extends DurableObject<Env> {
 
   override async alarm(): Promise<void> {
     this.#alarmAt = null;
+    this.#flushUsage(Date.now());
     try {
       await this.roll();
       this.#failures = 0;

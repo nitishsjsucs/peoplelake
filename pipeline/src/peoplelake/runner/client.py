@@ -100,8 +100,24 @@ class WorkerClient:
         body = {k: v for k, v in (("to_snapshot", to_snapshot), ("dataset_suffix", dataset_suffix)) if v is not None}
         return self._json("POST", "/api/replay", json=body)
 
-    def runs(self, limit: int = 200, fmt: str = "full") -> list[dict]:
-        return self._json("GET", f"/api/runs?limit={limit}&format={fmt}")["runs"]
+    def runs(self, limit: int = 200, fmt: str = "full", since: int | None = None) -> list[dict]:
+        """At most 200 runs (the Worker's page size): the newest first, or started at or after `since`."""
+        query = f"/api/runs?limit={min(limit, 200)}&format={fmt}" + (f"&since={since}" if since is not None else "")
+        return self._json("GET", query)["runs"]
+
+    def all_runs(self, fmt: str = "full", since: int = 0) -> list[dict]:
+        """Every run started at or after `since` (epoch ms), oldest first, paging 200 at a time."""
+        out: dict[str, dict] = {}
+        cursor = since
+        while True:
+            page = self.runs(200, fmt, since=cursor)
+            new = [r for r in page if r["run_id"] not in out]
+            for r in page:
+                out[r["run_id"]] = r
+            if len(page) < 200 or not new:
+                break
+            cursor = max(int(r["started_at"] or 0) for r in page)
+        return sorted(out.values(), key=lambda r: r["seq"])
 
     def run(self, run_id: str) -> dict:
         return self._json("GET", f"/api/runs/{run_id}")

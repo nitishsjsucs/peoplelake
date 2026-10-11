@@ -32,6 +32,12 @@
     "LANDING_ROLL_MAX_BYTES": "8388608",
     "LANDING_MAX_BUFFER_BYTES": "67108864",
     "HEARTBEAT_MINUTES": "0",
+    // Local guards are wide so evals stay fast; production uses the Free plan values below.
+    "RUN_MIN_INTERVAL_SECONDS": "0",
+    "FAILURE_BACKOFF_BASE_MINUTES": "0",
+    "FAILURE_BACKOFF_MAX_MINUTES": "360",
+    "AUTO_RUNS_MAX_PER_DAY": "100000",
+    "BQ_MONTHLY_BYTES_CAP": "275000000000",
     "RUNNER_SEEN_WINDOW_SECONDS": "60",
     "EVAL_FAULTS_ENABLED": "true",
     "AI_PROVIDER": "stub",
@@ -65,7 +71,8 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Coordinator", "LandingRoller"] }],
   "workflows": [{ "name": "peoplelake-warehouse-run", "binding": "WAREHOUSE_RUN", "class_name": "WarehouseRunWorkflow" }],
-  "triggers": { "crons": ["* * * * *"] },
+  // One cron (1 of the account's 5 Cron Triggers): sweeps and the backstop every 5 minutes.
+  "triggers": { "crons": ["*/5 * * * *"] },
   "env": {
     "production": {
       "name": "peoplelake",
@@ -90,7 +97,12 @@
         "LANDING_ROLL_SECONDS": "60",
         "LANDING_ROLL_MAX_BYTES": "8388608",
         "LANDING_MAX_BUFFER_BYTES": "67108864",
-        "HEARTBEAT_MINUTES": "360",
+        "HEARTBEAT_MINUTES": "0",
+        "RUN_MIN_INTERVAL_SECONDS": "240",
+        "FAILURE_BACKOFF_BASE_MINUTES": "5",
+        "FAILURE_BACKOFF_MAX_MINUTES": "360",
+        "AUTO_RUNS_MAX_PER_DAY": "30",
+        "BQ_MONTHLY_BYTES_CAP": "275000000000",
         "RUNNER_SEEN_WINDOW_SECONDS": "60",
         "EVAL_FAULTS_ENABLED": "false",
         "AI_PROVIDER": "workers-ai",
@@ -123,7 +135,7 @@
         ]
       },
       "workflows": [{ "name": "peoplelake-warehouse-run", "binding": "WAREHOUSE_RUN", "class_name": "WarehouseRunWorkflow" }],
-      "triggers": { "crons": ["* * * * *"] }
+      "triggers": { "crons": ["*/5 * * * *"] }
     }
   }
 }

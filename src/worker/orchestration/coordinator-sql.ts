@@ -1,6 +1,7 @@
-// Coordinator ledger schema (SPEC 8.1). run_freshness also records which committed run published the
-// events a load introduced (published_by, published_at), so a run whose transform failed is attributed
-// to the next committed run.
+// Coordinator ledger schema (SPEC 8.1, 29.4.3). run_freshness also records which committed run published
+// the events a load introduced (published_by, published_at), so a run whose transform failed is attributed
+// to the next committed run. The indexes keep every per-tick and per-request query's rows read flat as the
+// ledger grows (the Workers Free plan allows 5 million rows read a day per account).
 export const COORDINATOR_DDL = [
   `CREATE TABLE IF NOT EXISTS runs (
     run_id TEXT PRIMARY KEY,
@@ -12,7 +13,8 @@ export const COORDINATOR_DDL = [
     requested_at INTEGER, started_at INTEGER, finished_at INTEGER, published_at INTEGER,
     from_snapshot TEXT, to_snapshot TEXT, rows_inserted INTEGER, duplicates_skipped INTEGER,
     transform_skipped INTEGER DEFAULT 0, load_attempts INTEGER DEFAULT 0, transform_attempts INTEGER DEFAULT 0,
-    digests_json TEXT, checks_json TEXT, metrics_key TEXT, error TEXT, options_json TEXT
+    digests_json TEXT, checks_json TEXT, metrics_key TEXT, error TEXT, options_json TEXT,
+    transform_skip_reason TEXT, landing_through TEXT, steps_used INTEGER
   )`,
   `CREATE TABLE IF NOT EXISTS jobs (
     job_id TEXT PRIMARY KEY,
@@ -32,6 +34,19 @@ export const COORDINATOR_DDL = [
     PRIMARY KEY (run_id, bucket_start_s)
   )`,
   `CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT)`,
+  `CREATE INDEX IF NOT EXISTS jobs_status_created ON jobs (status, created_at)`,
+  `CREATE INDEX IF NOT EXISTS jobs_run ON jobs (run_id)`,
+  `CREATE INDEX IF NOT EXISTS runs_status_started ON runs (status, started_at)`,
+  `CREATE INDEX IF NOT EXISTS runs_started ON runs (started_at)`,
+  `CREATE INDEX IF NOT EXISTS run_freshness_bucket ON run_freshness (bucket_start_s)`,
+  `CREATE INDEX IF NOT EXISTS run_freshness_published_by ON run_freshness (published_by)`,
+];
+
+/** Columns added to tables a local state may have created earlier: [table, column, type]. */
+export const COORDINATOR_ADDED_COLUMNS: readonly (readonly [string, string, string])[] = [
+  ["runs", "transform_skip_reason", "TEXT"],
+  ["runs", "landing_through", "TEXT"],
+  ["runs", "steps_used", "INTEGER"],
 ];
 
 export type RunRow = {
@@ -57,6 +72,9 @@ export type RunRow = {
   metrics_key: string | null;
   error: string | null;
   options_json: string | null;
+  transform_skip_reason: string | null;
+  landing_through: string | null;
+  steps_used: number | null;
 };
 
 export type JobRow = {

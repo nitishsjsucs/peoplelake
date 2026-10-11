@@ -1,6 +1,7 @@
-import { env, reset } from "cloudflare:test";
+import { env, reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { coordinatorStub, runIdFor } from "../../src/worker/orchestration/coordinator.ts";
+import { BQ_TRANSFORM_RESERVE_BYTES, backoffMinutes } from "../../src/shared/free-budget.ts";
+import { type Coordinator, coordinatorStub, runIdFor } from "../../src/worker/orchestration/coordinator.ts";
 import { loadOk } from "../helpers/runner.ts";
 
 const c = () => coordinatorStub(env);
@@ -218,23 +219,8 @@ describe("Coordinator dispatch window and faults", () => {
     expect((await c().status())["faults_fired"]).toBe("1");
   });
 
-  it("notes each landing roll once, in key order, and the cron starts a run only for a roll noted after the last run started", async () => {
-    const roll = (n: number, at: string) => ({
-      key: `landing/raw_events/g1/r${String(n).padStart(10, "0")}.ndjson`,
-      etag: `e${n}`,
-      size: 100,
-      records: 5,
-      requests: 2,
-      first_received_at: at,
-      last_received_at: at,
-    });
-    const finish = async () => {
-      const runId = (await c().status())["active_run_id"] as string;
-      await c().failRun(runId, "x");
-      await c().releaseRun(runId);
-    };
+  it("notes each landing roll once, in key order", async () => {
     const t0 = Date.now();
-    expect((await c().tick(t0)).requested).toEqual([]);
     expect(await c().noteRoll(roll(1, "2026-10-10T00:00:01.000Z"), t0)).toEqual({ noted: true });
     expect(await c().noteRoll(roll(1, "2026-10-10T00:00:01.000Z"), t0)).toEqual({ noted: false });
     const status = await c().status();
@@ -242,12 +228,196 @@ describe("Coordinator dispatch window and faults", () => {
     expect(status["landed_rolls"]).toBe("1");
     expect(status["landed_records"]).toBe("5");
     expect(status["last_ingest_at"]).toBe(String(Date.parse("2026-10-10T00:00:01.000Z")));
-    expect((await c().tick(t0 + 1000)).requested).toEqual(["cron"]);
-    await finish();
-    expect((await c().tick(t0 + 300_000)).requested).toEqual([]);
-    await c().noteRoll(roll(2, "2026-10-10T00:01:01.000Z"), t0 + 400_000);
-    expect((await c().tick(t0 + 400_001)).requested).toEqual(["cron"]);
-    expect((await c().status())["landed_rolls"]).toBe("2");
+  });
+});
+
+const roll = (n: number, at: string) => ({
+  key: `landing/raw_events/g1/r${String(n).padStart(10, "0")}.ndjson`,
+  etag: `e${n}`,
+  size: 100,
+  records: 5,
+  requests: 2,
+  first_received_at: at,
+  last_received_at: at,
+});
+
+const commitInput = (landing_through: string | null = null) => ({
+  from_snapshot: null,
+  to_snapshot: "s",
+  transformed_through_seq: 1,
+  rows_inserted: 1,
+  duplicates_skipped: 0,
+  transform_skipped: false,
+  digests: null,
+  checks: null,
+  metrics_key: null,
+  landing_through,
+});
+
+const MIN = 60_000;
+
+describe("Coordinator Free plan guards", () => {
+  it("the cron backstop requests a run only while the landed roll is past the committed cursor", async () => {
+    const t0 = Date.now();
+    expect((await c().tick(t0)).requested).toEqual([]);
+    await c().noteRoll(roll(1, "2026-10-10T00:00:01.000Z"), t0);
+    const first = await c().tick(t0 + 1000);
+    expect(first.requested).toEqual(["cron"]);
+    const runId = (await c().status())["active_run_id"] as string;
+    expect((await c().tick(t0 + 2000)).requested).toEqual([]); // a run is active
+    await c().commitRun(runId, commitInput(roll(1, "").key), t0 + 3000);
+    await c().releaseRun(runId, t0 + 3000);
+    expect((await c().status())["committed_through"]).toBe(roll(1, "").key);
+    expect((await c().tick(t0 + 5 * MIN)).requested).toEqual([]);
+    await c().noteRoll(roll(2, "2026-10-10T00:01:01.000Z"), t0 + 6 * MIN);
+    expect((await c().tick(t0 + 10 * MIN)).requested).toEqual(["cron"]);
+  });
+
+  it("backs off automatic runs 5, 10, 20, 40 minutes up to 360 after failures; operators bypass; a commit resets", async () => {
+    expect([1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => backoffMinutes(k, 5, 360))).toEqual([5, 10, 20, 40, 80, 160, 320, 360, 360]);
+    await c().setTestOptions({ guards: { failureBackoffBaseMinutes: 5, failureBackoffMaxMinutes: 360 } });
+    const t0 = Date.now();
+    const fail = async (at: number) => {
+      const res = await c().requestRun("lake-event", "incremental", at);
+      expect(res.started).toBe(true);
+      await c().failRun(res.run_id ?? "", "boom", at + 1000);
+      await c().releaseRun(res.run_id ?? "", at + 1000);
+      return at + 1000;
+    };
+    const f1 = await fail(t0);
+    expect(await c().requestRun("lake-event", "incremental", f1 + 4 * MIN)).toMatchObject({ started: false, reason: "failure_backoff" });
+    const f2 = await fail(f1 + 5 * MIN);
+    expect(await c().requestRun("cron", "incremental", f2 + 9 * MIN)).toMatchObject({ started: false, reason: "failure_backoff" });
+    expect((await c().budget(f2 + 9 * MIN)).runs.failure_backoff_until).toBe(f2 + 10 * MIN);
+    const operator = await c().requestRun("manual", "incremental", f2 + 9 * MIN);
+    expect(operator.started).toBe(true);
+    await c().commitRun(operator.run_id ?? "", commitInput(), f2 + 9 * MIN + 1000);
+    await c().releaseRun(operator.run_id ?? "", f2 + 9 * MIN + 1000);
+    expect((await c().budget(f2 + 9 * MIN + 2000)).runs.consecutive_failures).toBe(0);
+    expect((await c().requestRun("lake-event", "incremental", f2 + 9 * MIN + 2000)).started).toBe(true);
+  });
+
+  it("starts automatic runs at least RUN_MIN_INTERVAL_SECONDS apart; the alarm starts the pending one", async () => {
+    await c().setTestOptions({ guards: { runMinIntervalSeconds: 240 } });
+    const t0 = Date.now();
+    const first = await c().requestRun("lake-event", "incremental", t0);
+    expect(first.started).toBe(true);
+    await c().commitRun(first.run_id ?? "", commitInput(), t0 + 30_000);
+    await c().releaseRun(first.run_id ?? "", t0 + 30_000);
+    expect(await c().requestRun("lake-event", "incremental", t0 + 60_000)).toMatchObject({ started: false, reason: "min_interval" });
+    expect((await c().status())["pending_auto"]).toBe("1");
+    expect((await c().sweep(t0 + 200_000)).timed_out).toBe(0);
+    expect((await c().status())["active_run_id"]).toBeNull(); // still inside the interval
+    await c().sweep(t0 + 240_000);
+    const status = await c().status();
+    expect(status["active_run_id"]).toBe(runIdFor(await c().generation(), 2));
+    expect(status["pending_auto"]).toBeNull();
+    expect((await c().getRun(status["active_run_id"] as string))?.run.reason).toBe("pending-auto");
+    // Operator runs and replays are not held back by the interval.
+    await c().failRun(status["active_run_id"] as string, "x", t0 + 241_000);
+    await c().releaseRun(status["active_run_id"] as string, t0 + 241_000);
+    expect((await c().requestRun("manual", "incremental", t0 + 242_000)).started).toBe(true);
+  });
+
+  it("caps automatic runs per UTC day", async () => {
+    await c().setTestOptions({ guards: { autoRunsMaxPerDay: 2 } });
+    const day = Date.parse("2026-10-10T08:00:00.000Z");
+    for (let i = 0; i < 2; i++) {
+      const res = await c().requestRun("lake-event", "incremental", day + i * MIN);
+      expect(res.started).toBe(true);
+      await c().commitRun(res.run_id ?? "", commitInput(), day + i * MIN + 1000);
+      await c().releaseRun(res.run_id ?? "", day + i * MIN + 1000);
+    }
+    expect(await c().requestRun("lake-event", "incremental", day + 5 * MIN)).toMatchObject({ started: false, reason: "daily_cap" });
+    expect((await c().budget(day + 5 * MIN)).runs.automatic_today).toBe(2);
+    expect((await c().requestRun("manual", "incremental", day + 6 * MIN)).started).toBe(true);
+    const runId = (await c().status())["active_run_id"] as string;
+    await c().commitRun(runId, commitInput(), day + 7 * MIN);
+    await c().releaseRun(runId, day + 7 * MIN);
+    expect((await c().requestRun("lake-event", "incremental", Date.parse("2026-10-11T00:00:01.000Z"))).started).toBe(true);
+  });
+
+  it("the monthly BigQuery guard refuses a transform past the cap and allows it again next month", async () => {
+    const cap = 10 * BQ_TRANSFORM_RESERVE_BYTES;
+    await c().setTestOptions({ guards: { bqMonthlyBytesCap: cap } });
+    const october = Date.parse("2026-10-20T00:00:00.000Z");
+    expect((await c().transformBudget(october)).ok).toBe(true);
+    const runId = await newRun();
+    const load = await c().enqueueJob(runId, "load", 1, input, october);
+    await c().claimJob("w", october);
+    await c().completeJob(load.job_id, { ...loadOk(load), bytes_billed: 4 * BQ_TRANSFORM_RESERVE_BYTES }, october);
+    const transform = await c().enqueueJob(runId, "transform", 1, input, october);
+    await c().claimJob("w", october);
+    await c().completeJob(transform.job_id, { status: "succeeded", dbt: { bytes_billed: 5 * BQ_TRANSFORM_RESERVE_BYTES } }, october);
+    expect(await c().transformBudget(october)).toEqual({
+      ok: true,
+      month: "2026-10",
+      bytes_billed: 9 * BQ_TRANSFORM_RESERVE_BYTES,
+      reserve_bytes: BQ_TRANSFORM_RESERVE_BYTES,
+      cap_bytes: cap,
+    });
+    const more = await c().enqueueJob(runId, "transform", 2, input, october);
+    await c().claimJob("w", october);
+    await c().completeJob(more.job_id, { status: "succeeded", dbt: { bytes_billed: 1 } }, october);
+    expect((await c().transformBudget(october)).ok).toBe(false);
+    expect((await c().transformBudget(Date.parse("2026-11-01T00:00:00.000Z"))).ok).toBe(true);
+  });
+
+  it("keeps a tick's rows read and a committed run's rows written flat with 10,000 runs and 20,000 jobs of history", async () => {
+    const generation = await c().generation();
+    await runInDurableObject(c(), async (_instance: Coordinator, state) => {
+      const sql = state.storage.sql;
+      const t = Date.parse("2026-01-01T00:00:00.000Z");
+      for (let i = 1; i <= 10_000; i++) {
+        const id = runIdFor(generation, i);
+        sql.exec(
+          "INSERT INTO runs (run_id, seq, load_seq, mode, reason, status, requested_at, started_at, finished_at, published_at, digests_json) VALUES (?, ?, ?, 'incremental', 'lake-event', 'committed', ?, ?, ?, ?, '{}')",
+          id,
+          i,
+          generation * 1_000_000 + i,
+          t + i * 1000,
+          t + i * 1000,
+          t + i * 1000 + 500,
+          t + i * 1000 + 500,
+        );
+        for (const kind of ["load", "transform"]) {
+          sql.exec(
+            "INSERT INTO jobs (job_id, run_id, kind, attempt, status, input_json, created_at, finished_at) VALUES (?, ?, ?, 1, 'succeeded', '{}', ?, ?)",
+            `${id}-${kind}-a1`,
+            id,
+            kind,
+            t + i * 1000,
+            t + i * 1000 + 100,
+          );
+        }
+        sql.exec("INSERT INTO run_freshness (run_id, bucket_start_s, events, published_by, published_at) VALUES (?, ?, 10, ?, ?)", id, Math.floor((t + i * 1000) / 1000), id, t + i * 1000 + 500);
+      }
+      sql.exec("INSERT INTO state (key, value) VALUES ('run_seq', '10000') ON CONFLICT (key) DO UPDATE SET value = excluded.value");
+    });
+    const now = Date.now();
+    const before = await c().sqlUsage();
+    await c().tick(now);
+    const afterTick = await c().sqlUsage();
+    expect(afterTick.rows_read - before.rows_read).toBeLessThanOrEqual(100);
+
+    const res = await c().requestRun("lake-event", "incremental", now);
+    const runId = res.run_id ?? "";
+    await c().openRun(runId);
+    const load = await c().enqueueJob(runId, "load", 1, input, now);
+    await c().claimJob("w", now);
+    await c().completeJob(load.job_id, loadOk(load), now);
+    const transform = await c().enqueueJob(runId, "transform", 1, input, now);
+    await c().claimJob("w", now);
+    await c().completeJob(transform.job_id, { job_id: transform.job_id, run_id: runId, attempt: 1, status: "succeeded" }, now);
+    await c().commitRun(runId, { ...commitInput("landing/raw_events/g1/r0000000001.ndjson"), digests: { dim_job: "a" }, steps_used: 8 }, now);
+    await c().releaseRun(runId, now);
+    const afterRun = await c().sqlUsage();
+    expect(afterRun.rows_written - afterTick.rows_written).toBeLessThanOrEqual(100);
+    expect(afterRun.rows_read - afterTick.rows_read).toBeLessThanOrEqual(100); // measured: 47 read, 64 written
+    // The daily counters are persisted at most every 5 minutes (one row).
+    await c().tick(now + 5 * MIN);
+    const budget = await c().budget(now + 5 * MIN);
+    expect(budget.sql.rows_written).toBeGreaterThan(0);
   });
 });
 

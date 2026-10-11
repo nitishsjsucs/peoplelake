@@ -85,6 +85,24 @@ describe("parseConfig fail-closed rules", () => {
     fails({ ...local(), LANDING_ROLL_SECONDS: "0" }, "127.0.0.1", /at least 1/);
   });
 
+  it("defaults production to the Free plan guards and refuses values outside their bounds", () => {
+    expect(parseConfig(production(), null).guards).toEqual({
+      runMinIntervalSeconds: 240,
+      failureBackoffBaseMinutes: 5,
+      failureBackoffMaxMinutes: 360,
+      autoRunsMaxPerDay: 30,
+      bqMonthlyBytesCap: 275_000_000_000,
+    });
+    expect(parseConfig(production(), null).heartbeatMinutes).toBe(0);
+    fails({ ...production(), RUN_MIN_INTERVAL_SECONDS: "60" }, null, /RUN_MIN_INTERVAL_SECONDS >= 240/);
+    fails({ ...production(), FAILURE_BACKOFF_BASE_MINUTES: "1" }, null, /FAILURE_BACKOFF_BASE_MINUTES >= 5/);
+    fails({ ...production(), AUTO_RUNS_MAX_PER_DAY: "31" }, null, /AUTO_RUNS_MAX_PER_DAY <= 30/);
+    fails({ ...production(), BQ_MONTHLY_BYTES_CAP: "300000000000" }, null, /BQ_MONTHLY_BYTES_CAP <= 275000000000/);
+    fails({ ...production(), HEARTBEAT_MINUTES: "360" }, null, /HEARTBEAT_MINUTES=0/);
+    fails({ ...local(), FAILURE_BACKOFF_BASE_MINUTES: "10", FAILURE_BACKOFF_MAX_MINUTES: "5" }, "127.0.0.1", /FAILURE_BACKOFF_MAX_MINUTES/);
+    expect(parseConfig(local(), "127.0.0.1").guards.runMinIntervalSeconds).toBe(0);
+  });
+
   it("allows ACCESS_AUD=pending only while runs are disabled (fail-closed first deploy)", () => {
     fails({ ...production(), ACCESS_AUD: "pending" }, null, /pending/);
     expect(parseConfig({ ...production(), ACCESS_AUD: "pending", RUNS_ENABLED: "false" }, null).access.aud).toBe("pending");

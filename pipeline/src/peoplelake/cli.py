@@ -655,7 +655,9 @@ def build_parser() -> argparse.ArgumentParser:
         stack_sub.add_parser(name).set_defaults(func=_cmd_stack)
     tick = stack_sub.add_parser("ticker", help="call the local scheduled handler every interval (stand-in for cron)")
     tick.add_argument("--worker-url", default="http://127.0.0.1:8791")
-    tick.add_argument("--interval", type=float, default=60.0)
+    tick.add_argument(
+        "--interval", type=float, default=300.0, help="seconds between calls (default 300, the production cron)"
+    )
     tick.set_defaults(func=_cmd_stack)
 
     ev = sub.add_parser("eval", help="evals whose numbers may appear in the README")

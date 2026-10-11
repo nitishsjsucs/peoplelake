@@ -108,7 +108,7 @@ def raw_counts(duckdb_path: Path) -> dict:
 
 
 def ledger_summary(op: WorkerClient) -> dict:
-    runs = sorted(op.runs(1000, "full"), key=lambda r: r["seq"])
+    runs = op.all_runs("full")
     status = op.status()
     jobs = []
     for r in runs:
@@ -149,7 +149,7 @@ def rebuild_and_point_in_time(
     snapshot into a scratch warehouse (its own DuckDB file) and require that run's recorded digests."""
     runs = [
         r
-        for r in sorted(op.runs(1000, "full"), key=lambda r: r["seq"])
+        for r in op.all_runs("full")
         if r["status"] == "committed" and r["digests"] and not r["transform_skipped"] and not r.get("options")
     ]
     if not runs:

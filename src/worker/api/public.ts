@@ -6,6 +6,8 @@ import type { RunRow } from "../orchestration/coordinator-sql.ts";
 import { LATEST_METRICS_KEY } from "../reports.ts";
 import { parseWindow, summarizeFreshness } from "./freshness.ts";
 
+export const MAX_RUNS_PER_PAGE = 200;
+
 function summary(r: RunRow): Record<string, unknown> {
   return {
     run_id: r.run_id,
@@ -20,8 +22,10 @@ function summary(r: RunRow): Record<string, unknown> {
     rows_inserted: r.rows_inserted,
     duplicates_skipped: r.duplicates_skipped,
     transform_skipped: r.transform_skipped === 1,
+    transform_skip_reason: r.transform_skip_reason,
     load_attempts: r.load_attempts,
     transform_attempts: r.transform_attempts,
+    steps_used: r.steps_used,
     error: r.error,
   };
 }
@@ -35,16 +39,22 @@ function full(r: RunRow): Record<string, unknown> {
     digests: r.digests_json ? JSON.parse(r.digests_json) : null,
     checks: r.checks_json ? JSON.parse(r.checks_json) : null,
     metrics_key: r.metrics_key,
+    landing_through: r.landing_through,
     options: r.options_json ? JSON.parse(r.options_json) : null,
   };
 }
 
 export function mountPublicApi(app: App): void {
+  // At most 200 runs per page (SPEC 29.4.8: a page of parsed runs must stay well inside 10 ms of CPU).
+  // Without `since`: the newest first. With `since=<epoch ms>`: runs started at or after it, oldest
+  // first, so a client pages forward with the last run's started_at.
   app.get("/api/runs", requireRole("viewer", "runner", "operator"), async (c) => {
     const limit = Number(c.req.query("limit") ?? "50");
+    const sinceRaw = c.req.query("since");
+    if (sinceRaw !== undefined && !/^\d{1,15}$/.test(sinceRaw)) return c.json({ error: "invalid_since" }, 400);
     const format = c.req.query("format") === "full" ? full : summary;
-    const runs = await coordinatorStub(c.env).listRuns(Number.isFinite(limit) ? limit : 50);
-    return c.json({ runs: runs.map(format) });
+    const runs = await coordinatorStub(c.env).listRuns(Number.isFinite(limit) ? Math.min(limit, MAX_RUNS_PER_PAGE) : 50, sinceRaw === undefined ? null : Number(sinceRaw));
+    return c.json({ runs: runs.map(format), max_per_page: MAX_RUNS_PER_PAGE });
   });
 
   app.get("/api/runs/:run_id", requireRole("viewer", "runner", "operator"), async (c) => {

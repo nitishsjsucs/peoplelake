@@ -68,4 +68,6 @@ def run_load(
         "warehouse": warehouse.kind,
         "duration_ms": int((time.monotonic() - started) * 1000),
     }
+    if stats.bytes_billed is not None:
+        result["bytes_billed"] = stats.bytes_billed
     return LoadOutcome(result=result, commit=commit)

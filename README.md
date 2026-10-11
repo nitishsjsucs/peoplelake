@@ -18,7 +18,7 @@ v1 is built and verified end to end on the local stack (every item of the build 
 | BigQuery configs and offline compile | done offline: dbt-bigquery profiles, policy tags, authorized views, int64 range `insert_overwrite`, both compile branches parse as BigQuery, ORDER BY lint, BigQuery loader tested against a fake client; nothing has run on BigQuery yet |
 | Iceberg lake and landing commits | done locally: the runner's load job commits new landing rolls to `peoplelake.raw_events` (one append snapshot per roll whose summary carries the landing cursor `peoplelake.landing-through`, so snapshot expiration can never cause a re-append; conflicts re-read the cursor; only the current generation's rolls are listed; every line validated as a RawRecord), the same code against the pyiceberg SqlCatalog stand-in locally and Basin Catalog through `RestCatalog` in production (`peoplelake lake init --target prod` creates the table); incremental reader with full-scan fallback. Basin Catalog itself is not exercised yet (needs production) |
 | Worker: auth, ingest, landing | done locally: fail-closed config, Access JWT verification (RS256, iss, aud, exp) with locally generated dev keys, role gates, `POST /v1/ingest/:source` for three envelopes (zod, all-or-nothing, at most 50 events per request so a request stays well inside the Workers Free plan's 10 ms of CPU, the ingest path prewarmed at isolate startup), RawRecord normalization shared with Python through a golden, and the LandingRoller Durable Object (one SQLite row per request, planned immutable roll files in R2 every 60 s, one Queue message per roll, backpressure), the same code locally and in production; no Basin Pipelines (Workers Paid only) |
-| Orchestration: Coordinator, Workflow, dispatchers | done locally (Miniflare Workflows): Coordinator ledger with single-flight runs, attempt-scoped jobs and leases, `WarehouseRunWorkflow` (load, transform or skip, verify, commit, release), poll and Cloud Run dispatchers, lake-events queue consumer (one message per landing roll), a cron backstop, eval faults; production Workflows not exercised yet |
+| Orchestration: Coordinator, Workflow, dispatchers | done locally (Miniflare Workflows): Coordinator ledger with single-flight runs, attempt-scoped jobs and leases, `WarehouseRunWorkflow` (load, transform or skip, verify, commit, release; a committed run uses 8 steps and records them), poll and Cloud Run dispatchers, lake-events queue consumer (one message per landing roll), the Workers Free plan guards (a 5-minute cron backstop that requests a run only while a landed roll is past the committed landing cursor, heartbeat off, a 240 s minimum interval between automatic runs, failure backoff of 5 minutes doubling to 6 hours, 30 automatic runs a UTC day, a 275 GB monthly BigQuery guard that commits the load and skips the transform), indexed ledger queries with per-day Durable Object row counters and `GET /api/ops/budget`, eval faults; production Workflows not exercised yet |
 | Runner and local stack | done locally: `peoplelake runner poll` (in-process dbt, heartbeats, eval fault hooks) and `peoplelake stack up/down` (wrangler dev, runner, ticker in their own process groups, ports checked free) |
 | Scenario and freshness evals | done on the local stack (see Results): scenario equivalence on DuckDB, and the 60-minute local freshness measurement of the full profile (p95 78 s on the local stand-ins, ledger and ops histograms agree); production freshness is measured once by `npm run prod:e2e` |
 | CI | workflows written (`ci.yml` on every push, `eval-full.yml` weekly and on demand); they have not run on GitHub yet because the owner publishes the repo |
@@ -51,7 +51,7 @@ flowchart LR
     C["Coordinator DO<br/>ledger, jobs, single-flight"]
     WF["Workflow peoplelake-warehouse-run"]
     AI["Workers AI via AI Gateway<br/>(local: llama-server or stub)"]
-    CRON["Cron backstop<br/>(local: ticker process)"]
+    CRON["Cron every 5 minutes: sweeps and backstop<br/>(local: ticker process)"]
   end
   subgraph GCP["Google Cloud (local stand-in: DuckDB via dbt-duckdb)"]
     CR["Cloud Run Job peoplelake-runner<br/>(local: peoplelake runner poll)"]
@@ -88,13 +88,14 @@ flowchart LR
 | Lake catalog | **stand-in**: pyiceberg `SqlCatalog` (SQLite) on disk | Basin Catalog (Iceberg REST) on R2 bucket `peoplelake-lake`, table created by `peoplelake lake init --target prod` |
 | Lake commits | runner load job (`lake/committer.py`), landing cursor in snapshot summaries | the same code against Basin Catalog through pyiceberg `RestCatalog` |
 | New-data trigger | one lake event per roll; backstop on the ticker | one lake event per roll; backstop on the Workers cron |
-| Orchestration | Workflows as implemented by Miniflare | Cloudflare Workflows |
+| Orchestration | Workflows as implemented by Miniflare | Cloudflare Workflows (Free: 3,000 steps a day per account, 3-day instance retention) |
+| Run guards | set wide (`RUN_MIN_INTERVAL_SECONDS=0`, no failure backoff, 100,000 automatic runs a day) so evals stay fast | Free plan values: 240 s minimum interval, backoff from 5 minutes to 6 hours, 30 automatic runs a day, heartbeat off, 275 GB of BigQuery a month |
 | Runner | `peoplelake runner poll` process | Cloud Run Job `peoplelake-runner` (us-central1) |
 | Warehouse | **stand-in**: DuckDB 1.5.6 via dbt-duckdb 1.11.0, session UTC | BigQuery (US) via dbt-bigquery 1.12.1 |
 | Column security | none | policy tags, data masking, authorized views |
 | Auth | locally generated RS256 keys, same verifier code | Access JWT (RS256) against the team JWKS |
 | LLM | llama-server (Qwen3-1.7B) on 8150, or a deterministic stub in CI | Workers AI through AI Gateway `peoplelake` |
-| Cron | ticker process | Workers cron `* * * * *` |
+| Cron | ticker process every 300 s | Workers cron `*/5 * * * *` (1 of the account's 5 Cron Triggers) |
 | Semantic layer | MetricFlow plans SQL for DuckDB in the parity check (`peoplelake dev metricflow-parity`) | the same definitions ship in the dbt project and parse for BigQuery; nothing serves MetricFlow queries in production, the published read path stays the metrics mart |
 | Dashboard | static assets from `web/dist` in `wrangler dev`; a pasted dev token (`peoplelake auth dev-token operator --ttl 3600`) stands in for the Access session | static assets of Worker `peoplelake` behind Cloudflare Access (the browser's Access session; Access adds the JWT header) |
 | Scenario equivalence | DuckDB with the local stack (every CI push, small profile) | BigQuery `_drill` datasets with the local Worker, Workflows and lake (`eval scenarios --target prod-drill`, a go-live step) |

@@ -2,6 +2,7 @@ import { env, reset, runDurableObjectAlarm, runInDurableObject, SELF } from "clo
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import raw from "../../contracts/golden/raw-records.json";
 import type { RawRecord } from "../../src/shared/contracts.ts";
+import { PRODUCTION_GUARDS } from "../../src/shared/free-budget.ts";
 import { toNdjson } from "../../src/worker/ingest/normalize.ts";
 import { lakeEventMessage, type LandingRoller, rollKey } from "../../src/worker/lake/landing-roller.ts";
 import { coordinatorStub } from "../../src/worker/orchestration/coordinator.ts";
@@ -191,6 +192,7 @@ describe("landing routes", () => {
       EVAL_FAULTS_ENABLED: "false",
       ACCESS_TEAM_DOMAIN: "https://peoplelake.cloudflareaccess.com",
       ACCESS_AUD: "aud",
+      ...Object.fromEntries(Object.entries(PRODUCTION_GUARDS).map(([k, v]) => [k, String(v)])),
     };
     const flush = await app.fetch(new Request("https://peoplelake.example.workers.dev/internal/dev/landing/flush", { method: "POST" }), productionEnv);
     expect(flush.status).toBe(404);

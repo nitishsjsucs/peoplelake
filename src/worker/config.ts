@@ -1,6 +1,7 @@
 // parseConfig(env, requestHost): every rule fails closed (SPEC 7.2). A config error turns every request
 // into 500 {"error":"config"} and makes scheduled handlers do nothing.
 import { z } from "zod";
+import { GUARD_BOUNDS, PRODUCTION_GUARDS } from "../shared/free-budget.ts";
 
 export class ConfigError extends Error {
   override name = "ConfigError";
@@ -34,6 +35,14 @@ export interface AppConfig {
   };
   readonly landing: { readonly rollSeconds: number; readonly rollMaxBytes: number; readonly maxBufferBytes: number };
   readonly heartbeatMinutes: number;
+  /** Free plan guards on automatic runs and the monthly BigQuery guard (SPEC 29.4.3). */
+  readonly guards: {
+    readonly runMinIntervalSeconds: number;
+    readonly failureBackoffBaseMinutes: number;
+    readonly failureBackoffMaxMinutes: number;
+    readonly autoRunsMaxPerDay: number;
+    readonly bqMonthlyBytesCap: number;
+  };
   readonly runnerSeenWindowSeconds: number;
   readonly evalFaultsEnabled: boolean;
   readonly devRoutes: boolean;
@@ -130,6 +139,37 @@ export function parseConfig(env: ConfigEnv, requestHost: string | null): AppConf
     }
   }
 
+  // Unset guard values default to the Free plan values in production and to wide values locally.
+  const prod = environment === "production";
+  const P = PRODUCTION_GUARDS;
+  const heartbeatMinutes = int(env, "HEARTBEAT_MINUTES", P.HEARTBEAT_MINUTES);
+  const guards = {
+    runMinIntervalSeconds: int(env, "RUN_MIN_INTERVAL_SECONDS", prod ? P.RUN_MIN_INTERVAL_SECONDS : 0),
+    failureBackoffBaseMinutes: int(env, "FAILURE_BACKOFF_BASE_MINUTES", prod ? P.FAILURE_BACKOFF_BASE_MINUTES : 0),
+    failureBackoffMaxMinutes: int(env, "FAILURE_BACKOFF_MAX_MINUTES", P.FAILURE_BACKOFF_MAX_MINUTES),
+    autoRunsMaxPerDay: int(env, "AUTO_RUNS_MAX_PER_DAY", prod ? P.AUTO_RUNS_MAX_PER_DAY : 100_000, 1),
+    bqMonthlyBytesCap: int(env, "BQ_MONTHLY_BYTES_CAP", P.BQ_MONTHLY_BYTES_CAP, 1),
+  };
+  if (guards.failureBackoffMaxMinutes < guards.failureBackoffBaseMinutes) {
+    throw new ConfigError("FAILURE_BACKOFF_MAX_MINUTES must be at least FAILURE_BACKOFF_BASE_MINUTES");
+  }
+  if (prod) {
+    // Values outside the Workers Free plan budget (src/shared/free-budget.ts) never reach production.
+    const b = GUARD_BOUNDS;
+    if (guards.runMinIntervalSeconds < b.runMinIntervalSecondsAtLeast) {
+      throw new ConfigError(`production requires RUN_MIN_INTERVAL_SECONDS >= ${b.runMinIntervalSecondsAtLeast}`);
+    }
+    if (guards.failureBackoffBaseMinutes < b.failureBackoffBaseMinutesAtLeast) {
+      throw new ConfigError(`production requires FAILURE_BACKOFF_BASE_MINUTES >= ${b.failureBackoffBaseMinutesAtLeast}`);
+    }
+    if (guards.autoRunsMaxPerDay > b.autoRunsMaxPerDayAtMost) {
+      throw new ConfigError(`production requires AUTO_RUNS_MAX_PER_DAY <= ${b.autoRunsMaxPerDayAtMost}`);
+    }
+    if (guards.bqMonthlyBytesCap > b.bqMonthlyBytesCapAtMost) {
+      throw new ConfigError(`production requires BQ_MONTHLY_BYTES_CAP <= ${b.bqMonthlyBytesCapAtMost}`);
+    }
+    if (heartbeatMinutes > b.heartbeatMinutesAtMost) throw new ConfigError("production requires HEARTBEAT_MINUTES=0 (heartbeat off)");
+  }
   const gcpProject = secret(env, "GCP_PROJECT");
   const rollMaxBytes = int(env, "LANDING_ROLL_MAX_BYTES", 8 * 1024 * 1024, 1024);
   const maxBufferBytes = int(env, "LANDING_MAX_BUFFER_BYTES", 64 * 1024 * 1024, 1024);
@@ -149,7 +189,8 @@ export function parseConfig(env: ConfigEnv, requestHost: string | null): AppConf
       runTimeoutMinutes: int(env, "RUN_TIMEOUT_MINUTES", 10, 1),
     },
     landing: { rollSeconds: int(env, "LANDING_ROLL_SECONDS", 60, 1), rollMaxBytes, maxBufferBytes },
-    heartbeatMinutes: int(env, "HEARTBEAT_MINUTES", 0),
+    heartbeatMinutes,
+    guards,
     runnerSeenWindowSeconds: int(env, "RUNNER_SEEN_WINDOW_SECONDS", 60),
     evalFaultsEnabled,
     devRoutes: environment === "local",

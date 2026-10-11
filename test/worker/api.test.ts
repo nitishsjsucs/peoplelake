@@ -38,6 +38,36 @@ describe("API role gates", () => {
     expect(await (await call("/api/ops/lake", "operator")).json()).toMatchObject({ lake_mode: "local", watermark: null });
   });
 
+  it("pages /api/runs at most 200 at a time, newest first, or forward from since", async () => {
+    const c = coordinatorStub(env);
+    const t0 = Date.parse("2026-10-01T00:00:00.000Z");
+    for (let i = 0; i < 205; i++) {
+      const res = await c.requestRun("manual", "incremental", t0 + i * 1000);
+      await c.failRun(res.run_id ?? "", "x", t0 + i * 1000 + 1);
+      await c.releaseRun(res.run_id ?? "", t0 + i * 1000 + 1);
+    }
+    const newest = (await (await call("/api/runs?limit=1000&format=full", "viewer")).json()) as { runs: { seq: number }[]; max_per_page: number };
+    expect(newest.max_per_page).toBe(200);
+    expect(newest.runs).toHaveLength(200);
+    expect(newest.runs[0]?.seq).toBe(205);
+    const page = (await (await call(`/api/runs?limit=200&since=${t0 + 200_000}`, "viewer")).json()) as { runs: { seq: number }[] };
+    expect(page.runs.map((r) => r.seq)).toEqual([201, 202, 203, 204, 205]);
+    expect((await call("/api/runs?since=yesterday", "viewer")).status).toBe(400);
+  });
+
+  it("reports the Free plan budget state to operators only", async () => {
+    expect((await call("/api/ops/budget", "viewer")).status).toBe(403);
+    expect((await call("/api/ops/budget", "runner")).status).toBe(403);
+    const res = await call("/api/ops/budget", "operator");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, any>;
+    expect(Object.keys(body.runs)).toEqual(
+      expect.arrayContaining(["automatic_today", "automatic_max_per_day", "consecutive_failures", "failure_backoff_until", "workflow_steps_today"]),
+    );
+    expect(body.bigquery).toMatchObject({ ok: true, cap_bytes: 275_000_000_000, reserve_bytes: 3_000_000_000 });
+    expect(body.durable_objects.rows_read_today).toBeGreaterThan(0);
+  });
+
   it("serves the committed metrics snapshot and 404 before any commit", async () => {
     expect((await call("/api/metrics/latest", "viewer")).status).toBe(404);
     await env.REPORTS_BUCKET.put("reports/metrics/latest.json", JSON.stringify({ rows: [] }));

@@ -100,7 +100,7 @@ def run_freshness(
             if time.monotonic() > deadline:
                 raise EvalError(f"not quiescent after {quiesce_timeout} s: {fresh['overall']}")
             time.sleep(5)
-        runs = sorted(c.operator.runs(5000, "full"), key=lambda r: r["seq"])
+        runs = c.operator.all_runs("full")
         jobs = {r["run_id"]: c.operator.run(r["run_id"])["jobs"] for r in runs}
     finally:
         busy = stack.down()
@@ -226,7 +226,7 @@ def prod_freshness(delivery: dict) -> dict:
         for (v, w), b in zip(values, [b for b in buckets if b["published_at"]], strict=True)
         if b["bucket_start_s"] >= start + 300
     ]
-    runs = [r for r in op.runs(5000, "summary") if (r["started_at"] or 0) / 1000 >= start - 60]
+    runs = op.all_runs("summary", since=int((start - 60) * 1000))
     return {
         "kind": "freshness",
         "target": "prod",

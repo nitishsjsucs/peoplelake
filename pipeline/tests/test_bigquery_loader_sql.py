@@ -13,9 +13,10 @@ from peoplelake.warehouse.direct import canonical_order, direct_table, envelopes
 
 
 class FakeJob:
-    def __init__(self, rows=None, affected=None):
+    def __init__(self, rows=None, affected=None, billed=10_485_760):
         self.rows = rows or []
         self.num_dml_affected_rows = affected
+        self.total_bytes_billed = billed  # the 10 MB minimum per query
 
     def result(self):
         return self.rows
@@ -118,6 +119,8 @@ def test_load_job_merge_and_log(batch):
     assert stats.unique_new_events == 2
     assert stats.raw_max_load_seq == 42
     assert stats.received_histogram_10s == [(1790812800, 2)]
+    # The four queries' billed bytes travel in the load result for the Coordinator's monthly guard.
+    assert stats.bytes_billed == 4 * 10_485_760
 
 
 def test_stage_is_dropped_when_merge_fails(batch):
