@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { format, prodFileChecks, versionAtLeast } from "../../scripts/doctor.ts";
+import { format, prodFileChecks, scriptsMissingTz, versionAtLeast } from "../../scripts/doctor.ts";
 import { finalRunsEnabled, readEnvFile, redact, SERVICE_TOKENS, upsertEnv } from "../../scripts/setup-prod.ts";
 
 describe("setup:prod helpers", () => {
@@ -39,6 +39,12 @@ describe("doctor helpers", () => {
     expect(versionAtLeast("v25.9.0", "22.18.0")).toBe(true);
     expect(versionAtLeast("v22.17.9", "22.18.0")).toBe(false);
     expect(versionAtLeast("22.18.0", "22.18.0")).toBe(true);
+  });
+
+  it("flags npm scripts that run node, vitest or uv without TZ=UTC, and the repo's own scripts pass", () => {
+    expect(scriptsMissingTz({ a: "vitest run", b: "TZ=UTC vitest run", c: "tsc -p tsconfig.node.json", d: "wrangler types" })).toEqual(["a", "c"]);
+    const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
+    expect(scriptsMissingTz(pkg.scripts)).toEqual([]);
   });
 
   it("prints the fix only for checks that did not pass", () => {

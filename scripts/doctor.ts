@@ -51,6 +51,13 @@ function portFree(port: number): Promise<boolean> {
   });
 }
 
+/** npm scripts that run node, vitest or uv (or name a node config) without a leading TZ=UTC (SPEC 3.5). */
+export function scriptsMissingTz(scripts: Record<string, string>): string[] {
+  return Object.entries(scripts)
+    .filter(([, cmd]) => /\b(node|vitest|uv)\b/.test(cmd) && !cmd.startsWith("TZ=UTC"))
+    .map(([name]) => name);
+}
+
 export async function localChecks(root: string): Promise<Check[]> {
   const out: Check[] = [];
   out.push(
@@ -79,11 +86,11 @@ export async function localChecks(root: string): Promise<Check[]> {
       : { name: "wrangler 4.149.0 (node_modules)", status: "MISSING", detail: wr.out.slice(0, 100), fix: "npm ci" },
   );
   const scripts = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { scripts: Record<string, string> }).scripts;
-  const noTz = Object.entries(scripts).filter(([, cmd]) => /\b(node|vitest|uv)\b/.test(cmd) && !cmd.startsWith("TZ=UTC"));
+  const noTz = scriptsMissingTz(scripts);
   out.push(
     noTz.length === 0
       ? { name: "TZ=UTC in npm scripts", status: "PASS" }
-      : { name: "TZ=UTC in npm scripts", status: "FAIL", detail: noTz.map(([k]) => k).join(", "), fix: "prefix those scripts with TZ=UTC" },
+      : { name: "TZ=UTC in npm scripts", status: "FAIL", detail: noTz.join(", "), fix: "prefix those scripts with TZ=UTC" },
   );
   for (const port of [8791, 9241, 8150]) {
     out.push(

@@ -13,7 +13,7 @@
     "build:web": "TZ=UTC vite build",
     "typegen": "wrangler types worker-configuration.d.ts --strict-vars=false --env-file .dev.vars.example",
     "typegen:check": "wrangler types worker-configuration.d.ts --strict-vars=false --env-file .dev.vars.example --check",
-    "typecheck": "tsc -p tsconfig.worker.json && tsc -p tsconfig.worker-test.json && tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
+    "typecheck": "TZ=UTC tsc -p tsconfig.worker.json && tsc -p tsconfig.worker-test.json && tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "test": "TZ=UTC vitest run",
     "test:py": "TZ=UTC uv run --project pipeline pytest pipeline/tests",
     "check:prose": "TZ=UTC node scripts/check-prose.ts",
