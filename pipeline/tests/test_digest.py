@@ -70,6 +70,7 @@ def test_duckdb_and_bigquery_shapes_digest_identically():
     assert digest_table(SPEC, duckdb_table()) == digest_table(SPEC, bigquery_shaped_table())
 
 
+@pytest.mark.smoke
 def test_tiny_fixture_digest_is_pinned():
     assert digest_table(SPEC, duckdb_table()) == TINY_DIGEST
 

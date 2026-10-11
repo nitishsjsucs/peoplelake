@@ -1,0 +1,120 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  TZ: UTC
+
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run typegen:check
+      - run: npm run typecheck
+      - run: npx vitest run --project worker --project node
+      - run: npm run contracts:check
+      - run: npm run check:prose
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.12.17"
+          python-version: "3.12"
+      - run: uv sync --locked --project pipeline
+      - run: uv run --project pipeline ruff check pipeline/src pipeline/tests
+      - run: uv run --project pipeline pytest -q -m "not e2e and not dbt" pipeline/tests
+
+  dbt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.12.17"
+          python-version: "3.12"
+      - run: uv sync --locked --project pipeline
+      - name: Generate the small profile and check its pinned sha256
+        run: uv run --project pipeline peoplelake generate --profile small --out .data/generated/small --check
+      - name: Reference digests (straight load, dbt run --empty, build with unit tests, full refresh, equal digests)
+        run: uv run --project pipeline peoplelake dev reference-digests --profile small --out reference-digests-small.json
+      - name: dbt-level tests (bucket cursors, reconciliation checks fire, runner jobs, BigQuery manifest)
+        run: uv run --project pipeline pytest -q -m "dbt and not e2e" pipeline/tests
+      - name: Offline BigQuery compiles (both branches), sqlglot parse and ORDER BY lint
+        run: uv run --project pipeline peoplelake dev bq-compile
+      - uses: actions/upload-artifact@v7
+        with:
+          name: reference-digests-small
+          path: reference-digests-small.json
+
+  clean-clone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.12.17"
+          python-version: "3.12"
+      - run: uv sync --locked --project pipeline
+      - run: uv run --project pipeline peoplelake dev clean-clone-check
+
+  runner-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build --tag peoplelake-runner:ci .
+      - run: docker run --rm peoplelake-runner:ci --help
+
+  e2e:
+    needs: [node, python, dbt]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [B, S1, S2, S3, S4, S5]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.12.17"
+          python-version: "3.12"
+      - run: npm ci
+      - run: uv sync --locked --project pipeline
+      - uses: actions/download-artifact@v7
+        with:
+          name: reference-digests-small
+      - run: uv run --project pipeline peoplelake auth dev-keys
+      - name: Scenario ${{ matrix.scenario }} on the small profile (local stack, DuckDB)
+        # Twice the slowest small-profile scenario measured in the build session (see README Results).
+        timeout-minutes: 12
+        run: >
+          uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10
+          --scenarios ${{ matrix.scenario }} --reference reference-digests-small.json
+          --out results/scenario-${{ matrix.scenario }}.json
+      - if: always()
+        run: uv run --project pipeline peoplelake stack down
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scenario-${{ matrix.scenario }}
+          path: |
+            results/
+            .data/eval/scenarios-small/${{ matrix.scenario }}/logs/
+          if-no-files-found: ignore

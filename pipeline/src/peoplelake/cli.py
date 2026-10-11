@@ -278,6 +278,10 @@ def _cmd_stack(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_clean_clone(args: argparse.Namespace) -> int:
+    from .devtools.clean_clone import clean_clone_check
+
+    return clean_clone_check()
 
 
 def _cmd_eval_scenarios(args: argparse.Namespace) -> int:
@@ -434,6 +438,10 @@ def build_parser() -> argparse.ArgumentParser:
     ref.add_argument("--out")
     ref.set_defaults(func=_cmd_reference_digests)
 
+    cc = dev_sub.add_parser(
+        "clean-clone-check", help="clone HEAD to a temp dir: uv sync --locked, dbt parse, smoke tests"
+    )
+    cc.set_defaults(func=_cmd_clean_clone)
     bqc = dev_sub.add_parser("bq-compile", help="offline BigQuery compile (both branches), sqlglot parse and SQL lint")
     bqc.add_argument("--workdir")
     bqc.set_defaults(func=_cmd_bq_compile)

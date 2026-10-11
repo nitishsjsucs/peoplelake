@@ -1,13 +1,17 @@
 from collections import Counter
 
+import pytest
+
 from peoplelake.generator import FULL, SMALL, SOURCES
 
 
+@pytest.mark.smoke
 def test_three_sources(ds):
     assert SOURCES == ("hris", "ats", "talent")
     assert set(ds.records) == {"hris", "ats", "talent"}
 
 
+@pytest.mark.smoke
 def test_exact_counts_per_source_and_type(ds):
     expected = ds.profile.expected_counts()
     for source in SOURCES:

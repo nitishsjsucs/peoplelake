@@ -1,10 +1,13 @@
 import json
 
+import pytest
+
 from peoplelake.canonical import canonical_json
 from peoplelake.generator import generate, get_profile
 from peoplelake.generator.pins import DATASET_SHA256
 
 
+@pytest.mark.smoke
 def test_dataset_sha256_is_pinned(ds):
     assert ds.dataset_sha256() == DATASET_SHA256[ds.profile.name]
 

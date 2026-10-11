@@ -1,7 +1,10 @@
+import pytest
+
 from peoplelake.generator.seeds import seed_files
 from peoplelake.paths import warehouse_dir
 
 
+@pytest.mark.smoke
 def test_committed_seeds_equal_regenerated():
     seeds = warehouse_dir() / "seeds"
     for rel, text in seed_files().items():

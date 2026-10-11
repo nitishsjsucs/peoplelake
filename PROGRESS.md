@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Commit 13 of 18 (core) done: scenario equivalence eval.
+Commit 14 of 18 (core) done: CI workflows.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -32,8 +32,10 @@ Commit 13 of 18 (core) done: scenario equivalence eval.
 
 13. Scenario equivalence: `sim/plan.py` (exact, deterministic perturbations for B and S1 to S5; per-source batches of up to 500), `evals/scenarios.py` (empty state per scenario, chunked delivery through the local stack, settle on the run that loads each forced roll, quiescence run, S5 rebuild and point-in-time replay into a separate DuckDB file, digests from the ledger and from the file after `stack down`, independent oracle comparison, observed perturbations), replay options on runs (`to_snapshot`, `dataset_suffix`: scratch runs never move the watermark), `faults_fired` in Coordinator status, README results renderer (`npm run results:readme`). Measured in this session (`evals/results/scenarios-small-duckdb-2026-10-11.json`): all six scenarios identical to the reference digests on all 10 models, oracle mismatches 0, warn checks 0, ports free after every leg; durations 72.7 s to 342.2 s (S5 slowest) at load average 8 to 27 from parallel builds on this Mac.
 
+14. CI: `.github/workflows/ci.yml` (node, python, dbt, clean-clone, runner-image, e2e matrix B to S5 on the small profile) and `eval-full.yml` (full profile, weekly and on demand), runner `Dockerfile` and `.dockerignore`, `peoplelake dev clean-clone-check`, smoke markers. Scenario step timeouts are twice the slowest leg measured in this session: small S5 342.2 s gives 12 minutes; full B 465.6 s gives 16 minutes (`evals/results/scenarios-full-duckdb-2026-10-11-B-S2-S4.json`: B, S2 and S4 on 100,000 events all identical to the reference). The workflows have not run on GitHub yet (nothing is pushed; the owner publishes).
+
 ## Next
-14. CI: node, python, dbt, clean clone, runner image and scenario matrix workflows (timeouts from measured legs: small measured, full still to measure).
+15. Live freshness eval and record local results.
 
 ## Check status (last run at this commit)
 | Check | Result |
@@ -76,6 +78,7 @@ Commit 13 of 18 (core) done: scenario equivalence eval.
 - Extra route `GET /api/status` (viewer) exposes the Coordinator state the eval driver needs.
 - `read_appends` reports `fallback_full_scan` only when a watermark snapshot was given but no longer exists; a first load or replay is a planned full read.
 - The ticker calls `/cdn-cgi/handler/scheduled?cron=...` and falls back to `/__scheduled`.
+- CI job-level `timeout-minutes` are not set (none were measured); only the scenario steps carry measured timeouts. S5 was not measured on the full profile, so its `eval-full` leg may need a longer timeout after the first run.
 - The README results renderer landed with commit 13 (planned for 15) so the scenario results could be rendered when they were recorded.
 - Scenario plans send each source's events in its own requests of up to 500 (canonical order within a source), alternating sources inside a chunk; strictly canonical cross-source order made thousands of tiny requests.
 - Correction events carry `effectiveDate` = the corrected date for date corrections and the target's date for value corrections; rescinds carry the target's date. The one-event-per-day rule is asserted on business events (hire, rehire, termination, transfer, job and FTE change) for both original and corrected dates.

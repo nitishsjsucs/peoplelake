@@ -21,12 +21,12 @@ v1 is under construction and this repository is published while it is built. Thi
 | Orchestration: Coordinator, Workflow, dispatchers | done locally (Miniflare Workflows): Coordinator ledger with single-flight runs, attempt-scoped jobs and leases, `WarehouseRunWorkflow` (load, transform or skip, verify, commit, release), poll and Cloud Run dispatchers, Basin Catalog poll, lake-events queue consumer, per-minute cron, eval faults; production Workflows not exercised yet |
 | Runner and local stack | done locally: `peoplelake runner poll` (in-process dbt, heartbeats, eval fault hooks) and `peoplelake stack up/down` (wrangler dev, runner, ticker in their own process groups, ports checked free) |
 | Scenario and freshness evals | scenario equivalence done on DuckDB (B and S1 to S5 identical to the reference digests on the small profile, see Results); freshness eval next |
-| CI | not started |
+| CI | workflows written (`ci.yml` on every push, `eval-full.yml` weekly and on demand); they have not run on GitHub yet because the owner publishes the repo |
 | Workers AI and `/api/ask` | not started |
 | Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | not started |
 | Front end | none in v1 (the dashboard is below the core cut line); `/api/*` is the read interface |
 
-Identical outputs across the five scenarios: proven on DuckDB (small profile, local stack); BigQuery pending (needs the production setup below and the BigQuery drill).
+Identical outputs across the five scenarios: proven on DuckDB with the local stack (all six legs on the small profile; B, S2 and S4 on the full 100,000-event profile); BigQuery pending (needs the production setup below and the BigQuery drill).
 
 ## Architecture
 
@@ -176,6 +176,22 @@ uv run --project pipeline peoplelake eval scenarios --profile small --scenarios 
 npm run results:readme                                                                 # renders evals/results into Results
 ```
 
+## CI
+
+GitHub Actions run CI only and hold no cloud credentials (`permissions: contents: read`, `TZ=UTC`).
+
+| Workflow | Job | What it proves |
+|---|---|---|
+| `ci.yml` | node | generated Worker types current, typecheck, vitest (Worker tests in workerd, node tests), contracts current, prose check |
+| `ci.yml` | python | ruff, pytest without the dbt and end-to-end markers |
+| `ci.yml` | dbt | small profile generated with its pinned sha256, reference digests (straight load, `dbt run --empty`, build with unit tests, full refresh, equal digests), dbt-level tests, offline BigQuery compiles with sqlglot parse and ORDER BY lint; uploads the reference digests |
+| `ci.yml` | clean-clone | clones the commit to a temp directory: `uv sync --locked`, `dbt parse`, smoke tests (nothing gitignored is relied on) |
+| `ci.yml` | runner-image | `docker build` of the Cloud Run runner image |
+| `ci.yml` | e2e (B, S1 to S5) | one scenario per VM on the small profile through the local stack, compared with the reference digests |
+| `eval-full.yml` | scenarios | the same matrix on the full profile (100,000 events), weekly and on demand; reports only |
+
+Scenario step timeouts are twice the slowest leg measured in the build session (small profile: S5, 342.2 s; full profile: B, 465.6 s; S5 was not measured on the full profile): 12 minutes for the small profile and 16 minutes for the full profile.
+
 ## Production setup
 
 Production needs a Cloudflare account on Workers Paid with R2 and Zero Trust, and a Google Cloud project with billing for BigQuery and Cloud Run. The idempotent `npm run setup:prod` and `npm run doctor` commands that provision and check every resource are planned in SPEC.md sections 20 and 21 and are not built yet. Until they exist, nothing in this repo runs against Cloudflare production services or BigQuery.
@@ -184,6 +200,18 @@ Production needs a Cloudflare account on Workers Paid with R2 and Zero Trust, an
 
 <!-- results:start -->
 Rendered by `npm run results:readme` from `evals/results/*.json`. Every number below was produced by the command shown, on the date shown, with the engine and stand-ins named; nothing is estimated.
+
+#### Scenario equivalence, full profile, duckdb (2026-10-11)
+
+Command: `peoplelake eval scenarios --profile full --chunks 20 --scenarios B,S2,S4 --reference .data/reference/reference-digests-full.json` (the reference digests come from `peoplelake dev reference-digests --profile full`). Orchestration: local (wrangler dev / Miniflare Workflows). Lake: local stand-in (SinkRoller + pyiceberg SqlCatalog). Machine: Darwin arm64. Source: `evals/results/scenarios-full-duckdb-2026-10-11-B-S2-S4.json`.
+
+| Scenario | Identical models (of 10) | Oracle rows mismatched | Warn checks at quiescence | Deliveries | Runs | Duration |
+|---|---:|---:|---:|---:|---:|---:|
+| B baseline | 10 | 0 | 0 | 100000 | 21 | 465.6 s |
+| S2 duplicate-lake-redelivery | 10 | 0 | 0 | 100000 | 21 | 265.8 s |
+| S4 recovery-step-failures | 10 | 0 | 0 | 100000 | 21 | 252.7 s |
+
+All scenarios identical to the reference digests: **yes**.
 
 #### Scenario equivalence, small profile, duckdb (2026-10-11)
 

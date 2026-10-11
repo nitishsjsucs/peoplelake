@@ -10,6 +10,7 @@ GOLDEN = json.loads((repo_root() / "contracts" / "golden" / "canonical-json.json
 
 
 @pytest.mark.parametrize("case", GOLDEN["cases"], ids=[c["name"] for c in GOLDEN["cases"]])
+@pytest.mark.smoke
 def test_golden_case(case):
     text = canonical_json(case["value"])
     assert text == case["canonical"]

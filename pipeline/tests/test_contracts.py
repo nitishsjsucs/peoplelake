@@ -25,6 +25,7 @@ def _validate(model, text: str):
 
 
 @pytest.mark.parametrize("name", sorted(MODELS))
+@pytest.mark.smoke
 def test_valid_fixture(name):
     _validate(MODELS[name], (CONTRACTS / "fixtures" / f"{name}.valid.json").read_text())
 
@@ -92,6 +93,7 @@ def test_pydantic_fields_match_json_schema(name, model, pick):
     assert tuple(_schema("raw-record")["properties"]) == c.RAW_RECORD_COLUMNS
 
 
+@pytest.mark.smoke
 def test_stream_schema_matches_lake_schema_field_by_field():
     import pyarrow as pa
 

@@ -1,0 +1,366 @@
+{
+  "command": "peoplelake eval scenarios --profile full --chunks 20 --scenarios B,S2,S4 --reference .data/reference/reference-digests-full.json",
+  "date": "2026-10-11",
+  "engine": "duckdb",
+  "kind": "scenario-equivalence",
+  "lake": "local stand-in (SinkRoller + pyiceberg SqlCatalog)",
+  "machine": "Darwin arm64",
+  "orchestration": "local (wrangler dev / Miniflare Workflows)",
+  "passed": true,
+  "profile": "full",
+  "reference_digests": {
+    "dim_department": "60d4b95d6590cd30c75bd77e9f899e9647cc08857fa06103dcc5677df7fd6409",
+    "dim_employee": "a7b4628ef96da29596c59efebc708eaa9a775cf61467da2c754b36db008c49b5",
+    "dim_employee_history": "70a1545263fc3e87de0aa1b22cd5cdb63d395147811c4904dc4a5084ab16df62",
+    "dim_job": "c2031e9c97c525716e40d4f3cb6663b6c21a9218479bfd79d46717376435c11c",
+    "fct_compensation_history": "f5803cbf115a0de63c4b6faffcbf07091507f05a8b570db647ca08adea66331e",
+    "fct_employment_events": "08a7e5b7b53cb7ca5d5e50daccc3d1b70f52a654cdf935eef20c1632269fa1a4",
+    "fct_offers": "3af7fd36f9d100d590efacff787253311e7f8e273d6dc3b7bfc9a23cb5c54846",
+    "fct_performance_reviews": "750e38e8190817774de6d61cf75b9b0379dc1797d8e5e92ff00376debfff4b79",
+    "fct_workforce_monthly": "fc43953dfc3b5f7af206658add61bf3ca2138877706d396ce1a5ba9f4b4cdee3",
+    "metrics_workforce_monthly": "fa0f98080a20ccff8e7c1f0dc2712149e2f9a293b6598cff068a4de1bb852e61"
+  },
+  "runner": "peoplelake runner poll (local process)",
+  "scenarios": [
+    {
+      "chunk_seconds": [
+        95.7,
+        29.68,
+        24.01,
+        28.36,
+        21.3,
+        23.04,
+        23.13,
+        27.17,
+        26.84,
+        24.84,
+        22.68,
+        26.98,
+        22.62,
+        8.16,
+        14.13,
+        7.32,
+        7.07,
+        6.99,
+        6.69,
+        6.74
+      ],
+      "chunks": 20,
+      "digests": {
+        "dim_department": "60d4b95d6590cd30c75bd77e9f899e9647cc08857fa06103dcc5677df7fd6409",
+        "dim_employee": "a7b4628ef96da29596c59efebc708eaa9a775cf61467da2c754b36db008c49b5",
+        "dim_employee_history": "70a1545263fc3e87de0aa1b22cd5cdb63d395147811c4904dc4a5084ab16df62",
+        "dim_job": "c2031e9c97c525716e40d4f3cb6663b6c21a9218479bfd79d46717376435c11c",
+        "fct_compensation_history": "f5803cbf115a0de63c4b6faffcbf07091507f05a8b570db647ca08adea66331e",
+        "fct_employment_events": "08a7e5b7b53cb7ca5d5e50daccc3d1b70f52a654cdf935eef20c1632269fa1a4",
+        "fct_offers": "3af7fd36f9d100d590efacff787253311e7f8e273d6dc3b7bfc9a23cb5c54846",
+        "fct_performance_reviews": "750e38e8190817774de6d61cf75b9b0379dc1797d8e5e92ff00376debfff4b79",
+        "fct_workforce_monthly": "fc43953dfc3b5f7af206658add61bf3ca2138877706d396ce1a5ba9f4b4cdee3",
+        "metrics_workforce_monthly": "fa0f98080a20ccff8e7c1f0dc2712149e2f9a293b6598cff068a4de1bb852e61"
+      },
+      "duration_s": 465.6,
+      "error_checks_at_quiescence": {
+        "recon_headcount_roll_forward_company": 0,
+        "recon_headcount_roll_forward_department": 0,
+        "recon_history_as_of_matches_snapshot": 0,
+        "recon_history_contiguity": 0,
+        "recon_no_event_id_conflicts": 0,
+        "recon_rehire_continuity": 0,
+        "recon_rescinded_terminations_excluded": 0,
+        "recon_retro_corrections_applied": 0
+      },
+      "faults": [],
+      "identical_to_reference": {
+        "dim_department": true,
+        "dim_employee": true,
+        "dim_employee_history": true,
+        "dim_job": true,
+        "fct_compensation_history": true,
+        "fct_employment_events": true,
+        "fct_offers": true,
+        "fct_performance_reviews": true,
+        "fct_workforce_monthly": true,
+        "metrics_workforce_monthly": true
+      },
+      "name": "baseline",
+      "observed": {
+        "deliveries_sent": 100000,
+        "duplicate_deliveries_in_raw": 0,
+        "duplicate_deliveries_skipped_by_loader": 0,
+        "duplicate_results_ignored": 0,
+        "fallback_full_scans": 0,
+        "faults_fired_in_workflow": 0,
+        "jobs_expired": 0,
+        "jobs_failed": 0,
+        "lease_expirations": 0,
+        "load_attempts": 21,
+        "raw_deliveries": 100000,
+        "requests_sent": 229,
+        "runs": 21,
+        "runs_committed": 21,
+        "runs_failed": 0,
+        "snapshots_read": 20,
+        "transform_attempts": 20,
+        "transforms_skipped": 1,
+        "unique_events": 100000
+      },
+      "oracle_rows_mismatched": 0,
+      "passed": true,
+      "planned": {
+        "deliveries": 100000
+      },
+      "ports_busy_after_stack_down": [],
+      "profile": "full",
+      "scenario": "B",
+      "started_at": "2026-10-11T03:24:05Z",
+      "warn_checks_at_quiescence": {
+        "recon_anomalies_open": 0,
+        "recon_event_counts_vs_manifest": 0,
+        "recon_metrics_vs_oracle": 0,
+        "recon_offer_to_hire": 0
+      }
+    },
+    {
+      "chunk_seconds": [
+        10.39,
+        5.57,
+        4.84,
+        4.66,
+        5.49,
+        5.51,
+        8.28,
+        10.69,
+        10.76,
+        11.74,
+        14.73,
+        15.43,
+        17.32,
+        18.37,
+        17.77,
+        19.0,
+        19.84,
+        19.39,
+        19.28,
+        19.7
+      ],
+      "chunks": 20,
+      "digests": {
+        "dim_department": "60d4b95d6590cd30c75bd77e9f899e9647cc08857fa06103dcc5677df7fd6409",
+        "dim_employee": "a7b4628ef96da29596c59efebc708eaa9a775cf61467da2c754b36db008c49b5",
+        "dim_employee_history": "70a1545263fc3e87de0aa1b22cd5cdb63d395147811c4904dc4a5084ab16df62",
+        "dim_job": "c2031e9c97c525716e40d4f3cb6663b6c21a9218479bfd79d46717376435c11c",
+        "fct_compensation_history": "f5803cbf115a0de63c4b6faffcbf07091507f05a8b570db647ca08adea66331e",
+        "fct_employment_events": "08a7e5b7b53cb7ca5d5e50daccc3d1b70f52a654cdf935eef20c1632269fa1a4",
+        "fct_offers": "3af7fd36f9d100d590efacff787253311e7f8e273d6dc3b7bfc9a23cb5c54846",
+        "fct_performance_reviews": "750e38e8190817774de6d61cf75b9b0379dc1797d8e5e92ff00376debfff4b79",
+        "fct_workforce_monthly": "fc43953dfc3b5f7af206658add61bf3ca2138877706d396ce1a5ba9f4b4cdee3",
+        "metrics_workforce_monthly": "fa0f98080a20ccff8e7c1f0dc2712149e2f9a293b6598cff068a4de1bb852e61"
+      },
+      "duration_s": 265.8,
+      "error_checks_at_quiescence": {
+        "recon_headcount_roll_forward_company": 0,
+        "recon_headcount_roll_forward_department": 0,
+        "recon_history_as_of_matches_snapshot": 0,
+        "recon_history_contiguity": 0,
+        "recon_no_event_id_conflicts": 0,
+        "recon_rehire_continuity": 0,
+        "recon_rescinded_terminations_excluded": 0,
+        "recon_retro_corrections_applied": 0
+      },
+      "faults": [
+        {
+          "kind": "rewind_watermark",
+          "run_seq": 3,
+          "snapshots": 2
+        },
+        {
+          "kind": "rewind_watermark",
+          "run_seq": 6,
+          "snapshots": 2
+        },
+        {
+          "kind": "rewind_watermark",
+          "run_seq": 9,
+          "snapshots": 2
+        },
+        {
+          "count": 3,
+          "kind": "recommit_sink_files",
+          "run_seq": 5
+        }
+      ],
+      "identical_to_reference": {
+        "dim_department": true,
+        "dim_employee": true,
+        "dim_employee_history": true,
+        "dim_job": true,
+        "fct_compensation_history": true,
+        "fct_employment_events": true,
+        "fct_offers": true,
+        "fct_performance_reviews": true,
+        "fct_workforce_monthly": true,
+        "metrics_workforce_monthly": true
+      },
+      "name": "duplicate-lake-redelivery",
+      "observed": {
+        "deliveries_sent": 100000,
+        "duplicate_deliveries_in_raw": 0,
+        "duplicate_deliveries_skipped_by_loader": 60000,
+        "duplicate_results_ignored": 0,
+        "fallback_full_scans": 0,
+        "faults_fired_in_workflow": 0,
+        "jobs_expired": 0,
+        "jobs_failed": 0,
+        "lease_expirations": 0,
+        "load_attempts": 21,
+        "raw_deliveries": 100000,
+        "requests_sent": 229,
+        "runs": 21,
+        "runs_committed": 21,
+        "runs_failed": 0,
+        "snapshots_read": 30,
+        "transform_attempts": 20,
+        "transforms_skipped": 1,
+        "unique_events": 100000
+      },
+      "oracle_rows_mismatched": 0,
+      "passed": true,
+      "planned": {
+        "deliveries": 100000,
+        "faults": 4
+      },
+      "ports_busy_after_stack_down": [],
+      "profile": "full",
+      "scenario": "S2",
+      "started_at": "2026-10-11T03:31:53Z",
+      "warn_checks_at_quiescence": {
+        "recon_anomalies_open": 0,
+        "recon_event_counts_vs_manifest": 0,
+        "recon_metrics_vs_oracle": 0,
+        "recon_offer_to_hire": 0
+      }
+    },
+    {
+      "chunk_seconds": [
+        14.27,
+        28.8,
+        7.76,
+        11.39,
+        8.54,
+        27.97,
+        10.53,
+        9.99,
+        11.87,
+        10.36,
+        11.34,
+        11.92,
+        11.25,
+        10.73,
+        9.24,
+        9.12,
+        9.43,
+        10.58,
+        10.45,
+        11.06
+      ],
+      "chunks": 20,
+      "digests": {
+        "dim_department": "60d4b95d6590cd30c75bd77e9f899e9647cc08857fa06103dcc5677df7fd6409",
+        "dim_employee": "a7b4628ef96da29596c59efebc708eaa9a775cf61467da2c754b36db008c49b5",
+        "dim_employee_history": "70a1545263fc3e87de0aa1b22cd5cdb63d395147811c4904dc4a5084ab16df62",
+        "dim_job": "c2031e9c97c525716e40d4f3cb6663b6c21a9218479bfd79d46717376435c11c",
+        "fct_compensation_history": "f5803cbf115a0de63c4b6faffcbf07091507f05a8b570db647ca08adea66331e",
+        "fct_employment_events": "08a7e5b7b53cb7ca5d5e50daccc3d1b70f52a654cdf935eef20c1632269fa1a4",
+        "fct_offers": "3af7fd36f9d100d590efacff787253311e7f8e273d6dc3b7bfc9a23cb5c54846",
+        "fct_performance_reviews": "750e38e8190817774de6d61cf75b9b0379dc1797d8e5e92ff00376debfff4b79",
+        "fct_workforce_monthly": "fc43953dfc3b5f7af206658add61bf3ca2138877706d396ce1a5ba9f4b4cdee3",
+        "metrics_workforce_monthly": "fa0f98080a20ccff8e7c1f0dc2712149e2f9a293b6598cff068a4de1bb852e61"
+      },
+      "duration_s": 252.7,
+      "error_checks_at_quiescence": {
+        "recon_headcount_roll_forward_company": 0,
+        "recon_headcount_roll_forward_department": 0,
+        "recon_history_as_of_matches_snapshot": 0,
+        "recon_history_contiguity": 0,
+        "recon_no_event_id_conflicts": 0,
+        "recon_rehire_continuity": 0,
+        "recon_rescinded_terminations_excluded": 0,
+        "recon_retro_corrections_applied": 0
+      },
+      "faults": [
+        {
+          "kind": "crash_after_load",
+          "run_seq": 2
+        },
+        {
+          "attempt": 1,
+          "kind": "fail_transform_model",
+          "model": "fct_workforce_monthly",
+          "run_seq": 4
+        },
+        {
+          "kind": "duplicate_result",
+          "run_seq": 5
+        },
+        {
+          "kind": "skip_claim",
+          "run_seq": 6
+        },
+        {
+          "kind": "commit_step_error",
+          "run_seq": 7
+        }
+      ],
+      "identical_to_reference": {
+        "dim_department": true,
+        "dim_employee": true,
+        "dim_employee_history": true,
+        "dim_job": true,
+        "fct_compensation_history": true,
+        "fct_employment_events": true,
+        "fct_offers": true,
+        "fct_performance_reviews": true,
+        "fct_workforce_monthly": true,
+        "metrics_workforce_monthly": true
+      },
+      "name": "recovery-step-failures",
+      "observed": {
+        "deliveries_sent": 100000,
+        "duplicate_deliveries_in_raw": 0,
+        "duplicate_deliveries_skipped_by_loader": 5000,
+        "duplicate_results_ignored": 1,
+        "fallback_full_scans": 0,
+        "faults_fired_in_workflow": 1,
+        "jobs_expired": 2,
+        "jobs_failed": 1,
+        "lease_expirations": 2,
+        "load_attempts": 23,
+        "raw_deliveries": 100000,
+        "requests_sent": 229,
+        "runs": 21,
+        "runs_committed": 21,
+        "runs_failed": 0,
+        "snapshots_read": 20,
+        "transform_attempts": 21,
+        "transforms_skipped": 1,
+        "unique_events": 100000
+      },
+      "oracle_rows_mismatched": 0,
+      "passed": true,
+      "planned": {
+        "deliveries": 100000,
+        "faults": 5
+      },
+      "ports_busy_after_stack_down": [],
+      "profile": "full",
+      "scenario": "S4",
+      "started_at": "2026-10-11T03:36:22Z",
+      "warn_checks_at_quiescence": {
+        "recon_anomalies_open": 0,
+        "recon_event_counts_vs_manifest": 0,
+        "recon_metrics_vs_oracle": 0,
+        "recon_offer_to_hire": 0
+      }
+    }
+  ]
+}

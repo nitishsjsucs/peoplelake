@@ -1,0 +1,9 @@
+# Also the source list for `gcloud builds submit` (.gcloudignore is generated from this file).
+**
+!pipeline/pyproject.toml
+!pipeline/uv.lock
+!pipeline/src/**
+!warehouse/**
+warehouse/target/
+warehouse/logs/
+**/__pycache__/
