@@ -28,7 +28,7 @@ with new_rows as (
             partition by r.event_id
             order by r.received_at asc nulls last, r.delivery_id asc nulls last
         ) as delivery_rank
-    from {{ source('pl_raw', 'raw_event_deliveries') }} as r
+    from {{ source('peoplelake_raw', 'raw_event_deliveries') }} as r
     {% if pl_is_incremental() %}
     where r._pl_load_seq > (select coalesce(max(t._pl_load_seq), -1) from {{ this }} as t)
       and not exists (select 1 from {{ this }} as t2 where t2.event_id = r.event_id)

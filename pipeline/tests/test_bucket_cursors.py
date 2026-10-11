@@ -58,10 +58,14 @@ def test_bucket_that_becomes_empty_is_cleared(tmp_path, monkeypatch, small):
     worker = target[1]["workerId"]
     env.load(env.items[: early[0]] + env.items[early[0] + 1 :])
     assert env.dbt.build().success
-    rows = env.wh.query_arrow(f"SELECT count(*) AS n FROM pl_core.fct_workforce_monthly WHERE employee_id = '{worker}'")
+    rows = env.wh.query_arrow(
+        f"SELECT count(*) AS n FROM peoplelake_core.fct_workforce_monthly WHERE employee_id = '{worker}'"
+    )
     assert rows.column("n")[0].as_py() > 0
 
     env.load([target])
     assert env.dbt.build().success
-    rows = env.wh.query_arrow(f"SELECT count(*) AS n FROM pl_core.fct_workforce_monthly WHERE employee_id = '{worker}'")
+    rows = env.wh.query_arrow(
+        f"SELECT count(*) AS n FROM peoplelake_core.fct_workforce_monthly WHERE employee_id = '{worker}'"
+    )
     assert rows.column("n")[0].as_py() == 0

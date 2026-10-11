@@ -19,12 +19,12 @@ from ..lake.schema import RAW_COLUMNS
 from .base import LoadStats
 from .digest import MODEL_SPECS, digest_table, schema_for, select_sql
 
-RAW_TABLE = "pl_raw.raw_event_deliveries"
-LOAD_LOG = "pl_ops.load_log"
+RAW_TABLE = "peoplelake_raw.raw_event_deliveries"
+LOAD_LOG = "peoplelake_ops.load_log"
 
 RAW_DDL = f"""
-CREATE SCHEMA IF NOT EXISTS pl_raw;
-CREATE SCHEMA IF NOT EXISTS pl_ops;
+CREATE SCHEMA IF NOT EXISTS peoplelake_raw;
+CREATE SCHEMA IF NOT EXISTS peoplelake_ops;
 CREATE TABLE IF NOT EXISTS {RAW_TABLE} (
   event_id VARCHAR NOT NULL,
   source VARCHAR NOT NULL,
@@ -192,7 +192,7 @@ class DuckDBWarehouse:
                 rows = con.execute(
                     """
                     SELECT epoch_ms(first_received_at) // 10000 * 10 AS bucket, count(*)
-                    FROM pl_ops.ops_event_freshness WHERE _pl_load_seq > ?
+                    FROM peoplelake_ops.ops_event_freshness WHERE _pl_load_seq > ?
                     GROUP BY bucket ORDER BY bucket NULLS LAST
                     """,
                     [after_seq],
@@ -214,24 +214,22 @@ class DuckDBWarehouse:
                 p.unlink()
 
 
-SEED_STATE_DDL = (
-    "CREATE TABLE IF NOT EXISTS pl_ops.pl_seed_state (checksum VARCHAR NOT NULL, seeded_at TIMESTAMPTZ NOT NULL)"
-)
+SEED_STATE_DDL = "CREATE TABLE IF NOT EXISTS peoplelake_ops.pl_seed_state (checksum VARCHAR NOT NULL, seeded_at TIMESTAMPTZ NOT NULL)"
 
 
 def duckdb_seed_checksum(wh: DuckDBWarehouse) -> str | None:
     with connection(wh.path) as con:
-        con.execute("CREATE SCHEMA IF NOT EXISTS pl_ops")
+        con.execute("CREATE SCHEMA IF NOT EXISTS peoplelake_ops")
         con.execute(SEED_STATE_DDL)
         row = con.execute(
-            "SELECT checksum FROM pl_ops.pl_seed_state ORDER BY seeded_at DESC NULLS LAST LIMIT 1"
+            "SELECT checksum FROM peoplelake_ops.pl_seed_state ORDER BY seeded_at DESC NULLS LAST LIMIT 1"
         ).fetchone()
     return row[0] if row else None
 
 
 def duckdb_set_seed_checksum(wh: DuckDBWarehouse, checksum: str) -> None:
     with connection(wh.path) as con:
-        con.execute("CREATE SCHEMA IF NOT EXISTS pl_ops")
+        con.execute("CREATE SCHEMA IF NOT EXISTS peoplelake_ops")
         con.execute(SEED_STATE_DDL)
-        con.execute("DELETE FROM pl_ops.pl_seed_state")
-        con.execute("INSERT INTO pl_ops.pl_seed_state VALUES (?, now())", [checksum])
+        con.execute("DELETE FROM peoplelake_ops.pl_seed_state")
+        con.execute("INSERT INTO peoplelake_ops.pl_seed_state VALUES (?, now())", [checksum])

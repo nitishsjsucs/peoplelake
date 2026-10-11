@@ -28,7 +28,7 @@ Single-context repo. Terms used in code, tests, docs and commit messages.
 - **Employee bucket**: `employee_id` number modulo 2048; the unit of replacement for effective-dated models.
 - **Bucket cursor**: the max load sequence a bucketed model has consumed, read from the model's own relation.
 - **Transform skip**: a run that loaded nothing new and commits without running dbt.
-- **Drill dataset**: a `pl_*_drill` BigQuery dataset used for scenario drills and restores, never for production reads.
+- **Drill dataset**: a `peoplelake_*_drill` BigQuery dataset used for scenario drills and restores, never for production reads.
 - **Generation**: the epoch second when the Coordinator's storage was initialized; it prefixes run ids, load sequences and landing roll keys.
 - **Planning share**: the part of a shared Free allowance this repo plans to use: 20% of each account-wide Cloudflare daily allowance, 25% of each Google free tier.
 - **Automatic run**: a run requested by a lake event or the cron backstop; the Free plan guards apply only to these.

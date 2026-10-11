@@ -14,6 +14,11 @@ clean-targets: ["target", "logs"]
 flags:
   send_anonymous_usage_stats: false
 
+# BigQuery: the query comment also becomes job labels, so every dbt job in the shared project is
+# attributable to this repo (SPEC 29.4.6). DuckDB ignores the labels.
+query-comment:
+  job-label: true
+
 vars:
   # Generator profile whose oracle seeds the reconciliation checks compare against (full in production).
   pl_profile: "{{ env_var('PL_PROFILE', 'small') }}"
@@ -29,37 +34,41 @@ vars:
 
 models:
   peoplelake:
+    +labels:
+      app: peoplelake
     +persist_docs:
       relation: true
       columns: true
     staging:
-      +schema: pl_staging
+      +schema: peoplelake_staging
       +materialized: view
     intermediate:
-      +schema: pl_staging
+      +schema: peoplelake_staging
       +materialized: table
     core:
-      +schema: pl_core
+      +schema: peoplelake_core
       +materialized: table
     restricted:
-      +schema: pl_restricted
+      +schema: peoplelake_restricted
       +materialized: table
     reporting:
-      +schema: pl_reporting
+      +schema: peoplelake_reporting
       +materialized: view
     ops:
-      +schema: pl_ops
+      +schema: peoplelake_ops
       +materialized: table
 
 seeds:
   peoplelake:
-    +schema: pl_core
+    +labels:
+      app: peoplelake
+    +schema: peoplelake_core
     reference:
       ref_jobs:
         +column_types:
           job_level: "{{ 'int64' if target.type == 'bigquery' else 'bigint' }}"
     oracle:
-      +schema: pl_ops
+      +schema: peoplelake_ops
       oracle_workforce_monthly:
         +column_types:
           profile: "{{ 'string' if target.type == 'bigquery' else 'varchar' }}"

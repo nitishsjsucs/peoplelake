@@ -1,4 +1,4 @@
-"""BigQuery drills (SPEC 11.7, 20.5), run from a laptop with ADC impersonating pl-runner, writing only to
+"""BigQuery drills (SPEC 11.7, 20.5), run from a laptop with ADC impersonating peoplelake-runner, writing only to
 `*_drill` datasets.
 
 Restore drill: after dbt's CREATE OR REPLACE TABLE, `FOR SYSTEM_TIME AS OF` still reads the previous

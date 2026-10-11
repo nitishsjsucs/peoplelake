@@ -13,9 +13,9 @@ CONFIRM = "peoplelake"
 def reset(config: GcpConfig, confirm: str, *, drop_lake: bool = True) -> dict:
     if confirm != CONFIRM:
         raise SystemExit(f"refusing to reset production without --confirm {CONFIRM}")
-    from google.cloud import bigquery
+    from ..warehouse.bigquery_wh import bigquery_client
 
-    bq = bigquery.Client(project=config.project, location=config.bq_location)
+    bq = bigquery_client(config.project, config.bq_location)
     dropped = []
     for name in DATASETS:
         for table in bq.list_tables(f"{config.project}.{name}"):

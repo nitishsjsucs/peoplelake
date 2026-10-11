@@ -15,7 +15,7 @@ def items(small):
     return canonical_order(envelopes_from_dataset(small))
 
 
-def count(wh, sql="SELECT count(*) AS n FROM pl_raw.raw_event_deliveries"):
+def count(wh, sql="SELECT count(*) AS n FROM peoplelake_raw.raw_event_deliveries"):
     return wh.query_arrow(sql).column(0)[0].as_py()
 
 
@@ -33,8 +33,8 @@ def test_same_batch_twice_is_idempotent(wh, items):
 def test_full_small_profile_loads_10000_unique_events(wh, items):
     stats = load_direct(wh, items)
     assert stats.rows_inserted == 10_000
-    assert count(wh, "SELECT count(DISTINCT event_id) FROM pl_raw.raw_event_deliveries") == 10_000
-    assert count(wh, "SELECT count(*) FROM pl_ops.load_log") == 1
+    assert count(wh, "SELECT count(DISTINCT event_id) FROM peoplelake_raw.raw_event_deliveries") == 10_000
+    assert count(wh, "SELECT count(*) FROM peoplelake_ops.load_log") == 1
 
 
 def test_parts_cover_everything_once(items):
@@ -50,7 +50,9 @@ def test_within_batch_duplicate_deliveries_are_deduplicated(wh, items):
     stats = wh.load_deliveries(doubled, run_id="r", job_id="j", load_seq=5, snapshot_ids=["s1"] * 10 + ["s2"] * 10)
     assert (stats.rows_read, stats.rows_inserted, stats.duplicate_deliveries_skipped) == (20, 10, 10)
     snaps = (
-        wh.query_arrow("SELECT DISTINCT _pl_snapshot_id AS s FROM pl_raw.raw_event_deliveries").column("s").to_pylist()
+        wh.query_arrow("SELECT DISTINCT _pl_snapshot_id AS s FROM peoplelake_raw.raw_event_deliveries")
+        .column("s")
+        .to_pylist()
     )
     assert snaps == ["s1"]  # first occurrence wins
 

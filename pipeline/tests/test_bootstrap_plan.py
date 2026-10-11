@@ -8,19 +8,22 @@ import pytest
 from google.api_core.exceptions import NotFound
 
 from peoplelake.prod.bootstrap_gcp import (
+    ALLOWED_PROJECT_ROLES,
     SERVICES,
     Bootstrap,
     Clients,
     Gcloud,
     GcpConfig,
     all_datasets,
+    extra_project_roles,
     key_creation_blocked,
 )
 
 
 class FakeRunner:
-    def __init__(self, exists: bool):
+    def __init__(self, exists: bool, billing: str = "True"):
         self.exists = exists
+        self.billing = billing
         self.calls = []
 
     def __call__(self, argv, capture_output=True, text=True, check=False, input=None):
@@ -29,7 +32,7 @@ class FakeRunner:
         out = ""
         rc = 0 if self.exists else 1
         if "billing projects describe" in joined:
-            rc, out = 0, "True"
+            rc, out = 0, self.billing
         elif "projects describe" in joined:
             rc, out = 0, ("" if "parent.type" in joined else "peoplelake-123")
         elif "services list" in joined:
@@ -42,8 +45,9 @@ class FakeRunner:
 
 
 class FakeBigQuery:
-    def __init__(self, exists: bool):
+    def __init__(self, exists: bool, sandbox_expiration: bool = False):
         self.exists = exists
+        self.sandbox_expiration = sandbox_expiration
 
     def get_dataset(self, ref):
         if not self.exists:
@@ -51,10 +55,17 @@ class FakeBigQuery:
         name = ref.split(".")[1]
         hours = dict(all_datasets())[name]
         entries = [
-            SimpleNamespace(entity_id="pl-runner@peoplelake-123.iam.gserviceaccount.com", role="OWNER"),
-            SimpleNamespace(entity_id="pl-analyst@peoplelake-123.iam.gserviceaccount.com", role="READER"),
+            SimpleNamespace(entity_id="peoplelake-runner@peoplelake-123.iam.gserviceaccount.com", role="OWNER"),
+            SimpleNamespace(entity_id="peoplelake-analyst@peoplelake-123.iam.gserviceaccount.com", role="READER"),
         ]
-        return SimpleNamespace(max_time_travel_hours=hours, access_entries=entries)
+        sixty_days = 60 * 24 * 3600 * 1000 if self.sandbox_expiration else None
+        return SimpleNamespace(
+            max_time_travel_hours=hours,
+            access_entries=entries,
+            labels={"app": "peoplelake", "drill": "true" if name.endswith("_drill") else "false"},
+            default_table_expiration_ms=sixty_days,
+            default_partition_expiration_ms=sixty_days,
+        )
 
 
 class FakePolicyTags:
@@ -79,11 +90,11 @@ class FakeDataPolicies:
         self.exists = exists
 
     def list_data_policies(self, parent):
-        ids = ["pl_mask_compensation", "pl_mask_performance"] if self.exists else []
+        ids = ["peoplelake_mask_compensation", "peoplelake_mask_performance"] if self.exists else []
         return [SimpleNamespace(data_policy_id=i) for i in ids]
 
 
-def bootstrap(tmp_path, monkeypatch, exists: bool):
+def bootstrap(tmp_path, monkeypatch, exists: bool, billing: str = "True", sandbox_expiration: bool = False):
     adc = tmp_path / "gcloud"
     adc.mkdir()
     (adc / "application_default_credentials.json").write_text(json.dumps({"quota_project_id": "peoplelake-123"}))
@@ -104,10 +115,12 @@ def bootstrap(tmp_path, monkeypatch, exists: bool):
             "PL_CF_RUNNER_CLIENT_SECRET": "token-value",
         },
     )
-    runner = FakeRunner(exists)
+    runner = FakeRunner(exists, billing)
     gcloud = Gcloud(plan=True, runner=runner, project=config.project)
     clients = Clients(
-        bigquery=FakeBigQuery(exists), policy_tags=FakePolicyTags(exists), data_policies=FakeDataPolicies(exists)
+        bigquery=FakeBigQuery(exists, sandbox_expiration),
+        policy_tags=FakePolicyTags(exists),
+        data_policies=FakeDataPolicies(exists),
     )
     boot = Bootstrap(config, gcloud, clients, prod_dir=prod, git_sha="abc123")
     return boot, runner, gcloud
@@ -119,12 +132,15 @@ def test_plan_on_an_empty_project_creates_everything_without_mutating(tmp_path, 
     created = [(a.step, a.target) for a in actions if a.kind == "create"]
     assert sum(1 for s, _ in created if s == "datasets") == 12
     assert ("taxonomy", "peoplelake-sensitivity") in created
-    assert {t for s, t in created if s == "data policies"} == {"pl_mask_compensation", "pl_mask_performance"}
-    assert sum(1 for s, _ in created if s == "service accounts") == 3
+    assert {t for s, t in created if s == "data policies"} == {
+        "peoplelake_mask_compensation",
+        "peoplelake_mask_performance",
+    }
+    assert sum(1 for s, _ in created if s == "service accounts") == 4
     assert {t for s, t in created if s == "secrets"} == {
-        "pl-r2-catalog-token",
-        "pl-runner-client-id",
-        "pl-runner-client-secret",
+        "peoplelake-r2-catalog-token",
+        "peoplelake-runner-client-id",
+        "peoplelake-runner-client-secret",
     }
     assert ("cloud run job", "peoplelake-runner") in created
     assert any(s == "dispatcher key" for s, _ in created)
@@ -158,3 +174,88 @@ def test_plan_on_a_complete_project_creates_nothing(tmp_path, monkeypatch):
 )
 def test_key_creation_policy_detection(policy, blocked):
     assert key_creation_blocked(policy) is blocked
+
+
+def test_every_name_in_the_shared_project_starts_with_peoplelake(tmp_path, monkeypatch):
+    boot, _, gcloud = bootstrap(tmp_path, monkeypatch, exists=False)
+    actions = boot.run()
+    for a in actions:
+        if a.kind != "create" or a.step in ("services", "dispatcher key", "policy tags", "tag iam", "dataset access"):
+            continue
+        if a.step == "runner image":  # an image inside the `peoplelake` repository
+            assert "/peoplelake-123/peoplelake/runner:" in a.target
+            continue
+        target = a.target.removeprefix("gs://").split("@")[0]
+        name = target.split("/")[-1].split(":")[0].split(".")[-1]
+        assert name.startswith("peoplelake"), (a.step, a.target)
+    for m in gcloud.mutations:
+        if " create " in f" {m} " and "keys create" not in m and "services" not in m:
+            created = m.split(" create ", 1)[1].split()[0].removeprefix("gs://")
+            assert created.startswith("peoplelake"), m
+
+
+def test_the_only_project_level_roles_are_job_user_and_log_writer(tmp_path, monkeypatch):
+    boot, runner, gcloud = bootstrap(tmp_path, monkeypatch, exists=False)
+    boot.run()
+    project_bindings = [m for m in gcloud.mutations if "projects add-iam-policy-binding" in m]
+    granted = sorted((m.split("--member=")[1].split()[0], m.split("--role=")[1].split()[0]) for m in project_bindings)
+    assert granted == [
+        ("serviceAccount:peoplelake-analyst@peoplelake-123.iam.gserviceaccount.com", "roles/bigquery.jobUser"),
+        ("serviceAccount:peoplelake-build@peoplelake-123.iam.gserviceaccount.com", "roles/logging.logWriter"),
+        ("serviceAccount:peoplelake-runner@peoplelake-123.iam.gserviceaccount.com", "roles/bigquery.jobUser"),
+    ]
+    assert {role for _, role in granted} <= ALLOWED_PROJECT_ROLES
+    # Nothing goes to the Cloud Build default service account; builds run as peoplelake-build.
+    assert not any("get-default-service-account" in " ".join(argv) for argv in runner.calls)
+    assert not any("cloudbuild.gserviceaccount.com" in m or "compute@developer" in m for m in gcloud.mutations)
+    submit = next(m for m in gcloud.mutations if "builds submit" in m)
+    assert (
+        "--service-account=projects/peoplelake-123/serviceAccounts/peoplelake-build@peoplelake-123.iam.gserviceaccount.com"
+        in submit
+    )
+    assert "--gcs-source-staging-dir=gs://peoplelake-build-peoplelake-123/source" in submit
+    resource_scoped = [
+        m for m in gcloud.mutations if "add-iam-policy-binding" in m and "projects add-iam-policy-binding" not in m
+    ]
+    assert any(
+        "storage buckets add-iam-policy-binding gs://peoplelake-build-peoplelake-123" in m for m in resource_scoped
+    )
+    assert any("artifacts repositories add-iam-policy-binding peoplelake" in m for m in resource_scoped)
+
+
+def test_doctor_flags_extra_project_roles():
+    members = {"serviceAccount:peoplelake-runner@p.iam.gserviceaccount.com"}
+    policy = {
+        "bindings": [
+            {"role": "roles/bigquery.jobUser", "members": list(members)},
+            {
+                "role": "roles/bigquery.dataViewer",
+                "members": list(members) + ["serviceAccount:other@p.iam.gserviceaccount.com"],
+            },
+        ]
+    }
+    assert extra_project_roles(policy, members) == [
+        "roles/bigquery.dataViewer for serviceAccount:peoplelake-runner@p.iam.gserviceaccount.com"
+    ]
+
+
+def test_datasets_get_no_default_expiration(tmp_path, monkeypatch):
+    boot, _, _ = bootstrap(tmp_path, monkeypatch, exists=True, sandbox_expiration=True)
+    actions = boot.run()
+    updated = [a for a in actions if a.step == "datasets" and a.kind == "update"]
+    assert len(updated) == 12
+    assert all(
+        "default table expiration cleared" in a.detail and "default partition expiration cleared" in a.detail
+        for a in updated
+    )
+    (tmp_path / "empty").mkdir()
+    created = [a for a in bootstrap(tmp_path / "empty", monkeypatch, exists=False)[0].run() if a.step == "datasets"]
+    assert all("no default expiration" in a.detail for a in created)
+
+
+def test_the_plan_refuses_while_billing_is_disabled(tmp_path, monkeypatch):
+    boot, _, gcloud = bootstrap(tmp_path, monkeypatch, exists=False, billing="False")
+    actions = boot.run()
+    assert {a.step for a in actions} == {"preflight"}
+    assert any(a.kind == "fail" and a.target == "billing" for a in actions)
+    assert gcloud.mutations == []

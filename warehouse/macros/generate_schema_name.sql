@@ -1,4 +1,4 @@
-{#- Custom schemas map to pl_staging, pl_core, pl_restricted, pl_reporting, pl_ops (the same names in
+{#- Custom schemas map to peoplelake_staging, peoplelake_core, peoplelake_restricted, peoplelake_reporting, peoplelake_ops (the same names in
     DuckDB and BigQuery), plus `_<suffix>` when PL_DATASET_SUFFIX is set (always `drill` for prod-drill). -#}
 {% macro generate_schema_name(custom_schema_name, node) -%}
   {%- set base = custom_schema_name if custom_schema_name is not none else target.schema -%}

@@ -29,8 +29,8 @@ def test_reporting_views_are_authorized_on_core(nodes):
     assert len(rpt) == 2
     for n in rpt:
         assert n["config"]["materialized"] == "view"
-        assert n["config"]["grant_access_to"] == [{"project": "peoplelake-offline", "dataset": "pl_core"}]
-        assert n["schema"] == "pl_reporting"
+        assert n["config"]["grant_access_to"] == [{"project": "peoplelake-offline", "dataset": "peoplelake_core"}]
+        assert n["schema"] == "peoplelake_reporting"
 
 
 def test_bucketed_models_use_int64_range_insert_overwrite(nodes):
@@ -47,10 +47,10 @@ def test_bucketed_models_use_int64_range_insert_overwrite(nodes):
 
 
 def test_schemas_map_to_bigquery_datasets(nodes):
-    assert nodes["stg_events"]["schema"] == "pl_staging"
-    assert nodes["metrics_workforce_monthly"]["schema"] == "pl_core"
-    assert nodes["fct_compensation_history"]["schema"] == "pl_restricted"
-    assert nodes["ops_anomalies"]["schema"] == "pl_ops"
+    assert nodes["stg_events"]["schema"] == "peoplelake_staging"
+    assert nodes["metrics_workforce_monthly"]["schema"] == "peoplelake_core"
+    assert nodes["fct_compensation_history"]["schema"] == "peoplelake_restricted"
+    assert nodes["ops_anomalies"]["schema"] == "peoplelake_ops"
 
 
 @pytest.mark.parametrize("branch", ["full-build", "incremental"])

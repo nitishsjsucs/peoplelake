@@ -1,7 +1,7 @@
 {#- Deliveries versus unique events per source and type: duplicates stay visible and countable (ADR 0001). -#}
 with deliveries as (
     select source, event_type, count(*) as deliveries, count(distinct event_id) as unique_events
-    from {{ source('pl_raw', 'raw_event_deliveries') }}
+    from {{ source('peoplelake_raw', 'raw_event_deliveries') }}
     group by source, event_type
 )
 

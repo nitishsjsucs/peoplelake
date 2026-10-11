@@ -66,7 +66,9 @@ def load_direct(wh: DuckDBWarehouse, items: list[tuple[str, dict]], *, load_seq:
     wh.ensure_raw()
     if load_seq is None:
         current = (
-            wh.query_arrow("SELECT max(_pl_load_seq) AS m FROM pl_raw.raw_event_deliveries").column("m")[0].as_py()
+            wh.query_arrow("SELECT max(_pl_load_seq) AS m FROM peoplelake_raw.raw_event_deliveries")
+            .column("m")[0]
+            .as_py()
         )
         load_seq = (current or 0) + 1
     table = direct_table(items)

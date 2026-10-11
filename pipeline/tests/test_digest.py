@@ -17,7 +17,7 @@ from peoplelake.warehouse.duckdb_wh import open_duckdb
 
 SPEC = ModelSpec(
     name="tiny",
-    schema="pl_core",
+    schema="peoplelake_core",
     columns=(
         ("id", "string"),
         ("n", "int"),

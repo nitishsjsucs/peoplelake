@@ -5,7 +5,7 @@ import { accessToken, type CachedToken, parseServiceAccountKey, SCOPE, TOKEN_URL
 
 async function serviceAccount() {
   const { publicKey, privateKey } = await generateKeyPair("RS256", { extractable: true });
-  const key = { client_email: "pl-dispatcher@peoplelake-1.iam.gserviceaccount.com", private_key: await exportPKCS8(privateKey), private_key_id: "kid-123" };
+  const key = { client_email: "peoplelake-dispatcher@peoplelake-1.iam.gserviceaccount.com", private_key: await exportPKCS8(privateKey), private_key_id: "kid-123" };
   return { key, publicKey };
 }
 

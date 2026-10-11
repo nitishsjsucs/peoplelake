@@ -172,7 +172,7 @@ def compare(mart: list[dict], by_department: list[dict], company: list[dict]) ->
 def mart_rows(con: Any) -> list[dict]:
     cur = con.execute(
         "select month, department_id, headcount, fte, hires, departures, offers_accepted, offers_declined, "
-        "offer_acceptance_rate from pl_core.metrics_workforce_monthly order by month nulls last, department_id nulls last"
+        "offer_acceptance_rate from peoplelake_core.metrics_workforce_monthly order by month nulls last, department_id nulls last"
     )
     names = [d[0] for d in cur.description]
     return [dict(zip(names, r, strict=True)) for r in cur.fetchall()]
@@ -214,7 +214,7 @@ def parity_report(profile: str, workdir: Path, command: str) -> dict:
         "profile": profile,
         "engine": "duckdb",
         "semantic_layer": "MetricFlow (dbt-metricflow 0.15.0, metricflow 0.213.0) planning DuckDB SQL",
-        "mart": "pl_core.metrics_workforce_monthly",
+        "mart": "peoplelake_core.metrics_workforce_monthly",
         "metrics": list(METRICS),
         "events_loaded": reference["events_loaded"],
         "machine": f"{platform.system()} {platform.machine()}",

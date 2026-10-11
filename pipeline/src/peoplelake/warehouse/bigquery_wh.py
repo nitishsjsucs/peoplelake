@@ -1,8 +1,10 @@
 """BigQuery warehouse (production). Batch load jobs are free; deduplication is a MERGE on delivery_id.
+Every query is capped at 1 GB billed and every job is labeled `app=peoplelake` (SPEC 29.4.6): the project is
+shared by four repos and its free tiers with them.
 
-Load: Arrow -> Parquet in memory -> load job into `pl_raw._stage_<job>` (WRITE_TRUNCATE, expires in a
-day) -> stats query -> `MERGE pl_raw.raw_event_deliveries T USING (deduplicated stage) S ON
-T.delivery_id = S.delivery_id WHEN NOT MATCHED THEN INSERT` -> `pl_ops.load_log` -> drop the stage.
+Load: Arrow -> Parquet in memory -> load job into `peoplelake_raw._stage_<job>` (WRITE_TRUNCATE, expires in a
+day) -> stats query -> `MERGE peoplelake_raw.raw_event_deliveries T USING (deduplicated stage) S ON
+T.delivery_id = S.delivery_id WHEN NOT MATCHED THEN INSERT` -> `peoplelake_ops.load_log` -> drop the stage.
 Re-running a load inserts nothing (ADR 0001). The raw table is partitioned by DATE(_pl_loaded_at) and
 clustered by source, event_type, event_id.
 """
@@ -17,6 +19,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from ..budget import BQ_LABELS, BQ_MAX_BYTES_BILLED
 from ..lake.schema import RAW_COLUMNS
 from .base import LoadStats
 from .digest import MODEL_SPECS, digest_table, schema_for, select_sql
@@ -125,16 +128,18 @@ class BigQueryWarehouse:
 
     @property
     def raw(self) -> str:
-        return f"{self.dataset('pl_raw')}.raw_event_deliveries"
+        return f"{self.dataset('peoplelake_raw')}.raw_event_deliveries"
 
     @property
     def load_log(self) -> str:
-        return f"{self.dataset('pl_ops')}.load_log"
+        return f"{self.dataset('peoplelake_ops')}.load_log"
 
     def _query(self, sql: str, params: list[Any] | None = None) -> Any:
         from google.cloud import bigquery
 
-        config = bigquery.QueryJobConfig(query_parameters=params or [])
+        config = bigquery.QueryJobConfig(
+            query_parameters=params or [], maximum_bytes_billed=BQ_MAX_BYTES_BILLED, labels=dict(BQ_LABELS)
+        )
         job = self.client.query(sql, job_config=config, location=self.location)
         job.result()
         self.bytes_billed += int(getattr(job, "total_bytes_billed", None) or 0)
@@ -156,7 +161,7 @@ class BigQueryWarehouse:
         from google.cloud import bigquery
 
         billed_before = self.bytes_billed
-        stage = f"{self.dataset('pl_raw')}.{stage_name(job_id)}"
+        stage = f"{self.dataset('peoplelake_raw')}.{stage_name(job_id)}"
         snaps = pa.array(snapshot_ids if snapshot_ids is not None else [None] * batch.num_rows, type=pa.string())
         staged = (
             batch.select(list(RAW_COLUMNS))
@@ -169,6 +174,7 @@ class BigQueryWarehouse:
         load_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.PARQUET,
             write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            labels=dict(BQ_LABELS),
         )
         self.client.load_table_from_file(buf, stage, job_config=load_config, location=self.location).result()
         table = self.client.get_table(stage)
@@ -241,7 +247,7 @@ class BigQueryWarehouse:
 
         sql = f"""
             SELECT DIV(UNIX_SECONDS(first_received_at), 10) * 10 AS bucket, COUNT(*) AS n
-            FROM `{self.dataset("pl_ops")}.ops_event_freshness` WHERE _pl_load_seq > @after
+            FROM `{self.dataset("peoplelake_ops")}.ops_event_freshness` WHERE _pl_load_seq > @after
             GROUP BY bucket ORDER BY bucket ASC NULLS LAST
         """
         try:
@@ -254,12 +260,12 @@ class BigQueryWarehouse:
         from google.api_core.exceptions import NotFound
 
         self._query(
-            f"CREATE TABLE IF NOT EXISTS `{self.dataset('pl_ops')}.pl_seed_state` (checksum STRING NOT NULL, seeded_at TIMESTAMP NOT NULL)"
+            f"CREATE TABLE IF NOT EXISTS `{self.dataset('peoplelake_ops')}.pl_seed_state` (checksum STRING NOT NULL, seeded_at TIMESTAMP NOT NULL)"
         )
         try:
             rows = list(
                 self._query(
-                    f"SELECT checksum FROM `{self.dataset('pl_ops')}.pl_seed_state` ORDER BY seeded_at DESC NULLS LAST LIMIT 1"
+                    f"SELECT checksum FROM `{self.dataset('peoplelake_ops')}.pl_seed_state` ORDER BY seeded_at DESC NULLS LAST LIMIT 1"
                 ).result()
             )
         except NotFound:
@@ -269,7 +275,7 @@ class BigQueryWarehouse:
     def set_seed_checksum(self, checksum: str) -> None:
         from google.cloud import bigquery
 
-        table = f"`{self.dataset('pl_ops')}.pl_seed_state`"
+        table = f"`{self.dataset('peoplelake_ops')}.pl_seed_state`"
         self._query(f"DELETE FROM {table} WHERE TRUE")
         self._query(
             f"INSERT INTO {table} VALUES (@c, CURRENT_TIMESTAMP())",
@@ -280,7 +286,14 @@ class BigQueryWarehouse:
         """Empty the drill datasets (scenario drills start from empty state). Never touches production."""
         if self.suffix != "drill":
             raise RuntimeError("BigQuery datasets are reset only by `peoplelake prod reset` (guarded) or drills")
-        for base in ("pl_raw", "pl_staging", "pl_core", "pl_restricted", "pl_reporting", "pl_ops"):
+        for base in (
+            "peoplelake_raw",
+            "peoplelake_staging",
+            "peoplelake_core",
+            "peoplelake_restricted",
+            "peoplelake_reporting",
+            "peoplelake_ops",
+        ):
             for table in self.client.list_tables(self.dataset(base)):
                 self.client.delete_table(table.reference, not_found_ok=True)
 
@@ -288,8 +301,8 @@ class BigQueryWarehouse:
         from google.cloud import bigquery
 
         sql = f"""
-            SELECT COUNT(*) AS n FROM `{self.dataset("pl_core")}.metrics_workforce_monthly` m
-            FULL OUTER JOIN (SELECT * FROM `{self.dataset("pl_ops")}.oracle_workforce_monthly` WHERE profile = @p) o
+            SELECT COUNT(*) AS n FROM `{self.dataset("peoplelake_core")}.metrics_workforce_monthly` m
+            FULL OUTER JOIN (SELECT * FROM `{self.dataset("peoplelake_ops")}.oracle_workforce_monthly` WHERE profile = @p) o
               ON o.month = m.month AND o.department_id = m.department_id
             WHERE m.month IS NULL OR o.month IS NULL
                OR TO_JSON_STRING(STRUCT(m.headcount, m.fte, m.hires, m.rehires, m.departures, m.transfers_in, m.transfers_out,
@@ -306,19 +319,32 @@ class BigQueryWarehouse:
         return {"raw_deliveries": d, "unique_events": u, "duplicate_deliveries_in_raw": d - u}
 
 
-def bigquery_client(project: str, location: str, impersonate: str | None = None):
-    """A BigQuery client from ADC, impersonating a service account when given (drills, masking demo)."""
+def default_query_job_config():
+    """Every query: at most 1 GB billed, labeled app=peoplelake."""
     from google.cloud import bigquery
 
-    if not impersonate:
-        return bigquery.Client(project=project, location=location)
-    import google.auth
-    from google.auth import impersonated_credentials
+    return bigquery.QueryJobConfig(maximum_bytes_billed=BQ_MAX_BYTES_BILLED, labels=dict(BQ_LABELS))
 
-    source, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-    creds = impersonated_credentials.Credentials(
-        source_credentials=source,
-        target_principal=impersonate,
-        target_scopes=["https://www.googleapis.com/auth/cloud-platform"],
+
+def bigquery_client(project: str, location: str, impersonate: str | None = None, *, credentials: Any = None):
+    """The only way this repo creates a BigQuery client: ADC (or `credentials`), impersonating a service
+    account when given (drills, masking demo), with the 1 GB cap and the label as the default job config."""
+    from google.cloud import bigquery
+
+    creds = credentials
+    if creds is None and impersonate:
+        import google.auth
+        from google.auth import impersonated_credentials
+
+        source, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        creds = impersonated_credentials.Credentials(
+            source_credentials=source,
+            target_principal=impersonate,
+            target_scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+    return bigquery.Client(
+        project=project,
+        location=location,
+        default_query_job_config=default_query_job_config(),
+        **({"credentials": creds} if creds is not None else {}),
     )
-    return bigquery.Client(project=project, location=location, credentials=creds)

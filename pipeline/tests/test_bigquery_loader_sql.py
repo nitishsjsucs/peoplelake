@@ -89,7 +89,7 @@ def test_load_job_merge_and_log(batch):
     )
 
     load = next(c for c in client.calls if c[0] == "load")
-    assert load[1] == "proj.pl_raw._stage_r_x_000001_load_a1"
+    assert load[1] == "proj.peoplelake_raw._stage_r_x_000001_load_a1"
     assert load[2].source_format == "PARQUET"
     assert load[2].write_disposition == "WRITE_TRUNCATE"
     assert client.parquet.column_names[-2:] == ["_pl_snapshot_id", "_ord"]
@@ -113,7 +113,7 @@ def test_load_job_merge_and_log(batch):
     for sql in (stats_sql, log_sql, max_sql):
         sqlglot.parse_one(sql, read="bigquery")
     assert queries[2][2]["rows_inserted"] == ("INT64", 3)
-    assert client.calls[-1] == ("delete_table", "proj.pl_raw._stage_r_x_000001_load_a1", True)
+    assert client.calls[-1] == ("delete_table", "proj.peoplelake_raw._stage_r_x_000001_load_a1", True)
 
     assert stats.rows_inserted == 3 and stats.duplicate_deliveries_skipped == 0
     assert stats.unique_new_events == 2
@@ -134,8 +134,10 @@ def test_drill_suffix_targets_drill_datasets(batch):
     client = FakeClient()
     wh = BigQueryWarehouse(client, "proj", suffix="drill")
     wh.load_deliveries(batch, run_id="r", job_id="j", load_seq=1)
-    assert wh.raw == "proj.pl_raw_drill.raw_event_deliveries"
-    assert all("pl_raw_drill" in c[1] or "pl_ops_drill" in c[1] for c in client.calls if c[0] == "query")
+    assert wh.raw == "proj.peoplelake_raw_drill.raw_event_deliveries"
+    assert all(
+        "peoplelake_raw_drill" in c[1] or "peoplelake_ops_drill" in c[1] for c in client.calls if c[0] == "query"
+    )
 
 
 def test_stage_name_is_a_valid_table_id():

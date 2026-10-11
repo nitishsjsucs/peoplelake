@@ -80,7 +80,7 @@ class Runner:
         project = self.settings.gcp_project
         if not project:
             raise RuntimeError("PL_GCP_PROJECT is not set")
-        # prod: the Cloud Run Job's attached service account; prod-drill: the operator's ADC impersonating pl-runner.
+        # prod: the Cloud Run Job's attached service account; prod-drill: the operator's ADC impersonating peoplelake-runner.
         impersonate = os.environ.get("PL_RUNNER_SA") if drill else None
         client = bigquery_client(project, self.settings.bq_location, impersonate)
         return BigQueryWarehouse(client, project, location=self.settings.bq_location, suffix=suffix or drill)

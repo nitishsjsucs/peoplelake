@@ -13,11 +13,13 @@ from __future__ import annotations
 import json
 import platform
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from ..auth.dev_tokens import AccessHeaders
+from ..budget import BQ_MONTHLY_BYTES_CAP, BQ_TRANSFORM_RESERVE_BYTES
 from ..generator import generate, get_profile
 from ..paths import repo_root
 from ..runner.client import WorkerClient
@@ -81,8 +83,8 @@ def oracle_mismatches(duckdb_path: Path, profile: str) -> int:
     with connection(duckdb_path) as con:
         return con.execute(
             """
-            SELECT count(*) FROM pl_core.metrics_workforce_monthly m
-            FULL OUTER JOIN (SELECT * FROM pl_ops.oracle_workforce_monthly WHERE profile = ?) o
+            SELECT count(*) FROM peoplelake_core.metrics_workforce_monthly m
+            FULL OUTER JOIN (SELECT * FROM peoplelake_ops.oracle_workforce_monthly WHERE profile = ?) o
               ON o.month = m.month AND o.department_id = m.department_id
             WHERE m.month IS NULL OR o.month IS NULL
                OR (m.headcount, m.fte, m.hires, m.rehires, m.departures, m.transfers_in, m.transfers_out,
@@ -98,7 +100,7 @@ def oracle_mismatches(duckdb_path: Path, profile: str) -> int:
 def raw_counts(duckdb_path: Path) -> dict:
     with connection(duckdb_path) as con:
         deliveries, unique = con.execute(
-            "SELECT count(*), count(DISTINCT event_id) FROM pl_raw.raw_event_deliveries"
+            "SELECT count(*), count(DISTINCT event_id) FROM peoplelake_raw.raw_event_deliveries"
         ).fetchone()
     return {
         "raw_deliveries": int(deliveries),
@@ -277,15 +279,49 @@ def run_scenario(
     }
 
 
+def drill_scenario_estimate_bytes(chunks: int) -> int:
+    """BigQuery bytes one drill scenario bills: about one transform per chunk, plus the quiescence run and
+    S5's rebuild, at about 3 GB each (SPEC 29.5: the 10 MB minimum per referenced table dominates)."""
+    return (chunks + 2) * BQ_TRANSFORM_RESERVE_BYTES
+
+
+def run_scenarios(
+    wanted: list[str],
+    run_one: Callable[[str], dict],
+    *,
+    month_billed: Callable[[], int] | None = None,
+    chunks: int = 10,
+    cap: int = BQ_MONTHLY_BYTES_CAP,
+) -> tuple[list[dict], list[str], int | None]:
+    """Run scenarios in order. With `month_billed` (the BigQuery drill), stop before a scenario whose
+    estimate would take this month's billed bytes past the monthly guard; returns the results, the
+    scenarios left for next month (resume with --scenarios) and the billed bytes that stopped it."""
+    results: list[dict] = []
+    for i, scenario in enumerate(wanted):
+        if month_billed is not None:
+            billed = month_billed()
+            if billed + drill_scenario_estimate_bytes(chunks) > cap:
+                return results, wanted[i:], billed
+        results.append(run_one(scenario))
+    return results, [], None
+
+
 @dataclass
 class DrillTarget:
     """`--target prod-drill`: local Worker, Workflows and lake stand-ins; the runner writes BigQuery `_drill`
-    datasets as pl-runner (the operator's ADC impersonating it)."""
+    datasets as peoplelake-runner (the operator's ADC impersonating it)."""
 
     project: str
     location: str
     runner_sa: str
     runner_env: dict
+
+    def month_billed(self) -> int:
+        """Bytes billed this month by the peoplelake-* service accounts (queried as the operator, capped)."""
+        from ..prod.doctor_gcp import month_bytes_billed
+        from ..warehouse.bigquery_wh import bigquery_client
+
+        return month_bytes_billed(bigquery_client(self.project, self.location))
 
     def warehouse(self):
         from ..warehouse.bigquery_wh import BigQueryWarehouse, bigquery_client

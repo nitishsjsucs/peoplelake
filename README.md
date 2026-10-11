@@ -15,7 +15,7 @@ v1 is built and verified end to end on the local stack (every item of the build 
 | Contracts and canonical JSON golden | done: zod contracts generate `contracts/*.schema.json`; pydantic mirrors; fixtures and a canonical JSON golden asserted by vitest (in workerd) and pytest |
 | DuckDB loader and output digests | done: idempotent load on `delivery_id`, UTC sessions, engine-independent digests for the 10 published models |
 | dbt models, five metrics, reconciliation checks | done on DuckDB: staging, spells, SCD2 history with per-model bucket cursors, facts, metrics mart, reporting and ops models, 10 unit tests, reconciliation checks R1 to R11 |
-| BigQuery configs and offline compile | done offline: dbt-bigquery profiles, policy tags, authorized views, int64 range `insert_overwrite`, both compile branches parse as BigQuery, ORDER BY lint, BigQuery loader tested against a fake client; nothing has run on BigQuery yet |
+| BigQuery configs and offline compile | done offline: dbt-bigquery profiles (every query capped at 1 GB billed, job labels from the query comment, `app=peoplelake` table labels), policy tags, authorized views, int64 range `insert_overwrite`, both compile branches parse as BigQuery, ORDER BY lint, BigQuery loader tested against a fake client; every name in the shared Google Cloud project starts with `peoplelake` (datasets `peoplelake_*`, service accounts `peoplelake-runner`, `-analyst`, `-dispatcher` and a dedicated `-build`), grants are resource-scoped, and bootstrap refuses to run while billing is off; nothing has run on BigQuery yet |
 | Iceberg lake and landing commits | done locally: the runner's load job commits new landing rolls to `peoplelake.raw_events` (one append snapshot per roll whose summary carries the landing cursor `peoplelake.landing-through`, so snapshot expiration can never cause a re-append; conflicts re-read the cursor; only the current generation's rolls are listed; every line validated as a RawRecord), the same code against the pyiceberg SqlCatalog stand-in locally and Basin Catalog through `RestCatalog` in production (`peoplelake lake init --target prod` creates the table); incremental reader with full-scan fallback. Basin Catalog itself is not exercised yet (needs production) |
 | Worker: auth, ingest, landing | done locally: fail-closed config, Access JWT verification (RS256, iss, aud, exp) with locally generated dev keys, role gates, `POST /v1/ingest/:source` for three envelopes (zod, all-or-nothing, at most 50 events per request so a request stays well inside the Workers Free plan's 10 ms of CPU, the ingest path prewarmed at isolate startup), RawRecord normalization shared with Python through a golden, and the LandingRoller Durable Object (one SQLite row per request, planned immutable roll files in R2 every 60 s, one Queue message per roll, backpressure), the same code locally and in production; no Basin Pipelines (Workers Paid only) |
 | Orchestration: Coordinator, Workflow, dispatchers | done locally (Miniflare Workflows): Coordinator ledger with single-flight runs, attempt-scoped jobs and leases, `WarehouseRunWorkflow` (load, transform or skip, verify, commit, release; a committed run uses 8 steps and records them), poll and Cloud Run dispatchers, lake-events queue consumer (one message per landing roll), the Workers Free plan guards (a 5-minute cron backstop that requests a run only while a landed roll is past the committed landing cursor, heartbeat off, a 240 s minimum interval between automatic runs, failure backoff of 5 minutes doubling to 6 hours, 30 automatic runs a UTC day, a 275 GB monthly BigQuery guard that commits the load and skips the transform), indexed ledger queries with per-day Durable Object row counters and `GET /api/ops/budget`, eval faults; production Workflows not exercised yet |
@@ -55,7 +55,7 @@ flowchart LR
   end
   subgraph GCP["Google Cloud (local stand-in: DuckDB via dbt-duckdb)"]
     CR["Cloud Run Job peoplelake-runner<br/>(local: peoplelake runner poll)"]
-    RAW[("BigQuery pl_raw.raw_event_deliveries")]
+    RAW[("BigQuery peoplelake_raw.raw_event_deliveries")]
     DBT["dbt build: staging, core,<br/>restricted, reporting, ops"]
   end
   H --> ACC
@@ -270,7 +270,7 @@ Production runs on Cloudflare (Workers, Workflows, Queues, Durable Objects, R2, 
 | R2 and Basin Catalog | R2 with a payment card (Basin Catalog requires it) | inside the free tier at this volume |
 | Queues, Workflows, Durable Objects, Workers AI, AI Gateway | included with Workers Paid or free tiers | about $0 at this volume |
 | Zero Trust Access | Free plan (up to 50 users) | $0 |
-| BigQuery | billing account required (the sandbox has no DML, and dbt incremental models need MERGE) | first 1 TiB of queries per month free; every query capped at 5 GB billed |
+| BigQuery | billing account required (the sandbox has no DML, and dbt incremental models need MERGE) | first 1 TiB of queries per month free; every query capped at 1 GB billed and labeled `app=peoplelake` |
 | Cloud Run Job, Cloud Build, Artifact Registry, Secret Manager | pay as you go | cents per month |
 
 ### Steps only a person can do (in order)

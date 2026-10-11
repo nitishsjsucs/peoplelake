@@ -27,17 +27,17 @@ def landing_committed(table, landed_through: str | None) -> dict:
 
 
 def verify(config: GcpConfig, reference_path: Path | None = None, landing: dict | None = None) -> dict:
-    from google.cloud import bigquery
+    from ..warehouse.bigquery_wh import BigQueryWarehouse, bigquery_client
 
-    from ..warehouse.bigquery_wh import BigQueryWarehouse
-
-    bq = bigquery.Client(project=config.project, location=config.bq_location)
+    bq = bigquery_client(config.project, config.bq_location)
     p = config.project
-    unique = list(bq.query(f"SELECT COUNT(DISTINCT event_id) AS n FROM `{p}.pl_staging.stg_events`").result())[0]["n"]
+    unique = list(bq.query(f"SELECT COUNT(DISTINCT event_id) AS n FROM `{p}.peoplelake_staging.stg_events`").result())[
+        0
+    ]["n"]
     r7 = list(
         bq.query(f"""
-        WITH actual AS (SELECT source, event_type, COUNT(*) AS n FROM `{p}.pl_staging.stg_events` GROUP BY source, event_type),
-        expected AS (SELECT source, event_type, expected_count FROM `{p}.pl_ops.expected_event_counts` WHERE profile = 'full')
+        WITH actual AS (SELECT source, event_type, COUNT(*) AS n FROM `{p}.peoplelake_staging.stg_events` GROUP BY source, event_type),
+        expected AS (SELECT source, event_type, expected_count FROM `{p}.peoplelake_ops.expected_event_counts` WHERE profile = 'full')
         SELECT COUNT(*) AS bad FROM actual a FULL OUTER JOIN expected e USING (source, event_type)
         WHERE a.n IS NULL OR e.expected_count IS NULL OR a.n != e.expected_count
     """).result()

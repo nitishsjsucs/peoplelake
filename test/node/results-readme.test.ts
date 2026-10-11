@@ -161,7 +161,7 @@ describe("results renderer", () => {
       profile: "small",
       engine: "duckdb",
       semantic_layer: "MetricFlow planning DuckDB SQL",
-      mart: "pl_core.metrics_workforce_monthly",
+      mart: "peoplelake_core.metrics_workforce_monthly",
       metrics: ["headcount", "fte"],
       events_loaded: 10000,
       rows_compared: 468,

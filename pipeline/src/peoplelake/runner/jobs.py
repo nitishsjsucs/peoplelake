@@ -86,7 +86,7 @@ def run_transform(job: dict, *, warehouse, dbt: DbtRunner, upload, profile: str,
         if not seeded.success:
             return _failed(job, started, f"dbt seed failed: {seeded.failed_nodes or seeded.exception}")
         warehouse.set_seed_checksum(checksum)
-    before = warehouse.max_load_seq("pl_ops", "ops_event_freshness")
+    before = warehouse.max_load_seq("peoplelake_ops", "ops_event_freshness")
     if faults.fail_model:
         faults.fired.append(f"fail_transform_model:{faults.fail_model}")
     outcome = dbt.build(full_refresh=replay, fail_model=faults.fail_model)
@@ -123,7 +123,7 @@ def run_transform(job: dict, *, warehouse, dbt: DbtRunner, upload, profile: str,
         "digests": digests,
         "digest_version": DIGEST_VERSION,
         "engine": warehouse.kind,
-        "transformed_through_seq": max(0, warehouse.max_load_seq("pl_staging", "stg_events") or 0),
+        "transformed_through_seq": max(0, warehouse.max_load_seq("peoplelake_staging", "stg_events") or 0),
         "ops_freshness_histogram_10s": [[b, n] for b, n in histogram],
         "metrics_artifact": {"key": uploaded["key"], "sha256": uploaded["sha256"], "rows": rows},
         "duration_ms": int((time.monotonic() - started) * 1000),

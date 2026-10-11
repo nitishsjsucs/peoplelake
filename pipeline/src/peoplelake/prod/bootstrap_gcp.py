@@ -1,4 +1,12 @@
-"""`peoplelake prod bootstrap-gcp` (SPEC 21.2): every Google Cloud resource, check then create, idempotent.
+"""`peoplelake prod bootstrap-gcp` (SPEC 21.2, 29.4.6): every Google Cloud resource, check then create,
+idempotent.
+
+The project is shared by four repos: every name starts with `peoplelake`, every grant is scoped to a
+dataset or resource, and the only project-level roles are `roles/bigquery.jobUser` (runner, analyst) and
+`roles/logging.logWriter` (the dedicated build identity), neither of which reads data. Builds run as
+`peoplelake-build` with a staging bucket of their own; the Cloud Build default service account gets
+nothing. Bootstrap refuses to run while billing is disabled (the sandbox rejects DML and expires tables
+after 60 days) and clears default table and partition expiration on every dataset it owns.
 
 Reads `.prod/config.env`, `.prod/secrets.env` and `.prod/state.json` (written by `npm run setup:prod`),
 writes `.prod/gcp.json` and `.prod/gcp-dispatcher-key.json` (mode 600). `--plan` runs only the read-only
@@ -34,26 +42,54 @@ SERVICES = (
 )
 # Dataset -> max time travel hours (BigQuery accepts 48..168).
 DATASETS: dict[str, int] = {
-    "pl_raw": 48,
-    "pl_staging": 48,
-    "pl_ops": 48,
-    "pl_core": 168,
-    "pl_restricted": 168,
-    "pl_reporting": 168,
+    "peoplelake_raw": 48,
+    "peoplelake_staging": 48,
+    "peoplelake_ops": 48,
+    "peoplelake_core": 168,
+    "peoplelake_restricted": 168,
+    "peoplelake_reporting": 168,
 }
+LABELS = {"app": "peoplelake"}
 TAXONOMY = "peoplelake-sensitivity"
 TAGS = ("compensation", "performance")
 DATA_POLICIES = {
-    "pl_mask_compensation": ("compensation", "DEFAULT_MASKING_VALUE"),
-    "pl_mask_performance": ("performance", "ALWAYS_NULL"),
+    "peoplelake_mask_compensation": ("compensation", "DEFAULT_MASKING_VALUE"),
+    "peoplelake_mask_performance": ("performance", "ALWAYS_NULL"),
 }
 SECRETS = {
-    "pl-r2-catalog-token": "PL_R2_CATALOG_TOKEN",
-    "pl-runner-client-id": "PL_CF_RUNNER_CLIENT_ID",
-    "pl-runner-client-secret": "PL_CF_RUNNER_CLIENT_SECRET",
+    "peoplelake-r2-catalog-token": "PL_R2_CATALOG_TOKEN",
+    "peoplelake-runner-client-id": "PL_CF_RUNNER_CLIENT_ID",
+    "peoplelake-runner-client-secret": "PL_CF_RUNNER_CLIENT_SECRET",
 }
 JOB = "peoplelake-runner"
 REPO = "peoplelake"
+# Service accounts (name -> display name) and the only project-level roles they get.
+SERVICE_ACCOUNTS = {
+    "peoplelake-runner": "PeopleLake runner",
+    "peoplelake-analyst": "PeopleLake analyst",
+    "peoplelake-dispatcher": "PeopleLake dispatcher",
+    "peoplelake-build": "PeopleLake image build",
+}
+PROJECT_ROLES = {
+    "peoplelake-runner": ("roles/bigquery.jobUser",),
+    "peoplelake-analyst": ("roles/bigquery.jobUser",),
+    "peoplelake-build": ("roles/logging.logWriter",),
+}
+ALLOWED_PROJECT_ROLES = frozenset({"roles/bigquery.jobUser", "roles/logging.logWriter"})
+
+
+def build_bucket(project: str) -> str:
+    return f"peoplelake-build-{project}"
+
+
+def extra_project_roles(policy: dict, members: set[str]) -> list[str]:
+    """Project-level bindings of this repo's service accounts beyond the allowed two (doctor fails on any)."""
+    return sorted(
+        f"{b.get('role')} for {m}"
+        for b in policy.get("bindings", [])
+        for m in b.get("members", [])
+        if m in members and b.get("role") not in ALLOWED_PROJECT_ROLES
+    )
 
 
 def all_datasets() -> list[tuple[str, int]]:
@@ -83,17 +119,24 @@ class GcpConfig:
     warehouse: str = ""
     secrets: dict[str, str] = field(default_factory=dict)
 
+    def sa(self, name: str) -> str:
+        return f"{name}@{self.project}.iam.gserviceaccount.com"
+
     @property
     def runner_sa(self) -> str:
-        return f"pl-runner@{self.project}.iam.gserviceaccount.com"
+        return f"peoplelake-runner@{self.project}.iam.gserviceaccount.com"
 
     @property
     def analyst_sa(self) -> str:
-        return f"pl-analyst@{self.project}.iam.gserviceaccount.com"
+        return f"peoplelake-analyst@{self.project}.iam.gserviceaccount.com"
 
     @property
     def dispatcher_sa(self) -> str:
-        return f"pl-dispatcher@{self.project}.iam.gserviceaccount.com"
+        return f"peoplelake-dispatcher@{self.project}.iam.gserviceaccount.com"
+
+    @property
+    def build_sa(self) -> str:
+        return f"peoplelake-build@{self.project}.iam.gserviceaccount.com"
 
     @property
     def worker_url(self) -> str:
@@ -174,10 +217,12 @@ class Clients:
 
 
 def real_clients(config: GcpConfig) -> Clients:
-    from google.cloud import bigquery, bigquery_datapolicies_v1, datacatalog_v1
+    from google.cloud import bigquery_datapolicies_v1, datacatalog_v1
+
+    from ..warehouse.bigquery_wh import bigquery_client
 
     return Clients(
-        bigquery=bigquery.Client(project=config.project, location=config.bq_location),
+        bigquery=bigquery_client(config.project, config.bq_location),
         policy_tags=datacatalog_v1.PolicyTagManagerClient(),
         data_policies=bigquery_datapolicies_v1.DataPolicyServiceClient(),
     )
@@ -203,14 +248,17 @@ class Bootstrap:
     def preflight(self) -> None:
         p = self.c.project
         if not self.g.ok(["projects", "describe", p, "--format=value(projectId)"]):
-            self.act("preflight", "fail", f"project {p}", "gcloud projects create (README production setup, step 10)")
+            self.act(
+                "preflight", "fail", f"project {p}", "the project must exist (it is shared; this repo never creates it)"
+            )
             return
         billing = self.g.read(["billing", "projects", "describe", p, "--format=value(billingEnabled)"]).stdout.strip()
         self.act(
             "preflight",
             "check" if billing.lower() == "true" else "fail",
             "billing",
-            f"billingEnabled={billing or 'unknown'}",
+            f"billingEnabled={billing or 'unknown'}"
+            + ("" if billing.lower() == "true" else "; link an open billing account (README production setup) first"),
         )
         adc = (
             Path(os.environ.get("CLOUDSDK_CONFIG", Path.home() / ".config" / "gcloud"))
@@ -258,6 +306,7 @@ class Bootstrap:
         bq = self.clients.bigquery
         for name, hours in all_datasets():
             ref = f"{self.c.project}.{name}"
+            labels = {**LABELS, "drill": "true" if name.endswith("_drill") else "false"}
             try:
                 ds = bq.get_dataset(ref)
             except NotFound:
@@ -265,17 +314,41 @@ class Bootstrap:
                     ds = bigquery.Dataset(ref)
                     ds.location = self.c.bq_location
                     ds.max_time_travel_hours = hours
-                    ds.labels = {"app": "peoplelake", "drill": "true" if name.endswith("_drill") else "false"}
+                    ds.labels = labels
+                    ds.default_table_expiration_ms = None
+                    ds.default_partition_expiration_ms = None
                     bq.create_dataset(ds)
-                self.act("datasets", "create", ref, f"location {self.c.bq_location}, time travel {hours} h")
+                self.act(
+                    "datasets",
+                    "create",
+                    ref,
+                    f"location {self.c.bq_location}, time travel {hours} h, no default expiration",
+                )
                 continue
+            fields, changes = [], []
             if ds.max_time_travel_hours != hours:
-                if not self.g.plan:
-                    ds.max_time_travel_hours = hours
-                    bq.update_dataset(ds, ["max_time_travel_hours"])
-                self.act("datasets", "update", ref, f"time travel {ds.max_time_travel_hours} -> {hours} h")
-            else:
+                fields.append("max_time_travel_hours")
+                changes.append(f"time travel {ds.max_time_travel_hours} -> {hours} h")
+            # A dataset created while the project was a sandbox carries a 60-day default expiration.
+            if getattr(ds, "default_table_expiration_ms", None) is not None:
+                fields.append("default_table_expiration_ms")
+                changes.append("default table expiration cleared")
+            if getattr(ds, "default_partition_expiration_ms", None) is not None:
+                fields.append("default_partition_expiration_ms")
+                changes.append("default partition expiration cleared")
+            if any((getattr(ds, "labels", None) or {}).get(k) != v for k, v in labels.items()):
+                fields.append("labels")
+                changes.append("labels app=peoplelake")
+            if not fields:
                 self.act("datasets", "exists", ref)
+                continue
+            if not self.g.plan:
+                ds.max_time_travel_hours = hours
+                ds.default_table_expiration_ms = None
+                ds.default_partition_expiration_ms = None
+                ds.labels = {**(getattr(ds, "labels", None) or {}), **labels}
+                bq.update_dataset(ds, fields)
+            self.act("datasets", "update", ref, "; ".join(changes))
 
     # 4 ------------------------------------------------------------------------------------------------
     def taxonomy_and_policies(self) -> None:
@@ -346,33 +419,28 @@ class Bootstrap:
     # 5 ------------------------------------------------------------------------------------------------
     def service_accounts(self) -> None:
         p = self.c.project
-        for name, title in (
-            ("pl-runner", "PeopleLake runner"),
-            ("pl-analyst", "PeopleLake analyst"),
-            ("pl-dispatcher", "PeopleLake dispatcher"),
-        ):
-            email = f"{name}@{p}.iam.gserviceaccount.com"
+        for name, title in SERVICE_ACCOUNTS.items():
+            email = self.c.sa(name)
             if self.g.ok(["iam", "service-accounts", "describe", email]):
                 self.act("service accounts", "exists", email)
             else:
                 self.g.mutate(["iam", "service-accounts", "create", name, f"--display-name={title}"])
                 self.act("service accounts", "create", email)
-        for member, role in (
-            (self.c.runner_sa, "roles/bigquery.jobUser"),
-            (self.c.analyst_sa, "roles/bigquery.jobUser"),
-        ):
-            self.g.mutate(
-                [
-                    "projects",
-                    "add-iam-policy-binding",
-                    p,
-                    f"--member=serviceAccount:{member}",
-                    f"--role={role}",
-                    "--condition=None",
-                    "--quiet",
-                ]
-            )
-            self.act("iam", "update", f"{role} for {member}", "project binding (idempotent)")
+        # The only project-level grants: running BigQuery jobs and writing build logs (no data access).
+        for name, roles in PROJECT_ROLES.items():
+            for role in roles:
+                self.g.mutate(
+                    [
+                        "projects",
+                        "add-iam-policy-binding",
+                        p,
+                        f"--member=serviceAccount:{self.c.sa(name)}",
+                        f"--role={role}",
+                        "--condition=None",
+                        "--quiet",
+                    ]
+                )
+                self.act("iam", "update", f"{role} for {self.c.sa(name)}", "project binding (idempotent)")
         if self.c.owner_email:
             for sa in (self.c.runner_sa, self.c.analyst_sa):
                 self.g.mutate(
@@ -399,7 +467,10 @@ class Bootstrap:
 
         bq = self.clients.bigquery
         grants = [(name, self.c.runner_sa, "OWNER") for name, _ in all_datasets()]
-        grants += [("pl_reporting", self.c.analyst_sa, "READER"), ("pl_restricted", self.c.analyst_sa, "READER")]
+        grants += [
+            ("peoplelake_reporting", self.c.analyst_sa, "READER"),
+            ("peoplelake_restricted", self.c.analyst_sa, "READER"),
+        ]
         for name, email, role in grants:
             ref = f"{self.c.project}.{name}"
             try:
@@ -499,7 +570,8 @@ class Bootstrap:
 
     # 7, 8 ---------------------------------------------------------------------------------------------
     def artifact_registry_and_build(self) -> str:
-        if self.g.ok(["artifacts", "repositories", "describe", REPO, f"--location={self.c.region}"]):
+        region = self.c.region
+        if self.g.ok(["artifacts", "repositories", "describe", REPO, f"--location={region}"]):
             self.act("artifact registry", "exists", REPO)
         else:
             self.g.mutate(
@@ -509,7 +581,8 @@ class Bootstrap:
                     "create",
                     REPO,
                     "--repository-format=docker",
-                    f"--location={self.c.region}",
+                    f"--location={region}",
+                    "--labels=app=peoplelake",
                 ]
             )
             self.act("artifact registry", "create", REPO)
@@ -520,34 +593,46 @@ class Bootstrap:
                 "repositories",
                 "set-cleanup-policies",
                 REPO,
-                f"--location={self.c.region}",
+                f"--location={region}",
                 f"--policy={policy}",
                 "--no-dry-run",
             ]
         )
-        builder = self.g.read(
-            ["builds", "get-default-service-account", "--format=value(serviceAccountEmail)"]
-        ).stdout.strip()
-        builder = builder.split("/")[-1] if builder else ""
-        if builder:
-            for role in ("roles/artifactregistry.writer", "roles/logging.logWriter", "roles/storage.objectViewer"):
-                self.g.mutate(
-                    [
-                        "projects",
-                        "add-iam-policy-binding",
-                        self.c.project,
-                        f"--member=serviceAccount:{builder}",
-                        f"--role={role}",
-                        "--condition=None",
-                        "--quiet",
-                    ]
-                )
-            self.act(
-                "cloud build",
-                "update",
-                f"roles for {builder}",
-                "artifactregistry.writer, logging.logWriter, storage.objectViewer",
+        # A dedicated build identity and staging bucket: no grant to the Cloud Build default service account.
+        bucket = f"gs://{build_bucket(self.c.project)}"
+        if self.g.ok(["storage", "buckets", "describe", bucket]):
+            self.act("build bucket", "exists", bucket)
+        else:
+            self.g.mutate(
+                [
+                    "storage",
+                    "buckets",
+                    "create",
+                    bucket,
+                    f"--location={region}",
+                    "--uniform-bucket-level-access",
+                    "--public-access-prevention",
+                    "--labels=app=peoplelake",
+                ]
             )
+            self.act("build bucket", "create", bucket)
+        member = f"--member=serviceAccount:{self.c.build_sa}"
+        self.g.mutate(
+            ["storage", "buckets", "add-iam-policy-binding", bucket, member, "--role=roles/storage.objectAdmin"]
+        )
+        self.act("iam", "update", f"storage.objectAdmin on {bucket}", self.c.build_sa)
+        self.g.mutate(
+            [
+                "artifacts",
+                "repositories",
+                "add-iam-policy-binding",
+                REPO,
+                f"--location={region}",
+                member,
+                "--role=roles/artifactregistry.writer",
+            ]
+        )
+        self.act("iam", "update", f"artifactregistry.writer on {REPO}", self.c.build_sa)
         sha = self.git_sha or "unknown"
         image = f"{self.c.image_repo}:{sha}"
         dirty = subprocess.run(
@@ -558,18 +643,8 @@ class Bootstrap:
         if self.g.ok(["artifacts", "docker", "images", "describe", image]):
             self.act("runner image", "exists", image)
         else:
-            self.g.mutate(
-                [
-                    "builds",
-                    "submit",
-                    str(repo_root()),
-                    "--config",
-                    str(repo_root() / "infra" / "gcp" / "cloudbuild.yaml"),
-                    f"--substitutions=_IMAGE={image}",
-                    f"--region={self.c.region}",
-                ]
-            )
-            self.act("runner image", "create", image, "Cloud Build")
+            self.g.mutate(build_submit_args(self.c, image))
+            self.act("runner image", "create", image, f"Cloud Build as {self.c.build_sa}")
         return image
 
     # 9 ------------------------------------------------------------------------------------------------
@@ -586,7 +661,7 @@ class Bootstrap:
             "PL_PT_COMPENSATION": self.tags.get("compensation", ""),
             "PL_PT_PERFORMANCE": self.tags.get("performance", ""),
         }
-        secrets = "PL_R2_CATALOG_TOKEN=pl-r2-catalog-token:latest,PL_CF_ACCESS_CLIENT_ID=pl-runner-client-id:latest,PL_CF_ACCESS_CLIENT_SECRET=pl-runner-client-secret:latest"
+        secrets = "PL_R2_CATALOG_TOKEN=peoplelake-r2-catalog-token:latest,PL_CF_ACCESS_CLIENT_ID=peoplelake-runner-client-id:latest,PL_CF_ACCESS_CLIENT_SECRET=peoplelake-runner-client-secret:latest"
         exists = self.g.ok(["run", "jobs", "describe", JOB, f"--region={self.c.region}"])
         self.g.mutate(
             [
@@ -605,7 +680,7 @@ class Bootstrap:
                 "--set-env-vars=" + ",".join(f"{k}={v}" for k, v in env.items()),
                 f"--set-secrets={secrets}",
                 "--args=runner,run,--until-idle,15,--target,prod",
-                f"--labels=git-sha={(self.git_sha or 'unknown')[:40]}",
+                f"--labels=app=peoplelake,git-sha={(self.git_sha or 'unknown')[:40]}",
             ]
         )
         self.act("cloud run job", "update" if exists else "create", JOB, image)
@@ -642,7 +717,9 @@ class Bootstrap:
                 "runner": self.c.runner_sa,
                 "analyst": self.c.analyst_sa,
                 "dispatcher": self.c.dispatcher_sa,
+                "build": self.c.build_sa,
             },
+            "build_bucket": build_bucket(self.c.project),
             "taxonomy": self.taxonomy,
             "policy_tags": self.tags,
             "data_policies": list(DATA_POLICIES),
@@ -659,6 +736,10 @@ class Bootstrap:
 
     def run(self) -> list[Action]:
         self.preflight()
+        # Without the project or with billing off nothing is planned or created: a sandbox project would
+        # give every dataset a 60-day expiration and reject the loader's MERGE.
+        if any(a.kind == "fail" and (a.target == "billing" or a.target.startswith("project ")) for a in self.actions):
+            return self.actions
         if any(a.kind == "fail" for a in self.actions) and not self.g.plan:
             return self.actions
         self.services()
@@ -672,6 +753,21 @@ class Bootstrap:
         self.run_job(image)
         self.write_state(image)
         return self.actions
+
+
+def build_submit_args(config: GcpConfig, image: str) -> list[str]:
+    """`gcloud builds submit` as the dedicated build identity, staging source in its own bucket."""
+    return [
+        "builds",
+        "submit",
+        str(repo_root()),
+        "--config",
+        str(repo_root() / "infra" / "gcp" / "cloudbuild.yaml"),
+        f"--substitutions=_IMAGE={image}",
+        f"--region={config.region}",
+        f"--service-account=projects/{config.project}/serviceAccounts/{config.build_sa}",
+        f"--gcs-source-staging-dir=gs://{build_bucket(config.project)}/source",
+    ]
 
 
 def git_head() -> str | None:

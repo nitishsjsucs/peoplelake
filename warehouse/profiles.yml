@@ -9,34 +9,34 @@ peoplelake:
       settings:
         TimeZone: UTC
     prod:
-      # Cloud Run Job: attached service account pl-runner through the metadata server.
+      # Cloud Run Job: attached service account peoplelake-runner through the metadata server.
       type: bigquery
       method: oauth
       project: "{{ env_var('PL_GCP_PROJECT', 'peoplelake-unset') }}"
-      dataset: pl_core
+      dataset: peoplelake_core
       location: "{{ env_var('PL_BQ_LOCATION', 'US') }}"
       threads: 8
       job_execution_timeout_seconds: 300
       job_retries: 2
-      maximum_bytes_billed: 5000000000
+      maximum_bytes_billed: 1000000000  # 1 GB per query (shared project; the largest query bills under 0.2 GB)
     prod-drill:
-      # Laptop: the operator's ADC impersonating pl-runner, *_drill datasets only (PL_DATASET_SUFFIX=drill).
+      # Laptop: the operator's ADC impersonating peoplelake-runner, *_drill datasets only (PL_DATASET_SUFFIX=drill).
       type: bigquery
       method: oauth
       project: "{{ env_var('PL_GCP_PROJECT', 'peoplelake-unset') }}"
-      dataset: pl_core_drill
+      dataset: peoplelake_core_drill
       location: "{{ env_var('PL_BQ_LOCATION', 'US') }}"
       threads: 8
       job_execution_timeout_seconds: 300
       job_retries: 2
-      maximum_bytes_billed: 5000000000
-      impersonate_service_account: "{{ env_var('PL_RUNNER_SA', 'pl-runner@peoplelake-unset.iam.gserviceaccount.com') }}"
+      maximum_bytes_billed: 1000000000  # 1 GB per query (shared project; the largest query bills under 0.2 GB)
+      impersonate_service_account: "{{ env_var('PL_RUNNER_SA', 'peoplelake-runner@peoplelake-unset.iam.gserviceaccount.com') }}"
     bq_offline:
       # CI compile only; never connects.
       type: bigquery
       method: oauth-secrets
       token: offline-compile-only
       project: peoplelake-offline
-      dataset: pl_core
+      dataset: peoplelake_core
       location: US
       threads: 4

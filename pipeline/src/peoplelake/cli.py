@@ -326,7 +326,15 @@ def _cmd_eval_scenarios(args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
     from .devtools.reference import reference_digests
-    from .evals.scenarios import EvalError, results_name, run_scenario, scenarios_report, write_report
+    from .evals.scenarios import (
+        EvalError,
+        drill_target,
+        results_name,
+        run_scenario,
+        run_scenarios,
+        scenarios_report,
+        write_report,
+    )
     from .paths import data_dir, repo_root
     from .sim.plan import SCENARIOS
 
@@ -339,16 +347,30 @@ def _cmd_eval_scenarios(args: argparse.Namespace) -> int:
         reference = json.loads(Path(args.reference).read_text())["digests"]
     else:
         reference = reference_digests(args.profile, workdir / "reference")["digests"]
-    results = []
-    for scenario in wanted:
+
+    def run_one(scenario: str) -> dict:
         print(f"scenario {scenario}: running", flush=True)
-        try:
-            result = run_scenario(scenario, args.profile, chunks, reference, workdir=workdir, target=args.target)
-        except EvalError as exc:
-            print(f"scenario {scenario}: {exc}", file=sys.stderr)
-            return 2
+        result = run_scenario(scenario, args.profile, chunks, reference, workdir=workdir, target=args.target)
         print(f"scenario {scenario}: passed={result['passed']} in {result['duration_s']} s", flush=True)
-        results.append(result)
+        return result
+
+    # The BigQuery drill stops before a scenario that would pass the 275 GB monthly guard (SPEC 29.4.6).
+    month_billed = drill_target().month_billed if args.target == "prod-drill" else None
+    try:
+        results, deferred, billed = run_scenarios(wanted, run_one, month_billed=month_billed, chunks=chunks)
+    except EvalError as exc:
+        print(f"eval scenarios: {exc}", file=sys.stderr)
+        return 2
+    if deferred:
+        print(
+            f"eval scenarios: stopping before {deferred[0]}: {billed:,} bytes billed this month and about "
+            f"{(chunks + 2) * 3} GB more would pass the 275 GB monthly guard; next month run "
+            f"--scenarios {','.join(deferred)}",
+            file=sys.stderr,
+        )
+        if not results:
+            return 4
+        wanted = [r["scenario"] for r in results]
     command = "peoplelake eval scenarios " + " ".join(sys.argv[3:])
     report = scenarios_report(results, profile=args.profile, reference=reference, command=command.strip())
     date = datetime.now(UTC).strftime("%Y-%m-%d")
@@ -358,7 +380,9 @@ def _cmd_eval_scenarios(args: argparse.Namespace) -> int:
         else repo_root() / "evals" / "results" / results_name(args.profile, report["engine"], date, wanted)
     )
     write_report(report, out)
-    print(json.dumps({"passed": report["passed"], "out": str(out)}))
+    print(json.dumps({"passed": report["passed"], "out": str(out), "deferred": deferred}))
+    if deferred:
+        return 4
     return 0 if report["passed"] else 1
 
 
@@ -524,12 +548,11 @@ def _cmd_prod(args: argparse.Namespace) -> int:
 
         result = demo(config)
     elif args.prod_command == "drill-restore":
-        from google.cloud import bigquery
-
         from .prod.drills import drill_restore
+        from .warehouse.bigquery_wh import bigquery_client
 
         expected = json.loads(Path(args.expected).read_text())["digests"]
-        client = bigquery.Client(project=config.project, location=config.bq_location)
+        client = bigquery_client(config.project, config.bq_location)
         result = drill_restore(client, config.project, int(args.as_of_ms), expected)
     else:
         from .prod.reset import reset
@@ -574,7 +597,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     wh = sub.add_parser("warehouse", help="local warehouse utilities")
     wh_sub = wh.add_subparsers(dest="warehouse_command", required=True)
-    init = wh_sub.add_parser("init", help="create pl_raw.raw_event_deliveries and pl_ops.load_log in DuckDB")
+    init = wh_sub.add_parser(
+        "init", help="create peoplelake_raw.raw_event_deliveries and peoplelake_ops.load_log in DuckDB"
+    )
     init.add_argument("--duckdb")
     init.set_defaults(func=_cmd_warehouse_init)
     direct = wh_sub.add_parser("load-direct", help="load generated events straight into DuckDB (no Worker, no lake)")
@@ -738,7 +763,9 @@ def build_parser() -> argparse.ArgumentParser:
     e2e_p.add_argument("--duration", default="60m")
     e2e_p.add_argument("--tick-seconds", type=float, default=10.0, help="sources post every N seconds (default 10)")
     e2e_p.set_defaults(func=_cmd_prod)
-    prod_sub.add_parser("demo-masking", help="query restricted columns as pl-analyst").set_defaults(func=_cmd_prod)
+    prod_sub.add_parser("demo-masking", help="query restricted columns as peoplelake-analyst").set_defaults(
+        func=_cmd_prod
+    )
     dr = prod_sub.add_parser("drill-restore", help="time-travel restore into _drill datasets and compare digests")
     dr.add_argument("--as-of-ms", required=True)
     dr.add_argument(

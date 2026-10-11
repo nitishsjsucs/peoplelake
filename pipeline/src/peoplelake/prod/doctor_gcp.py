@@ -1,4 +1,9 @@
-"""`peoplelake prod doctor-gcp` (SPEC 21.3, Google Cloud part). Never prints secret values."""
+"""`peoplelake prod doctor-gcp` (SPEC 21.3 and 21.0, Google Cloud part). Never prints secret values.
+
+The project is shared by four repos: besides the resources, it checks that this repo's service accounts
+hold no project-level role other than `roles/bigquery.jobUser` and `roles/logging.logWriter`, that no
+`peoplelake_*` dataset has a default expiration, and the bytes billed this month by the `peoplelake-*`
+service accounts against the 275 GB monthly guard (its own query is capped at 1 GB)."""
 
 from __future__ import annotations
 
@@ -8,18 +13,33 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ..budget import BQ_MONTHLY_BYTES_CAP
 from ..paths import repo_root
 from .bootstrap_gcp import (
     DATA_POLICIES,
     JOB,
     SECRETS,
+    SERVICE_ACCOUNTS,
     SERVICES,
     TAXONOMY,
     GcpConfig,
     all_datasets,
+    build_bucket,
+    extra_project_roles,
     key_creation_blocked,
 )
 from .checks import Check, run_check
+
+MONTH_BILLED_SQL = (
+    "SELECT IFNULL(SUM(total_bytes_billed), 0) AS b FROM `region-us`.INFORMATION_SCHEMA.JOBS_BY_PROJECT "
+    "WHERE STARTS_WITH(user_email, 'peoplelake-') AND creation_time >= TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(), MONTH)"
+)
+
+
+def month_bytes_billed(client) -> int:  # noqa: ANN001
+    """Bytes billed this UTC month by this repo's service accounts (the caller needs project-wide job
+    visibility: the owner's ADC)."""
+    return int(list(client.query(MONTH_BILLED_SQL).result())[0]["b"])
 
 
 def _gcloud(args: list[str], project: str | None = None) -> subprocess.CompletedProcess:
@@ -119,22 +139,42 @@ def doctor(prod_dir: Path | None = None) -> list[Check]:
 
     def service_accounts() -> Check:
         missing = [
-            sa
-            for sa in (config.runner_sa, config.analyst_sa, config.dispatcher_sa)
-            if _gcloud(["iam", "service-accounts", "describe", sa], p).returncode != 0
+            config.sa(name)
+            for name in SERVICE_ACCOUNTS
+            if _gcloud(["iam", "service-accounts", "describe", config.sa(name)], p).returncode != 0
         ]
         return Check(
-            "service accounts",
+            "service accounts (peoplelake-runner, -analyst, -dispatcher, -build)",
             "PASS" if not missing else "MISSING",
             ", ".join(missing),
             "npm run setup:prod -- --only gcp",
         )
 
+    def project_roles() -> Check:
+        policy = json.loads(_gcloud(["projects", "get-iam-policy", p, "--format=json"]).stdout or "{}")
+        extra = extra_project_roles(policy, {f"serviceAccount:{config.sa(n)}" for n in SERVICE_ACCOUNTS})
+        return Check(
+            "project-level roles of the peoplelake service accounts",
+            "PASS" if not extra else "FAIL",
+            "; ".join(extra) or "only roles/bigquery.jobUser and roles/logging.logWriter",
+            "gcloud projects remove-iam-policy-binding (the shared project allows only resource-scoped grants)",
+        )
+
+    def build_identity() -> Check:
+        ok = _gcloud(["storage", "buckets", "describe", f"gs://{build_bucket(p)}"], p).returncode == 0
+        return Check(
+            "build bucket for peoplelake-build",
+            "PASS" if ok else "MISSING",
+            build_bucket(p),
+            "npm run setup:prod -- --only gcp",
+        )
+
     def datasets() -> Check:
         from google.api_core.exceptions import NotFound
-        from google.cloud import bigquery
 
-        bq = bigquery.Client(project=p, location=config.bq_location)
+        from ..warehouse.bigquery_wh import bigquery_client
+
+        bq = bigquery_client(p, config.bq_location)
         problems = []
         for name, hours in all_datasets():
             try:
@@ -144,8 +184,10 @@ def doctor(prod_dir: Path | None = None) -> list[Check]:
                 continue
             if ds.max_time_travel_hours != hours:
                 problems.append(f"{name} time travel {ds.max_time_travel_hours} h (want {hours})")
+            if ds.default_table_expiration_ms is not None or ds.default_partition_expiration_ms is not None:
+                problems.append(f"{name} has a default expiration (created in the sandbox?)")
         return Check(
-            "datasets and time travel",
+            "datasets, time travel, no default expiration",
             "PASS" if not problems else "FAIL",
             "; ".join(problems) or "12 datasets",
             "npm run setup:prod -- --only gcp",
@@ -223,18 +265,16 @@ def doctor(prod_dir: Path | None = None) -> list[Check]:
         )
 
     def billed() -> Check:
-        from google.cloud import bigquery
+        from ..warehouse.bigquery_wh import bigquery_client
 
-        bq = bigquery.Client(project=p, location=config.bq_location)
-        sql = (
-            "SELECT IFNULL(SUM(total_bytes_billed), 0) AS b FROM `region-us`.INFORMATION_SCHEMA.JOBS_BY_PROJECT "
-            "WHERE user_email = @sa AND creation_time > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 DAY)"
+        b = month_bytes_billed(bigquery_client(p, config.bq_location))
+        share = b / BQ_MONTHLY_BYTES_CAP
+        return Check(
+            "BigQuery bytes billed this month by peoplelake-* service accounts",
+            "PASS" if share < 0.9 else "WARN",
+            f"{b:,} bytes ({share:.1%} of the 275 GB monthly guard)",
+            "the guard skips transforms past 275 GB; drills resume next month with --scenarios",
         )
-        cfg = bigquery.QueryJobConfig(
-            query_parameters=[bigquery.ScalarQueryParameter("sa", "STRING", config.runner_sa)]
-        )
-        b = list(bq.query(sql, job_config=cfg).result())[0]["b"]
-        return Check("BigQuery bytes billed by pl-runner (24 h)", "PASS", f"{int(b):,} bytes")
 
     def files() -> Check:
         bad = []
@@ -264,6 +304,8 @@ def doctor(prod_dir: Path | None = None) -> list[Check]:
         ("APIs", apis),
         ("key policy", key_policy),
         ("service accounts", service_accounts),
+        ("project roles", project_roles),
+        ("build identity", build_identity),
         ("datasets", datasets),
         ("taxonomy", taxonomy),
         ("secrets", secrets),

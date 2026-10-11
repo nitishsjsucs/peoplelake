@@ -30,7 +30,7 @@ class DigestError(ValueError):
 @dataclass(frozen=True)
 class ModelSpec:
     name: str
-    schema: str  # base dataset or schema name; a suffix may be appended (pl_core_drill)
+    schema: str  # base dataset or schema name; a suffix may be appended (peoplelake_core_drill)
     columns: tuple[tuple[str, Logical], ...]
     primary_key: tuple[str, ...]
 
@@ -52,14 +52,14 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     for s in (
         _spec(
             "dim_department",
-            "pl_core",
+            "peoplelake_core",
             ("department_id",),
             ("department_id", "string"),
             ("department_name", "string"),
         ),
         _spec(
             "dim_job",
-            "pl_core",
+            "peoplelake_core",
             ("job_code",),
             ("job_code", "string"),
             ("job_title", "string"),
@@ -68,7 +68,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         ),
         _spec(
             "dim_employee_history",
-            "pl_core",
+            "peoplelake_core",
             ("employee_id", "valid_from"),
             ("employee_id", "string"),
             ("spell_no", "int"),
@@ -84,7 +84,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         ),
         _spec(
             "dim_employee",
-            "pl_core",
+            "peoplelake_core",
             ("employee_id",),
             ("employee_id", "string"),
             ("current_spell_no", "int"),
@@ -101,7 +101,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         ),
         _spec(
             "fct_employment_events",
-            "pl_core",
+            "peoplelake_core",
             ("event_id",),
             ("event_id", "string"),
             ("employee_id", "string"),
@@ -120,7 +120,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         ),
         _spec(
             "fct_offers",
-            "pl_core",
+            "peoplelake_core",
             ("offer_id",),
             ("offer_id", "string"),
             ("requisition_id", "string"),
@@ -136,7 +136,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         ),
         _spec(
             "fct_workforce_monthly",
-            "pl_core",
+            "peoplelake_core",
             ("employee_id", "month_end"),
             ("employee_id", "string"),
             ("month_end", "date"),
@@ -149,7 +149,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         ),
         _spec(
             "metrics_workforce_monthly",
-            "pl_core",
+            "peoplelake_core",
             ("month", "department_id"),
             ("month", "date"),
             ("department_id", "string"),
@@ -167,7 +167,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         ),
         _spec(
             "fct_compensation_history",
-            "pl_restricted",
+            "peoplelake_restricted",
             ("employee_id", "valid_from"),
             ("employee_id", "string"),
             ("valid_from", "date"),
@@ -181,7 +181,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         ),
         _spec(
             "fct_performance_reviews",
-            "pl_restricted",
+            "peoplelake_restricted",
             ("review_id",),
             ("review_id", "string"),
             ("employee_id", "string"),
