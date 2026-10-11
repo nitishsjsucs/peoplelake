@@ -10,7 +10,7 @@ from pathlib import Path
 from ..canonical import canonical_json
 from ..paths import warehouse_dir
 from ..warehouse.dbt_runner import DbtRunner
-from ..warehouse.digest import DIGEST_VERSION, MODEL_SPECS, canon
+from ..warehouse.digest import DIGEST_VERSION, SNAPSHOT_SPEC, canon
 
 
 class SimulatedCrash(RuntimeError):
@@ -54,8 +54,11 @@ def seed_checksum(seeds_dir: Path | None = None) -> str:
 
 
 def metrics_artifact_body(run_id: str, warehouse, profile: str, suffix: str | None = None) -> tuple[str, int]:
-    spec = MODEL_SPECS["metrics_workforce_monthly"]
-    table = warehouse.fetch_model("metrics_workforce_monthly", suffix)
+    """The committed metrics snapshot (served to viewers by /api/metrics/latest and /api/ask): the mart's
+    rows and columns read through rpt_metrics_monthly, so every cell the reporting views suppress is null
+    here too. The output digests are computed from the mart itself, separately."""
+    spec = SNAPSHOT_SPEC
+    table = warehouse.fetch_model(spec, suffix)
     rows = []
     for values in zip(*(table.column(c).to_pylist() for c in spec.column_names), strict=True):
         rows.append({c: canon(v, logical) for v, (c, logical) in zip(values, spec.columns, strict=True)})
@@ -65,7 +68,8 @@ def metrics_artifact_body(run_id: str, warehouse, profile: str, suffix: str | No
             "run_id": run_id,
             "engine": warehouse.kind,
             "profile": profile,
-            "model": spec.name,
+            "model": "metrics_workforce_monthly",
+            "suppressed_by": spec.name,
             "digest_version": DIGEST_VERSION,
             "rows": rows,
         }

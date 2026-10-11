@@ -17,7 +17,7 @@ import pyarrow as pa
 
 from ..lake.schema import RAW_COLUMNS
 from .base import LoadStats
-from .digest import MODEL_SPECS, digest_table, schema_for, select_sql
+from .digest import MODEL_SPECS, ModelSpec, digest_table, schema_for, select_sql
 
 RAW_TABLE = "peoplelake_raw.raw_event_deliveries"
 LOAD_LOG = "peoplelake_ops.load_log"
@@ -174,8 +174,8 @@ class DuckDBWarehouse:
         with connection(self.path) as con:
             return con.execute(sql).to_arrow_table()
 
-    def fetch_model(self, model: str, suffix: str | None = None) -> pa.Table:
-        spec = MODEL_SPECS[model]
+    def fetch_model(self, model: str | ModelSpec, suffix: str | None = None) -> pa.Table:
+        spec = model if isinstance(model, ModelSpec) else MODEL_SPECS[model]
         return self.query_arrow(select_sql(spec, schema_for(spec, suffix)))
 
     def digests(self, suffix: str | None = None) -> dict[str, str]:

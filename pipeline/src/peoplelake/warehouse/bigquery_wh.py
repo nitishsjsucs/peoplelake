@@ -22,7 +22,7 @@ import pyarrow.parquet as pq
 from ..budget import BQ_LABELS, BQ_MAX_BYTES_BILLED
 from ..lake.schema import RAW_COLUMNS
 from .base import LoadStats
-from .digest import MODEL_SPECS, digest_table, schema_for, select_sql
+from .digest import MODEL_SPECS, ModelSpec, digest_table, schema_for, select_sql
 
 RAW_DDL = """
 CREATE TABLE IF NOT EXISTS `{raw}` (
@@ -220,8 +220,8 @@ class BigQueryWarehouse:
             bytes_billed=self.bytes_billed - billed_before,
         )
 
-    def fetch_model(self, model: str, suffix: str | None = None) -> pa.Table:
-        spec = MODEL_SPECS[model]
+    def fetch_model(self, model: str | ModelSpec, suffix: str | None = None) -> pa.Table:
+        spec = model if isinstance(model, ModelSpec) else MODEL_SPECS[model]
         schema = f"`{self.project}`.{schema_for(spec, suffix if suffix is not None else self.suffix)}"
         return self._query(select_sql(spec, schema)).to_arrow()
 

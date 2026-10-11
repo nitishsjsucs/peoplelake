@@ -218,3 +218,57 @@ def test_r8_detects_payload_conflict(built):
     finally:
         with connection(built.wh.path) as con:
             con.execute("DELETE FROM peoplelake_raw.raw_event_deliveries WHERE delivery_id = 'conflict-delivery'")
+
+
+def test_secondary_suppression_hides_a_second_cell_and_its_check_has_teeth(built):
+    """A month where exactly one department has fewer than 5 offer decisions: primary suppression alone
+    would let ALL minus the shown departments recover it. rpt_metrics_monthly also hides the next smallest
+    department, and rpt_no_recoverable_offer_cell fails on a primary-only view."""
+    month = "DATE '2024-05-01'"
+    mart = "peoplelake_core.metrics_workforce_monthly"
+    view = "peoplelake_reporting.rpt_metrics_monthly"
+    with connection(built.wh.path) as con:
+        con.execute(
+            f"CREATE OR REPLACE TABLE peoplelake_ops.tamper_offers AS SELECT * FROM {mart} WHERE month = {month}"
+        )
+        con.execute(
+            f"""UPDATE {mart} SET
+                offers_accepted = CASE WHEN department_id = 'D01' THEN 3 ELSE 10 + CAST(substr(department_id, 2) AS INTEGER) END,
+                offers_declined = CASE WHEN department_id = 'D01' THEN 0 ELSE 2 END
+              WHERE month = {month} AND department_id <> 'ALL'"""
+        )
+        con.execute(
+            f"""UPDATE {mart} SET
+                offers_accepted = (SELECT sum(offers_accepted) FROM {mart} WHERE month = {month} AND department_id <> 'ALL'),
+                offers_declined = (SELECT sum(offers_declined) FROM {mart} WHERE month = {month} AND department_id <> 'ALL')
+              WHERE month = {month} AND department_id = 'ALL'"""
+        )
+        view_sql = con.execute(
+            "SELECT sql FROM duckdb_views() WHERE schema_name = 'peoplelake_reporting' AND view_name = 'rpt_metrics_monthly'"
+        ).fetchone()[0]
+    try:
+        hidden = (
+            built.wh.query_arrow(
+                f"SELECT department_id FROM {view} WHERE month = {month} AND offers_suppressed ORDER BY 1"
+            )
+            .column(0)
+            .to_pylist()
+        )
+        assert hidden == ["D01", "D02"]  # D01 (3 decisions) and the smallest shown department (D02, 14)
+        assert run_check(built, "rpt_no_recoverable_offer_cell").success
+        with connection(built.wh.path) as con:
+            con.execute(
+                f"CREATE OR REPLACE VIEW {view} AS SELECT m.*, false AS workforce_suppressed, "
+                f"m.offers_accepted + m.offers_declined < 5 AS offers_suppressed FROM {mart} AS m"
+            )
+        outcome = run_check(built, "rpt_no_recoverable_offer_cell")
+        assert not outcome.success
+        assert outcome.checks_error.get("rpt_no_recoverable_offer_cell", 0) > 0
+    finally:
+        with connection(built.wh.path) as con:
+            con.execute(f"DROP VIEW {view}")
+            con.execute(view_sql)
+            con.execute(f"DELETE FROM {mart} WHERE month = {month}")
+            con.execute(f"INSERT INTO {mart} SELECT * FROM peoplelake_ops.tamper_offers")
+            con.execute("DROP TABLE peoplelake_ops.tamper_offers")
+    assert run_check(built, "rpt_no_recoverable_offer_cell").success

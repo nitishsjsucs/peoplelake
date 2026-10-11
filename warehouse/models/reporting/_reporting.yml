@@ -1,6 +1,15 @@
 version: 2
 
 models:
+  - name: rpt_metrics_monthly
+    description: >
+      The metrics mart with small cells suppressed (primary and secondary offer suppression, workforce
+      cells below headcount 5); the reporting views and the metrics snapshot served to viewers read it.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: ["month", "department_id"]
+
   - name: rpt_workforce_monthly
     description: Headcount, FTE, hires and departures by month and department, small cells suppressed.
     data_tests:
@@ -9,7 +18,9 @@ models:
             columns: ["month", "department_id"]
 
   - name: rpt_offer_acceptance_monthly
-    description: Offer acceptance by decision month and requisition department, small cells suppressed.
+    description: >
+      Offer acceptance by decision month and requisition department; small cells suppressed so that no
+      hidden cell can be recovered from ALL by subtraction.
     data_tests:
       - unique_combination:
           arguments:

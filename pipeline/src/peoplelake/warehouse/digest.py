@@ -258,6 +258,16 @@ def digest_table(spec: ModelSpec, table: pa.Table) -> str:
     return h.hexdigest()
 
 
+# The metrics snapshot the Worker serves to viewers: the mart's columns read through the suppressed
+# reporting view (small cells null), never the mart itself. Digests still cover the mart.
+SNAPSHOT_SPEC = ModelSpec(
+    "rpt_metrics_monthly",
+    "peoplelake_reporting",
+    MODEL_SPECS["metrics_workforce_monthly"].columns,
+    MODEL_SPECS["metrics_workforce_monthly"].primary_key,
+)
+
+
 def select_sql(spec: ModelSpec, schema: str) -> str:
     """Engine-neutral SELECT of the declared columns in primary key order (NULLS LAST, total order)."""
     order = ", ".join(f"{c} NULLS LAST" for c in spec.primary_key)

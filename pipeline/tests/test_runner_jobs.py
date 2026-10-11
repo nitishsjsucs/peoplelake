@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from collections import Counter
 
 import pytest
 from pydantic import TypeAdapter
@@ -104,6 +105,16 @@ def test_load_then_transform_results_match_the_contracts(runner):
     assert sum(n for _, n in transform["ops_freshness_histogram_10s"]) == 10_000
     artifact = json.loads(worker.artifacts["r-test-000001"])
     assert len(artifact["rows"]) == transform["metrics_artifact"]["rows"] == 468
+    # The snapshot viewers get is suppressed like the reporting views: no shown department cell has fewer
+    # than 5 offer decisions, and no month hides exactly one department cell while showing ALL (ALL minus
+    # the shown departments would give it back).
+    rows = artifact["rows"]
+    assert artifact["suppressed_by"] == "rpt_metrics_monthly"
+    shown = [r for r in rows if r["offers_accepted"] is not None]
+    assert all(int(r["offers_accepted"]) + int(r["offers_declined"]) >= 5 for r in shown)
+    hidden = Counter(r["month"] for r in rows if r["department_id"] != "ALL" and r["offers_accepted"] is None)
+    all_shown = {r["month"] for r in rows if r["department_id"] == "ALL" and r["offers_accepted"] is not None}
+    assert hidden and not [m for m, n in hidden.items() if n == 1 and m in all_shown]
 
     # A second load from the same watermark inserts nothing (idempotent): deliveries dedupe on delivery_id.
     assert r.process(job("load", attempt=2)) == "succeeded"
