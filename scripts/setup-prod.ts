@@ -76,6 +76,20 @@ export function parseCatalogInfo(text: string): { uri: string; warehouse: string
   return { uri: value("Catalog URI"), warehouse: value("Warehouse") };
 }
 
+/** True when `wrangler r2 bucket list` output (colors stripped) has a bucket named exactly `name`. */
+export function bucketListed(listing: string, name: string): boolean {
+  return stripVTControlCharacters(listing)
+    .split("\n")
+    .some((line) => /^\s*name:\s*(\S+)\s*$/.exec(line)?.[1] === name);
+}
+
+/** True when `wrangler queues info <name>` printed exactly that queue (`Queue Name: <name>`). */
+export function queueInfoNames(info: string, name: string): boolean {
+  return stripVTControlCharacters(info)
+    .split("\n")
+    .some((line) => /^\s*Queue Name:\s*(\S+)\s*$/.exec(line)?.[1] === name);
+}
+
 /** Replace secret values in a command line for printing. */
 export function redact(argv: string[], secrets: string[]): string {
   return argv
@@ -177,7 +191,14 @@ export class Setup {
       return { ok: true, stdout: "", stderr: "" };
     }
     if (opts.mutating) this.say(`  run: ${shown}`);
-    return this.exec(argv, { ...(opts.env ? { env: opts.env } : {}), ...(opts.input !== undefined ? { input: opts.input } : {}) });
+    const res = this.exec(argv, { ...(opts.env ? { env: opts.env } : {}), ...(opts.input !== undefined ? { input: opts.input } : {}) });
+    // Every step checks before it creates, so a create that fails is a real failure: stop here instead
+    // of continuing with a half-provisioned account.
+    if (opts.mutating && !res.ok) {
+      const reason = stripVTControlCharacters(`${res.stderr}\n${res.stdout}`).trim().split("\n")[0] ?? "";
+      throw new Error(`${shown} failed: ${this.secretValues().reduce((t, v) => t.split(v).join("<redacted>"), reason)}`);
+    }
+    return res;
   }
 
   wrangler(args: string[], mutating: boolean, env?: Record<string, string>): RunResult {
@@ -269,9 +290,9 @@ export class Setup {
   // 3 -------------------------------------------------------------------------------------------------
   buckets(): void {
     this.say("3. R2 buckets");
-    const listed = this.wrangler(["r2", "bucket", "list"], false).stdout;
+    const listed = stripVTControlCharacters(this.wrangler(["r2", "bucket", "list"], false).stdout);
     for (const b of [LAKE_BUCKET, REPORTS_BUCKET]) {
-      if (new RegExp(`name:\\s+${b}\\b`).test(listed)) this.say(`  exists: ${b}`);
+      if (bucketListed(listed, b)) this.say(`  exists: ${b}`);
       else this.wrangler(["r2", "bucket", "create", b], true);
     }
   }
@@ -316,9 +337,10 @@ export class Setup {
   // 7 -------------------------------------------------------------------------------------------------
   queues(): void {
     this.say("7. Queues");
-    const listed = this.wrangler(["queues", "list"], false).stdout;
+    // `queues info` looks the name up directly (`queues list` is paginated).
     for (const q of QUEUES) {
-      if (new RegExp(`\\b${q}\\b(?!-)`).test(listed)) this.say(`  exists: ${q}`);
+      const info = this.wrangler(["queues", "info", q], false);
+      if (info.ok && queueInfoNames(info.stdout, q)) this.say(`  exists: ${q}`);
       else this.wrangler(["queues", "create", q], true);
     }
   }

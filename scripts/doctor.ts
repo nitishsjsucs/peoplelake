@@ -20,10 +20,11 @@ import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 import { budgetRows, CLOUDFLARE_PLANNING_SHARE, overBudget } from "../src/shared/free-budget.ts";
 import { budgetInputsFromConfig, freePlanConfigProblems } from "./lib/free-plan.ts";
 import type { ProdState } from "./lib/prod-state.ts";
-import { type Exec, GATEWAY, type Http, LAKE_BUCKET, QUEUES, readEnvFile, realExec, realHttp, REPORTS_BUCKET, SERVICE_TOKENS, WORKER } from "./setup-prod.ts";
+import { bucketListed, type Exec, queueInfoNames, GATEWAY, type Http, LAKE_BUCKET, QUEUES, readEnvFile, realExec, realHttp, REPORTS_BUCKET, SERVICE_TOKENS, WORKER } from "./setup-prod.ts";
 
 export type Status = "PASS" | "FAIL" | "MISSING" | "UNKNOWN" | "WARN" | "INFO";
 export interface Check {
@@ -92,7 +93,7 @@ export const READ_ONLY_WRANGLER: readonly (readonly string[])[] = [
   ["auth", "token"],
   ["r2", "bucket", "list"],
   ["basin", "catalog", "get"],
-  ["queues", "list"],
+  ["queues", "info"],
   ["deployments", "list"],
   ["secret", "list"],
 ];
@@ -329,7 +330,7 @@ export async function cloudflareChecks(root: string, deps: DoctorDeps, opts: { w
   let account = config["PL_CF_ACCOUNT_ID"] || state?.account_id || "";
   const wrangler = (args: string[]) => {
     const r = deps.exec([join(root, "node_modules", ".bin", "wrangler"), ...args], account ? { env: { CLOUDFLARE_ACCOUNT_ID: account } } : {});
-    return { ok: r.ok, out: `${r.stdout}\n${r.stderr}`.trim(), stdout: r.stdout };
+    return { ok: r.ok, out: stripVTControlCharacters(`${r.stdout}\n${r.stderr}`).trim(), stdout: r.stdout };
   };
 
   // Login and account
@@ -389,7 +390,7 @@ export async function cloudflareChecks(root: string, deps: DoctorDeps, opts: { w
     out.push({ name: "R2", status: r2Off ? "MISSING" : "UNKNOWN", detail: r2Off ? "R2 is not enabled on the account" : buckets.out.split("\n")[0]?.slice(0, 160), fix: "enable R2 with a payment card in the dashboard (R2, Overview)" });
   } else {
     for (const b of [LAKE_BUCKET, REPORTS_BUCKET]) {
-      const present = new RegExp(`name:\\s+${b}\\s*$`, "m").test(buckets.out);
+      const present = bucketListed(buckets.out, b);
       bucketPresent.set(b, present);
       out.push(present ? { name: `R2 bucket ${b}`, status: "PASS" } : { name: `R2 bucket ${b}`, status: "MISSING", fix: SETUP_FIX });
     }
@@ -423,10 +424,13 @@ export async function cloudflareChecks(root: string, deps: DoctorDeps, opts: { w
     );
   }
 
-  // Queues
-  const queues = wrangler(["queues", "list"]);
+  // Queues (`queues info` looks the name up directly; `queues list` is paginated)
   for (const q of QUEUES) {
-    out.push(queues.ok && listsName(queues.out, q) ? { name: `queue ${q}`, status: "PASS" } : { name: `queue ${q}`, status: queues.ok ? "MISSING" : "UNKNOWN", ...(queues.ok ? {} : { detail: queues.out.split("\n")[0]?.slice(0, 160) }), fix: SETUP_FIX });
+    const info = wrangler(["queues", "info", q]);
+    if (info.ok && queueInfoNames(info.out, q)) out.push({ name: `queue ${q}`, status: "PASS" });
+    else if (info.ok) out.push({ name: `queue ${q}`, status: "MISSING", detail: "wrangler found a different queue", fix: SETUP_FIX });
+    else if (/does not exist/i.test(info.out)) out.push({ name: `queue ${q}`, status: "MISSING", fix: SETUP_FIX });
+    else out.push({ name: `queue ${q}`, status: "UNKNOWN", detail: info.out.split("\n")[0]?.slice(0, 160) ?? "", fix: SETUP_FIX });
   }
 
   // Zero Trust: the team domain publishes its signing keys (public, no token).

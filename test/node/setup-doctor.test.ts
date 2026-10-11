@@ -22,7 +22,7 @@ import {
   versionAtLeast,
 } from "../../scripts/doctor.ts";
 import { parsePersonaEmails } from "../../scripts/lib/free-plan.ts";
-import { buildRoleMap, type Exec, finalRunsEnabled, parseCatalogInfo, readEnvFile, redact, SERVICE_TOKENS, Setup, upsertEnv } from "../../scripts/setup-prod.ts";
+import { bucketListed, buildRoleMap, type Exec, finalRunsEnabled, parseCatalogInfo, queueInfoNames, readEnvFile, redact, SERVICE_TOKENS, Setup, upsertEnv } from "../../scripts/setup-prod.ts";
 
 describe("setup:prod helpers", () => {
   it("never shows secret values in a printed command", () => {
@@ -54,6 +54,38 @@ describe("setup:prod helpers", () => {
     const enable = "Successfully enabled Basin Catalog on bucket 'peoplelake-lake'.\n\nCatalog URI: 'https://catalog.cloudflarestorage.com/acct/peoplelake-lake'\nWarehouse: 'acct_peoplelake-lake'\n\nUse this Catalog URI with Iceberg-compatible query engines";
     expect(parseCatalogInfo(enable)).toEqual({ uri: "https://catalog.cloudflarestorage.com/acct/peoplelake-lake", warehouse: "acct_peoplelake-lake" });
     expect(parseCatalogInfo("Basin Catalog is not enabled for bucket 'peoplelake-lake'.")).toEqual({ uri: "", warehouse: "" });
+  });
+
+  it("matches buckets and queues by exact name, with or without colors", () => {
+    const list = "Listing buckets...\n\u001b[37mname:\u001b[39m           \u001b[90mpeoplelake-lake-old\u001b[39m\ncreation_date:  x\n\nname:           peoplelake-reports\ncreation_date:  y";
+    expect(bucketListed(list, "peoplelake-lake")).toBe(false);
+    expect(bucketListed(list, "peoplelake-lake-old")).toBe(true);
+    expect(bucketListed(list, "peoplelake-reports")).toBe(true);
+    expect(queueInfoNames("Queue Name: peoplelake-lake-events-dlq\nQueue ID: 1", "peoplelake-lake-events")).toBe(false);
+    expect(queueInfoNames("Queue Name: peoplelake-lake-events\nQueue ID: 1", "peoplelake-lake-events")).toBe(true);
+  });
+
+  it("stops at a create that fails instead of continuing half provisioned, with secrets redacted", () => {
+    const root = mkdtempSync(join(tmpdir(), "pl-setup-"));
+    mkdirSync(join(root, ".prod"));
+    writeFileSync(join(root, ".prod", "secrets.env"), "PL_R2_CATALOG_TOKEN=catalog-token-value\n");
+    const calls: string[] = [];
+    const exec: Exec = (argv) => {
+      const cmd = argv.slice(1).join(" ");
+      calls.push(cmd);
+      if (cmd.startsWith("queues info peoplelake-lake-events-dlq")) return { ok: true, stdout: "Queue Name: peoplelake-lake-events-dlq", stderr: "" };
+      if (cmd.startsWith("queues info")) return { ok: false, stdout: "", stderr: "does not exist" };
+      if (cmd.startsWith("r2 bucket list")) return { ok: true, stdout: "", stderr: "" };
+      if (cmd.startsWith("r2 bucket create")) return { ok: false, stdout: "", stderr: "Please enable R2 through the Cloudflare Dashboard. [code: 10042]" };
+      if (cmd.startsWith("basin catalog snapshot-expiration")) return { ok: false, stdout: "", stderr: "bad token catalog-token-value" };
+      return { ok: true, stdout: "", stderr: "" };
+    };
+    const setup = new Setup(root, false, { exec, http: async () => ({ ok: false, status: 0, json: {} }) });
+    expect(() => setup.buckets()).toThrow(/r2 bucket create peoplelake-lake failed: Please enable R2/);
+    expect(calls.filter((c) => c.startsWith("r2 bucket create"))).toHaveLength(1);
+    setup.queues();
+    expect(calls.filter((c) => c.startsWith("queues create"))).toEqual(["queues create peoplelake-lake-events"]);
+    expect(() => setup.maintenance()).toThrow(/failed: bad token <redacted>/);
   });
 
   it("creates one service token per source, the runner and the doctor", () => {
@@ -214,7 +246,10 @@ describe("doctor: read only, before and after setup", () => {
         if (cmd.startsWith("auth token")) return ok(JSON.stringify({ type: "oauth", token: "oauth-token-value" }));
         if (cmd.startsWith("r2 bucket list")) return w.r2Enabled === false ? fail("Please enable R2 through the Cloudflare Dashboard. [code: 10042]") : ok((w.buckets ?? []).map((b) => `name:           ${b}\ncreation_date:  2026-10-11`).join("\n\n"));
         if (cmd.startsWith("basin catalog get")) return w.catalog ? ok("Catalog URI: https://catalog.example/x\nWarehouse: acct_peoplelake-lake\nStatus: active") : fail("not enabled");
-        if (cmd.startsWith("queues list")) return ok((w.queues ?? []).map((q) => `| ${q} | 1 |`).join("\n"));
+        if (cmd.startsWith("queues info")) {
+          const q = argv.at(-1) ?? "";
+          return (w.queues ?? []).includes(q) ? ok(`Queue Name: ${q}\nQueue ID: 1\nNumber of Consumers: 1`) : fail(`✘ [ERROR] Queue "${q}" does not exist. To create it, run: wrangler queues create ${q}`);
+        }
         if (cmd.startsWith("deployments list")) return w.deployed ? ok("Created: 2026-10-11") : fail("This Worker does not exist on your account. [code: 10007]");
         if (cmd.startsWith("secret list")) return ok(JSON.stringify([{ name: "GCP_DISPATCHER_KEY", type: "secret_text" }]));
         if (argv.includes("lake")) return ok(JSON.stringify({ table: "peoplelake.raw_events", exists: true, landing_cursor: null }));
