@@ -1,0 +1,31 @@
+job_code,job_title,job_family,job_level
+J01,Associate Engineer,Engineer,1
+J02,Associate Analyst,Analyst,1
+J03,Associate Specialist,Specialist,1
+J04,Associate Manager,Manager,1
+J05,Associate Consultant,Consultant,1
+J06,Engineer,Engineer,2
+J07,Analyst,Analyst,2
+J08,Specialist,Specialist,2
+J09,Manager,Manager,2
+J10,Consultant,Consultant,2
+J11,Senior Engineer,Engineer,3
+J12,Senior Analyst,Analyst,3
+J13,Senior Specialist,Specialist,3
+J14,Senior Manager,Manager,3
+J15,Senior Consultant,Consultant,3
+J16,Staff Engineer,Engineer,4
+J17,Staff Analyst,Analyst,4
+J18,Staff Specialist,Specialist,4
+J19,Staff Manager,Manager,4
+J20,Staff Consultant,Consultant,4
+J21,Principal Engineer,Engineer,5
+J22,Principal Analyst,Analyst,5
+J23,Principal Specialist,Specialist,5
+J24,Principal Manager,Manager,5
+J25,Principal Consultant,Consultant,5
+J26,Distinguished Engineer,Engineer,6
+J27,Distinguished Analyst,Analyst,6
+J28,Distinguished Specialist,Specialist,6
+J29,Distinguished Manager,Manager,6
+J30,Distinguished Consultant,Consultant,6

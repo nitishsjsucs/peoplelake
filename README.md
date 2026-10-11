@@ -11,7 +11,7 @@ v1 is under construction and this repository is published while it is built. Thi
 | Area | State |
 |---|---|
 | Repo scaffold, TypeScript configs, generated Worker types, prose check | done |
-| Synthetic generator with exact counts and oracle | not started |
+| Synthetic generator with exact counts and oracle | done: 100,000 events (full) and 10,000 (small) from `hris`, `ats`, `talent`, pinned sha256, committed oracle seeds |
 | Contracts and canonical JSON golden | not started |
 | DuckDB loader and output digests | not started |
 | dbt models, five metrics, reconciliation checks | not started |
@@ -94,10 +94,28 @@ Requirements: Node 22.18 or newer (CI uses 24), npm, uv 0.12.x, Python 3.12.
 ```bash
 git clone https://github.com/nitishsjsucs/peoplelake && cd peoplelake
 npm ci
+uv sync --locked --project pipeline
 npm run typecheck
 npm test            # vitest (TZ=UTC)
+npm run test:py     # pytest (TZ=UTC)
 npm run check:prose
+
+# synthetic data: exact counts, byte-identical on every platform
+uv run --project pipeline peoplelake generate --profile small --out .data/generated/small --check
+uv run --project pipeline peoplelake generate --profile full --out .data/generated/full --check
+uv run --project pipeline peoplelake generate --write-seeds   # rewrites warehouse/seeds (committed)
 ```
+
+### Synthetic data
+
+| Source | Domains | Full profile events | Small profile events |
+|---|---|---:|---:|
+| `hris` | HR: hires, rehires, terminations, transfers, job and FTE changes, corrections, rescinds | 14,470 | 1,447 |
+| `ats` | recruiting: requisitions, applications, stage changes, offers | 55,530 | 5,553 |
+| `talent` | compensation changes and performance reviews | 30,000 | 3,000 |
+| total | | 100,000 | 10,000 |
+
+The generator (`pipeline/src/peoplelake/generator`) keeps the true world state and computes the expected value of every metric for every month and department from it (the oracle), never from the events. Both profiles' oracle rows are committed as dbt seeds in `warehouse/seeds/oracle/` and a test regenerates and diffs them. True-world totals on the full profile: headcount 4,000 at 2022-12-31 and 4,650 at 2025-12-31, 2,550 hires (150 of them rehires) and 1,900 departures in 2023 to 2025, offer acceptance 2,600 / 3,120 = 0.833333.
 
 More commands are added here as each part lands (see Status).
 
