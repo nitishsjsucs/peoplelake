@@ -142,17 +142,53 @@ describe("setup:prod on the Workers Free plan (SPEC 21.0)", () => {
       ].join("\n"),
     );
     writeFileSync(join(root, ".prod", "secrets.env"), "PL_CF_SETUP_TOKEN=setup-token-value\nPL_R2_CATALOG_TOKEN=catalog-token-value\n");
-    const exec: Exec = (argv) => {
+    const exec: Exec = (argv, opts) => {
       const cmd = argv.join(" ");
+      if (argv[0]?.endsWith("wrangler")) wranglerEnvs.push(opts.env?.["CLOUDFLARE_ACCOUNT_ID"]);
       if (cmd.endsWith("--version")) return { ok: true, stdout: cmd.includes("wrangler") ? "4.149.0" : "gcloud 587.0.0", stderr: "" };
       if (cmd.includes("billing projects describe")) return { ok: true, stdout: "True", stderr: "" };
-      if (cmd.includes("whoami")) return { ok: true, stdout: "You are logged in", stderr: "" };
+      if (cmd.includes("whoami")) return { ok: true, stdout: JSON.stringify({ loggedIn: true, accounts: [{ id: ACCOUNT_ID }, { id: "another-account" }] }), stderr: "" };
       return { ok: false, stdout: "", stderr: "not found" };
     };
     const http = async () => ({ ok: false, status: 404, json: { result: [] } });
     const setup = new Setup(root, true, { exec, http });
     return setup.all(undefined).then(() => setup.log.join("\n")) as unknown as string;
   }
+  const ACCOUNT_ID = "00000000000000000000000000000000";
+  const wranglerEnvs: (string | undefined)[] = [];
+
+  it("pins every wrangler call to PL_CF_ACCOUNT_ID, even when the login sees other accounts", async () => {
+    wranglerEnvs.length = 0;
+    await dryRun();
+    expect(wranglerEnvs.length).toBeGreaterThan(5);
+    expect(new Set(wranglerEnvs)).toEqual(new Set([ACCOUNT_ID]));
+  });
+
+  it("refuses a PL_CF_ACCOUNT_ID that is not one of the login's accounts", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pl-setup-"));
+    mkdirSync(join(root, ".prod"));
+    writeFileSync(join(root, ".prod", "config.env"), "PL_CF_ACCOUNT_ID=not-mine\n");
+    writeFileSync(join(root, ".prod", "secrets.env"), "");
+    const exec: Exec = (argv) => {
+      const cmd = argv.join(" ");
+      if (cmd.includes("whoami")) return { ok: true, stdout: JSON.stringify({ loggedIn: true, accounts: [{ id: ACCOUNT_ID }] }), stderr: "" };
+      return { ok: true, stdout: "", stderr: "" };
+    };
+    const setup = new Setup(root, false, { exec, http: async () => ({ ok: false, status: 0, json: {} }) });
+    await expect(setup.all("cloudflare")).rejects.toThrow(/preflight failed/);
+    expect(setup.log.join("\n")).toContain("PL_CF_ACCOUNT_ID is not one of the wrangler login's accounts");
+  });
+
+  it("stops when the AI Gateway create is refused", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pl-setup-"));
+    mkdirSync(join(root, ".prod"));
+    writeFileSync(join(root, ".prod", "secrets.env"), "PL_CF_SETUP_TOKEN=setup-token-value\n");
+    const http = async (method: string) =>
+      method === "POST" ? { ok: false, status: 403, json: { success: false } } : { ok: false, status: 404, json: { result: null } };
+    const setup = new Setup(root, false, { exec: () => ({ ok: true, stdout: "", stderr: "" }), http });
+    setup.state.account_id = "acct";
+    await expect(setup.gateway()).rejects.toThrow("could not create AI Gateway peoplelake (HTTP 403)");
+  });
 
   it("creates nothing that needs Workers Paid, names everything peoplelake and never prints a secret", async () => {
     const log = await dryRun();

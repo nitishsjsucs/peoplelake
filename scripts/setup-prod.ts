@@ -201,8 +201,16 @@ export class Setup {
     return res;
   }
 
+  /** The account every wrangler call is pinned to (as the API calls and the doctor are), so buckets, queues,
+   * the catalog and the Worker can never land on another account the OAuth login can see. */
+  account(): string {
+    return this.state.account_id || this.config["PL_CF_ACCOUNT_ID"] || "";
+  }
+
   wrangler(args: string[], mutating: boolean, env?: Record<string, string>): RunResult {
-    return this.run([join(this.root, "node_modules", ".bin", "wrangler"), ...args], { mutating, ...(env ? { env } : {}) });
+    const account = this.account();
+    const merged = { ...(account ? { CLOUDFLARE_ACCOUNT_ID: account } : {}), ...env };
+    return this.run([join(this.root, "node_modules", ".bin", "wrangler"), ...args], { mutating, ...(Object.keys(merged).length ? { env: merged } : {}) });
   }
 
   async api(method: string, path: string, token: string, body?: unknown): Promise<{ ok: boolean; status: number; json: any }> {
@@ -248,9 +256,17 @@ export class Setup {
     }
     const version = this.wrangler(["--version"], false).stdout.trim();
     if (!version.includes("4.149.0")) problems.push(`wrangler 4.149.0 expected from node_modules (got ${version || "none"})`);
-    const who = this.wrangler(["whoami"], false);
-    if (!who.ok || /not authenticated|not logged in/i.test(who.stdout + who.stderr)) {
+    const who = this.wrangler(["whoami", "--json"], false);
+    let whoami: { loggedIn?: boolean; accounts?: { id: string }[] } = {};
+    try {
+      whoami = JSON.parse(who.stdout) as typeof whoami;
+    } catch {
+      whoami = {};
+    }
+    if (!who.ok || !whoami.loggedIn) {
       problems.push("wrangler is not logged in: run `npx wrangler login`");
+    } else if (this.config["PL_CF_ACCOUNT_ID"] && !(whoami.accounts ?? []).some((a) => a.id === this.config["PL_CF_ACCOUNT_ID"])) {
+      problems.push("PL_CF_ACCOUNT_ID is not one of the wrangler login's accounts (npx wrangler whoami prints them)");
     }
     if (!this.run(["gcloud", "--version"], { mutating: false }).ok) problems.push("gcloud is not installed: brew install --cask gcloud-cli");
     const project = this.config["PL_GCP_PROJECT"] ?? "";
@@ -387,7 +403,7 @@ export class Setup {
       this.say(`  exists: ${GATEWAY}`);
       return;
     }
-    await this.api("POST", path, token, {
+    const created = await this.api("POST", path, token, {
       id: GATEWAY,
       cache_invalidate_on_update: true,
       cache_ttl: 0,
@@ -395,6 +411,9 @@ export class Setup {
       rate_limiting_interval: 0,
       rate_limiting_limit: 0,
     });
+    // A refused create (for example a setup token without AI Gateway Edit) must stop setup: the Worker's
+    // /api/ask and /api/ops/ai would fail until someone noticed.
+    if (!this.dryRun && !created.ok) throw new Error(`could not create AI Gateway ${GATEWAY} (HTTP ${created.status})`);
   }
 
   // 10, 13 --------------------------------------------------------------------------------------------
