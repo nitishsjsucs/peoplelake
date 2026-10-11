@@ -105,6 +105,15 @@ describe("runner interface", () => {
     expect((await call("/internal/jobs/unknown/result", "runner", json(loadOk(spec)))).status).toBe(404);
   });
 
+  it("answers a runner at its idle exit: exit when nothing is queued (runner role only)", async () => {
+    expect((await call("/internal/runner/idle", "operator", json({ worker_id: "w" }))).status).toBe(403);
+    expect(await (await call("/internal/runner/idle", "runner", json({ worker_id: "w" }))).json()).toEqual({ exit: true });
+    const coordinator = coordinatorStub(env);
+    const { run_id } = await coordinator.requestRun("test");
+    await coordinator.enqueueJob(run_id ?? "", "load", 1, { from_snapshot: null, full_refresh: false });
+    expect(await (await call("/internal/runner/idle", "runner", json({ worker_id: "w" }))).json()).toEqual({ exit: false });
+  });
+
   it("stores the metrics artifact only when its sha256 matches", async () => {
     const { run_id } = await coordinatorStub(env).requestRun("test");
     const body = '{"rows":[]}';

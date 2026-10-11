@@ -598,6 +598,11 @@ export class Coordinator extends DurableObject<Env> {
     return spec;
   }
 
+  /** Whether the dispatch step should start a runner for the job it just enqueued. Not while a runner was
+   * seen in the last RUNNER_SEEN_WINDOW_SECONDS (an idle runner polls every 2 s, so it claims the job), and
+   * never once that runner has said it is exiting (runnerIdle). The window stays below the runner's idle
+   * exit minus one poll (parseConfig bounds it in production), so a runner that died without saying so is
+   * presumed gone well before a job would wait for the claim timeout. */
   shouldDispatch(now: number = Date.now()): boolean {
     const cfg = this.#config();
     const seen = Number(this.#get("runner_last_seen_at") ?? "0");
@@ -606,6 +611,21 @@ export class Coordinator extends DurableObject<Env> {
     const claimed = Number(this.#get("last_claim_at") ?? "0");
     if (dispatched > 0 && now - dispatched < DISPATCH_QUIET_MS && claimed <= dispatched) return false;
     return true;
+  }
+
+  /** A runner that has been idle for its whole `--until-idle` asks before it exits. With a queued job it
+   * stays (the job was enqueued after its last poll, and shouldDispatch saw it as alive); otherwise it is
+   * forgotten at once, so the next enqueued job is dispatched instead of waiting for the claim timeout.
+   * Durable Object calls are serialized, so a job is either queued before this answer or dispatched after. */
+  runnerIdle(workerId: string, now: number = Date.now()): { exit: boolean } {
+    const queued = this.#db.first<{ job_id: string }>("SELECT job_id FROM jobs WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1");
+    if (queued !== null) {
+      this.#set("runner_last_seen_at", String(now));
+      return { exit: false };
+    }
+    if (this.#get("runner_last_seen_at") !== null) this.#set("runner_last_seen_at", null);
+    this.#set("last_runner_exit", JSON.stringify({ worker_id: workerId.slice(0, 200), at: now }));
+    return { exit: true };
   }
 
   noteDispatch(jobId: string, ref: string | null, now: number = Date.now()): void {

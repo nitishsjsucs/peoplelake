@@ -48,6 +48,10 @@ class WorkerClient:
             raise WorkerError(res.status_code, res.text)
         return res.json()
 
+    def idle(self, worker_id: str) -> bool:
+        """Ask before exiting after --until-idle: True means exit, False means a job is queued, keep polling."""
+        return bool(self._json("POST", "/internal/runner/idle", json={"worker_id": worker_id})["exit"])
+
     def heartbeat(self, job_id: str, worker_id: str) -> bool:
         res = self._req("POST", f"/internal/jobs/{job_id}/heartbeat", json={"worker_id": worker_id})
         return res.status_code == 200

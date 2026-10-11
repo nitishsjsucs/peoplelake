@@ -7,6 +7,14 @@ export class ConfigError extends Error {
   override name = "ConfigError";
 }
 
+/** The Cloud Run runner (`runner run --until-idle 15` in the Dockerfile and bootstrap) polls every 2 s
+ * while idle and exits after 15 idle seconds. A runner seen within RUNNER_SEEN_WINDOW_SECONDS must still
+ * be polling, so production keeps the window below the idle exit minus one poll (test/node checks the
+ * runner's own values against these). */
+export const RUNNER_IDLE_EXIT_SECONDS = 15;
+export const RUNNER_POLL_SECONDS = 2;
+export const RUNNER_SEEN_WINDOW_SECONDS_AT_MOST = 10;
+
 export const ROLES = ["viewer", "operator", "runner", "source:hris", "source:ats", "source:talent"] as const;
 export type Role = (typeof ROLES)[number];
 
@@ -155,6 +163,7 @@ export function parseConfig(env: ConfigEnv, requestHost: string | null): AppConf
   };
   const aiMaxTokens = int(env, "AI_MAX_TOKENS", AI_MAX_TOKENS, 1);
   const aiDailyNeuronCap = int(env, "AI_DAILY_NEURON_CAP", AI_DAILY_NEURON_CAP, 1);
+  const runnerSeenWindowSeconds = int(env, "RUNNER_SEEN_WINDOW_SECONDS", RUNNER_SEEN_WINDOW_SECONDS_AT_MOST);
   if (guards.failureBackoffMaxMinutes < guards.failureBackoffBaseMinutes) {
     throw new ConfigError("FAILURE_BACKOFF_MAX_MINUTES must be at least FAILURE_BACKOFF_BASE_MINUTES");
   }
@@ -174,6 +183,11 @@ export function parseConfig(env: ConfigEnv, requestHost: string | null): AppConf
       throw new ConfigError(`production requires BQ_MONTHLY_BYTES_CAP <= ${b.bqMonthlyBytesCapAtMost}`);
     }
     if (heartbeatMinutes > b.heartbeatMinutesAtMost) throw new ConfigError("production requires HEARTBEAT_MINUTES=0 (heartbeat off)");
+    if (runnerSeenWindowSeconds > RUNNER_SEEN_WINDOW_SECONDS_AT_MOST) {
+      throw new ConfigError(
+        `production requires RUNNER_SEEN_WINDOW_SECONDS <= ${RUNNER_SEEN_WINDOW_SECONDS_AT_MOST} (the runner exits after ${RUNNER_IDLE_EXIT_SECONDS} idle seconds)`,
+      );
+    }
     if (aiMaxTokens > AI_MAX_TOKENS) throw new ConfigError(`production requires AI_MAX_TOKENS <= ${AI_MAX_TOKENS}`);
     if (aiDailyNeuronCap > AI_DAILY_NEURON_CAP_AT_MOST) {
       throw new ConfigError(`production requires AI_DAILY_NEURON_CAP <= ${AI_DAILY_NEURON_CAP_AT_MOST}`);
@@ -200,7 +214,7 @@ export function parseConfig(env: ConfigEnv, requestHost: string | null): AppConf
     landing: { rollSeconds: int(env, "LANDING_ROLL_SECONDS", 60, 1), rollMaxBytes, maxBufferBytes },
     heartbeatMinutes,
     guards,
-    runnerSeenWindowSeconds: int(env, "RUNNER_SEEN_WINDOW_SECONDS", 60),
+    runnerSeenWindowSeconds,
     evalFaultsEnabled,
     devRoutes: environment === "local",
     ai: {

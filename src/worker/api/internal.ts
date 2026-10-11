@@ -50,6 +50,13 @@ export function mountInternalApi(app: App): void {
     return c.json(spec);
   });
 
+  // A runner idle for its whole --until-idle asks before exiting: stay when a job is queued, else exit.
+  app.post("/internal/runner/idle", requireRole("runner"), async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { worker_id?: unknown };
+    const workerId = typeof body.worker_id === "string" && body.worker_id ? body.worker_id : c.get("principal").id;
+    return c.json(await coordinatorStub(c.env).runnerIdle(workerId));
+  });
+
   app.post("/internal/jobs/:job_id/heartbeat", requireRole("runner"), async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { worker_id?: unknown };
     const workerId = typeof body.worker_id === "string" && body.worker_id ? body.worker_id : c.get("principal").id;

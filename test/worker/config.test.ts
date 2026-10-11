@@ -102,6 +102,9 @@ describe("parseConfig fail-closed rules", () => {
     fails({ ...production(), AI_DAILY_NEURON_CAP: "2001" }, null, /AI_DAILY_NEURON_CAP <= 2000/);
     fails({ ...production(), AI_MAX_TOKENS: "256" }, null, /AI_MAX_TOKENS <= 96/);
     expect(parseConfig(production(), null).ai).toMatchObject({ maxTokens: 96, dailyNeuronCap: 1800 });
+    // A runner seen within the window must still be polling: below its 15 s idle exit minus one 2 s poll.
+    expect(parseConfig(production(), null).runnerSeenWindowSeconds).toBe(10);
+    fails({ ...production(), RUNNER_SEEN_WINDOW_SECONDS: "60" }, null, /RUNNER_SEEN_WINDOW_SECONDS <= 10/);
     fails({ ...local(), FAILURE_BACKOFF_BASE_MINUTES: "10", FAILURE_BACKOFF_MAX_MINUTES: "5" }, "127.0.0.1", /FAILURE_BACKOFF_MAX_MINUTES/);
     expect(parseConfig(local(), "127.0.0.1").guards.runMinIntervalSeconds).toBe(0);
   });

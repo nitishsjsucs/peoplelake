@@ -163,6 +163,13 @@ class Runner:
         if res.get("duplicate"):
             log.info("result for %s was a duplicate (job already terminal)", job["job_id"])
 
+    def _may_exit(self) -> bool:
+        try:
+            return self.client.idle(self.worker_id)
+        except Exception:  # noqa: BLE001 - exit anyway; the Coordinator's seen window covers a silent exit
+            log.warning("could not tell the Worker this runner is exiting")
+            return True
+
     def poll(
         self, *, until_idle: float | None = None, interval: float = 1.0, max_jobs: int = MAX_JOBS_PER_PROCESS
     ) -> int:
@@ -177,7 +184,12 @@ class Runner:
                 job = None
             if job is None:
                 if until_idle is not None and time.monotonic() - idle_since >= until_idle:
-                    break
+                    # The Coordinator skips dispatch while this runner was seen recently, so a job enqueued
+                    # after the last poll would wait for the claim timeout: ask first, and stay if one is queued.
+                    if self._may_exit():
+                        break
+                    idle_since = time.monotonic()
+                    continue
                 time.sleep(interval)
                 continue
             outcome = self.process(job)

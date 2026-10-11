@@ -173,11 +173,38 @@ describe("Coordinator dispatch window and faults", () => {
     const t0 = 1_800_000_000_000;
     expect(await c().shouldDispatch(t0)).toBe(true);
     await c().claimJob("w", t0);
-    expect(await c().shouldDispatch(t0 + 59_000)).toBe(false);
-    expect(await c().shouldDispatch(t0 + 61_000)).toBe(true);
-    await c().noteDispatch("job", "op-1", t0 + 61_000);
-    expect(await c().shouldDispatch(t0 + 120_000)).toBe(false);
-    expect(await c().shouldDispatch(t0 + 152_000)).toBe(true);
+    expect(await c().shouldDispatch(t0 + 9_000)).toBe(false);
+    expect(await c().shouldDispatch(t0 + 11_000)).toBe(true);
+    await c().noteDispatch("job", "op-1", t0 + 11_000);
+    expect(await c().shouldDispatch(t0 + 60_000)).toBe(false);
+    expect(await c().shouldDispatch(t0 + 102_000)).toBe(true);
+  });
+
+  it("dispatches a job enqueued after the runner stopped polling, without waiting for the claim timeout", async () => {
+    // The Cloud Run runner polls every 2 s and exits after 15 idle seconds. Seen at t0, gone by t0+15 s
+    // even without saying so (a crash): a job enqueued at t0+30 s is dispatched at once.
+    const runId = await newRun();
+    const t0 = Date.now();
+    expect(await c().claimJob("w", t0)).toBeNull();
+    await c().enqueueJob(runId, "load", 1, input, t0 + 30_000);
+    expect(await c().shouldDispatch(t0 + 30_000)).toBe(true);
+  });
+
+  it("a runner at its idle exit stays while a job is queued and is forgotten at once otherwise", async () => {
+    const runId = await newRun();
+    const t0 = Date.now();
+    expect(await c().claimJob("w", t0)).toBeNull();
+    // Nothing queued: the runner may exit and the next job is dispatched immediately, not 10 s later.
+    expect(await c().runnerIdle("w", t0 + 15_000)).toEqual({ exit: true });
+    expect((await c().status())["runner_last_seen_at"]).toBeNull();
+    await c().enqueueJob(runId, "load", 1, input, t0 + 15_500);
+    expect(await c().shouldDispatch(t0 + 15_500)).toBe(true);
+    // A job queued after the runner's last poll (no dispatch, the runner was seen): the runner stays.
+    expect(await c().claimJob("w", t0 + 16_000)).not.toBeNull();
+    await c().enqueueJob(runId, "transform", 1, input, t0 + 20_000);
+    expect(await c().shouldDispatch(t0 + 20_000)).toBe(false);
+    expect(await c().runnerIdle("w", t0 + 21_000)).toEqual({ exit: false });
+    expect((await c().claimJob("w", t0 + 22_000))?.kind).toBe("transform");
   });
 
   it("embeds faults only into the matching run, job kind and attempt", async () => {
