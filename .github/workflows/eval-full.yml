@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       freshness_minutes:
-        description: "Also run the local freshness eval for this many minutes (0 to skip; reports only)"
+        description: "Also run the local freshness eval for this many minutes (1 to 60, 0 to skip; reports only)"
         required: false
         default: "20"
   schedule:
@@ -72,4 +72,45 @@ jobs:
         with:
           name: scenario-full-${{ matrix.scenario }}
           path: results/
+          if-no-files-found: ignore
+
+  freshness:
+    # The optional local freshness run (SPEC 16.2, 17): the full profile through the local stack for
+    # freshness_minutes (default 20, also on the weekly schedule; 0 skips it). Reports only.
+    if: ${{ (inputs.freshness_minutes || '20') != '0' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.12.17"
+          python-version: "3.12"
+      - run: npm ci
+      - run: uv sync --locked --project pipeline
+      - run: uv run --project pipeline peoplelake auth dev-keys
+      - name: Local freshness on the full profile
+        # Twice the measured wall time of the 60-minute local run (60 min 43 s), the longest the input allows.
+        timeout-minutes: 122
+        env:
+          FRESHNESS_MINUTES: ${{ inputs.freshness_minutes || '20' }}
+        run: |
+          if ! [[ "$FRESHNESS_MINUTES" =~ ^[0-9]+$ ]] || [ "$FRESHNESS_MINUTES" -lt 1 ] || [ "$FRESHNESS_MINUTES" -gt 60 ]; then
+            echo "freshness_minutes must be 0 (skip) or 1 to 60, got: $FRESHNESS_MINUTES" >&2
+            exit 2
+          fi
+          uv run --project pipeline peoplelake eval freshness --target local --duration "${FRESHNESS_MINUTES}m" \
+            --out results/freshness-local-full.json
+      - if: always()
+        run: uv run --project pipeline peoplelake stack down
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: freshness-local-full
+          path: |
+            results/
+            .data/eval/freshness/logs/
           if-no-files-found: ignore

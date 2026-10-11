@@ -309,8 +309,9 @@ GitHub Actions run CI only and hold no cloud credentials (`permissions: contents
 | `ci.yml` | runner-image | `docker build` of the Cloud Run runner image |
 | `ci.yml` | e2e (B, S1 to S5) | one scenario per VM on the small profile through the local stack, compared with the reference digests |
 | `eval-full.yml` | scenarios | the same matrix on the full profile (100,000 events), weekly and on demand; reports only |
+| `eval-full.yml` | freshness | the local freshness eval on the full profile for `freshness_minutes` (default 20, also weekly; 1 to 60, 0 skips it); reports only |
 
-Scenario step timeouts come from measured runs of the Free plan design. Small profile: 5 minutes, twice the slowest scenario step on GitHub's `ubuntu-latest` runner (S4, 148 s; the same scenario takes 99 s on this machine, see Results). Full profile: 8 minutes, twice the slowest full-profile scenario on this machine (S4, 147 s) times the 1.5 slowdown the small profile showed on the runner, because `eval-full.yml` has not run on GitHub yet.
+Scenario step timeouts come from measured runs of the Free plan design. Small profile: 5 minutes, twice the slowest scenario step on GitHub's `ubuntu-latest` runner (S4, 148 s; the same scenario takes 99 s on this machine, see Results). Full profile: 8 minutes, twice the slowest full-profile scenario on this machine (S4, 147 s) times the 1.5 slowdown the small profile showed on the runner, because `eval-full.yml` has not run on GitHub yet. The freshness step: 122 minutes, twice the measured wall time of the 60-minute local run (60 min 43 s), the longest the input allows.
 
 ## Production setup
 
