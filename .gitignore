@@ -5,6 +5,7 @@ node_modules/
 .dev.vars
 .prod/
 wrangler.production.jsonc
+wrangler.dry-run.jsonc
 warehouse/target/
 warehouse/logs/
 warehouse/dbt_packages/

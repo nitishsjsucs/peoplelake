@@ -1121,7 +1121,7 @@ README Results contains only numbers from `evals/results/*.json` produced in a s
 ## 17. CI (`.github/workflows/`, ubuntu-latest, no macOS assumptions, no local SHAs, `env: {TZ: UTC}`, `permissions: {contents: read}`)
 
 `ci.yml` (push and pull_request):
-1. `node`: setup-node from `.nvmrc`, `npm ci`, `npm run typegen:check`, `npm run typecheck`, `npx vitest run --project worker --project node`, `npm run deploy:dry-run` (renders with fixture state, `wrangler deploy --env production --dry-run -c wrangler.production.jsonc`), `npm run check:prose`.
+1. `node`: setup-node from `.nvmrc`, `npm ci`, `npm run typegen:check`, `npm run typecheck`, `npx vitest run --project worker --project node`, `npm run deploy:dry-run` (renders with fixture state into `wrangler.dry-run.jsonc` (fixer: never the real render), `wrangler deploy --env production --dry-run -c wrangler.dry-run.jsonc`), `npm run check:prose`.
 2. `python`: setup-uv 10.3.0 with `version: "0.12.17"` and Python 3.12, `uv sync --locked --project pipeline`, `ruff check`, `pytest -m "not e2e"`.
 3. `dbt`: generate the small profile, load straight into DuckDB, the sequence in section 15.4 (`dbt run --empty` before the first `dbt build`), `test_bucket_cursors.py`, the two offline BigQuery compiles, sqlglot parse, `test_bq_manifest.py`, `peoplelake dev lint-sql`; uploads `reference-digests-small.json`.
 4. `clean-clone`: `peoplelake dev clean-clone-check` clones the checked-out commit into a temp dir and runs `uv sync --locked`, `dbt parse` and `pytest -m smoke` there, so nothing gitignored is ever relied on.
@@ -1180,7 +1180,7 @@ npm scripts (`package.json`; every script that runs node, vitest, uv or dbt is p
 | `test` | `vitest run` |
 | `test:py` | `uv run --project pipeline pytest` |
 | `check:prose` | `node scripts/check-prose.ts` |
-| `deploy:dry-run` | render with fixture state, `predeploy-check`, `wrangler deploy -c wrangler.production.jsonc --env production --dry-run` |
+| `deploy:dry-run` | render with fixture state into `wrangler.dry-run.jsonc` (fixer), `predeploy-check`, `wrangler deploy -c wrangler.dry-run.jsonc --env production --dry-run` |
 | `deploy` | render, `predeploy-check`, `wrangler deploy -c wrangler.production.jsonc --env production --secrets-file <temp file, mode 600>`; the only supported way to deploy |
 | `deploy:runner` | `uv run --project pipeline peoplelake prod deploy-runner` (Cloud Build image + `gcloud run jobs deploy`) |
 | `setup:prod` | `node scripts/setup-prod.ts` (flags `--only cloudflare\|gcp\|worker`, `--dry-run`) |
@@ -1267,7 +1267,7 @@ Removed from setup: Basin Pipelines streams, sinks and pipelines (revision 2 ste
 
 `bootstrap-gcp` changes: refuse while billing is disabled; every name from section 29.4.6; datasets created or updated with no default table or partition expiration; a dedicated build service account `peoplelake-build` and bucket `gs://peoplelake-build-master-magnet-444903-u4` replace every grant to the Cloud Build default service account; secrets `peoplelake-r2-catalog-token` (now the Admin Read & Write token), `peoplelake-runner-client-id`, `peoplelake-runner-client-secret`; the Cloud Run job reads those three and keeps `--args runner,run,--until-idle,15,--target,prod`.
 
-doctor changes: no "Workers Paid" probe; FAIL if the rendered production config has a `pipelines` or `limits` key or more than one cron; the Basin Catalog table exists and its newest `peoplelake.landing-through` cursor is reported; `GET /api/ops/budget` (this repo's Durable Object rows read and written today, automatic runs today, failure backoff state, neurons today, BigQuery bytes this month) is printed against the planning shares; Google checks cover the `peoplelake` names, that this repo's service accounts hold no project-level role other than `roles/bigquery.jobUser` and `roles/logging.logWriter`, no default expiration on `peoplelake_*` datasets, and bytes billed this month by the `peoplelake-*` service accounts (`region-us.INFORMATION_SCHEMA.JOBS_BY_PROJECT` as the owner, itself capped at 1 GB).
+doctor changes: no "Workers Paid" probe; FAIL if the deployed Worker (fixer: its settings and schedules through the Workers scripts API with wrangler's OAuth token, GETs only, not a local rendered file) has a `pipelines` binding, a CPU limit, Logpush, Durable Object classes other than the two, or any cron but `*/5 * * * *`; the Basin Catalog table exists and its newest `peoplelake.landing-through` cursor is reported; `GET /api/ops/budget` (this repo's Durable Object rows read and written today, automatic runs today, failure backoff state, neurons today, BigQuery bytes this month) is printed against the planning shares; Google checks cover the `peoplelake` names, that this repo's service accounts hold no project-level role other than `roles/bigquery.jobUser` and `roles/logging.logWriter`, no default expiration on `peoplelake_*` datasets, and bytes billed this month by the `peoplelake-*` service accounts (`region-us.INFORMATION_SCHEMA.JOBS_BY_PROJECT` as the owner, itself capped at 1 GB).
 
 ### 21.1 `npm run setup:prod` (`scripts/setup-prod.ts`, idempotent, `--dry-run` prints every command and API call with secrets redacted)
 Reads `.prod/config.env` and `.prod/secrets.env`, writes `.prod/state.json`. Each step is check-then-create. Secret values are passed on stdin or in temp files with mode 600, never in argv.

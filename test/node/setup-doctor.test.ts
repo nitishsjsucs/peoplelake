@@ -6,6 +6,7 @@ import {
   type Check,
   cloudflareChecks,
   type DoctorDeps,
+  deployedWorkerChecks,
   doctorCommandAllowed,
   failed,
   format,
@@ -321,6 +322,10 @@ describe("doctor: read only, before and after setup", () => {
         if (url.endsWith("/access/identity_providers")) return w.idps === "forbidden" ? { ok: false, status: 403, json: {} } : { ok: true, status: 200, json: { result: (w.idps ?? []).map((type) => ({ type })) } };
         if (url.endsWith("/access/service_tokens")) return { ok: true, status: 200, json: { result: (w.tokens ?? []).map((name) => ({ name, id: name })) } };
         if (url.includes("/ai-gateway/gateways/")) return w.gateway ? { ok: true, status: 200, json: { result: {} } } : { ok: false, status: 404, json: {} };
+        if (url.endsWith(`/workers/scripts/peoplelake/settings`)) {
+          return { ok: true, status: 200, json: { result: { logpush: false, bindings: [{ type: "durable_object_namespace", name: "COORDINATOR", class_name: "Coordinator" }, { type: "durable_object_namespace", name: "LANDING_ROLLER", class_name: "LandingRoller" }, { type: "r2_bucket", name: "LAKE_BUCKET" }] } } };
+        }
+        if (url.endsWith(`/workers/scripts/peoplelake/schedules`)) return { ok: true, status: 200, json: { result: { schedules: [{ cron: "*/5 * * * *" }] } } };
         if (url.endsWith("/access/apps")) return { ok: true, status: 200, json: { result: w.app ? [{ name: "peoplelake", aud: "aud-1", ...(w.appCookie === false ? {} : ACCESS_COOKIE) }] : [] } };
         return { ok: false, status: 500, json: {} };
       },
@@ -459,6 +464,21 @@ describe("doctor: read only, before and after setup", () => {
     expect(live.probes).toContain("https://peoplelake.example-sub.workers.dev/api/ops/ai?live=1");
     expect(live.probes).toContain("https://peoplelake.example-sub.workers.dev/api/ops/dispatch?execute=1");
     expect(byName(liveChecks)["Workers AI through AI Gateway (one live call)"]?.status).toBe("PASS");
+  });
+
+  it("checks the deployed Worker's settings and schedules, not a local rendered file", () => {
+    const ok = (result: unknown) => ({ ok: true, status: 200, json: { result } });
+    const dos = [{ type: "durable_object_namespace", class_name: "Coordinator" }, { type: "durable_object_namespace", class_name: "LandingRoller" }];
+    const cron = ok({ schedules: [{ cron: "*/5 * * * *" }] });
+    expect(deployedWorkerChecks(ok({ bindings: dos }), cron)[0]?.status).toBe("PASS");
+    const paid = deployedWorkerChecks(ok({ bindings: [...dos, { type: "pipelines", name: "RAW" }], limits: { cpu_ms: 50 }, logpush: true }), ok({ schedules: [{ cron: "* * * * *" }, { cron: "*/5 * * * *" }] }));
+    expect(paid[0]).toMatchObject({ status: "FAIL" });
+    for (const part of ["pipelines binding", "limits.cpu_ms 50", "Logpush", "crons"]) expect(paid[0]?.detail).toContain(part);
+    expect(deployedWorkerChecks({ ok: false, status: 403, json: {} }, cron)[0]?.status).toBe("UNKNOWN");
+    // package.json renders the dry run's config to its own file, so a dry run never overwrites the real render.
+    const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
+    expect(pkg.scripts["deploy:dry-run"]).toContain("--out wrangler.dry-run.jsonc");
+    expect(pkg.scripts["deploy:dry-run"]).not.toContain("wrangler.production.jsonc");
   });
 
   it("matches whole names only and summarizes by fix", () => {

@@ -22,7 +22,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
-import { budgetRows, CLOUDFLARE_PLANNING_SHARE, overBudget } from "../src/shared/free-budget.ts";
+import { budgetRows, CLOUDFLARE_PLANNING_SHARE, CRON_EXPRESSION, overBudget } from "../src/shared/free-budget.ts";
 import { budgetInputsFromConfig, freePlanConfigProblems } from "./lib/free-plan.ts";
 import type { ProdState } from "./lib/prod-state.ts";
 import { accessCookieProblems, bucketListed, type Exec, queueInfoNames, GATEWAY, type Http, LAKE_BUCKET, QUEUES, readEnvFile, realExec, realHttp, REPORTS_BUCKET, SERVICE_TOKENS, WORKER } from "./setup-prod.ts";
@@ -502,11 +502,10 @@ export async function cloudflareChecks(root: string, deps: DoctorDeps, opts: Doc
     return out;
   }
   out.push({ name: `Worker ${WORKER} deployed`, status: "PASS" });
-  const rendered = join(root, "wrangler.production.jsonc");
-  if (existsSync(rendered)) {
-    const problems = freePlanConfigProblems(readFileSync(rendered, "utf8"));
-    out.push(problems.length === 0 ? { name: "rendered production config needs nothing from Workers Paid", status: "PASS" } : { name: "rendered production config", status: "FAIL", detail: problems.join("; "), fix: "npm run deploy re-renders it from wrangler.jsonc" });
-  }
+  // The deployed Worker itself, not a local file (a dry run or another tree may have rendered that one):
+  // its settings and schedules, read with wrangler's OAuth token (GETs only).
+  if (oauth) out.push(...deployedWorkerChecks(await deps.http("GET", `${API}/accounts/${account}/workers/scripts/${WORKER}/settings`, oauth), await deps.http("GET", `${API}/accounts/${account}/workers/scripts/${WORKER}/schedules`, oauth)));
+  else out.push({ name: "deployed Worker settings", status: "UNKNOWN", detail: "no OAuth token to read them", fix: "npx wrangler login" });
   const secretList = wrangler(["secret", "list", "--name", WORKER]).out;
   out.push(listsName(secretList, "GCP_DISPATCHER_KEY") ? { name: "Worker secret GCP_DISPATCHER_KEY (name only)", status: "PASS" } : { name: "Worker secret GCP_DISPATCHER_KEY", status: "MISSING", fix: "npm run setup:prod -- --only worker" });
   out.push(state?.runs_enabled ? { name: "RUNS_ENABLED", status: "PASS" } : { name: "RUNS_ENABLED", status: "FAIL", detail: "false (fail-closed until the Google Cloud bootstrap passes)", fix: "npm run setup:prod -- --only gcp, then --only worker" });
@@ -543,6 +542,35 @@ export async function cloudflareChecks(root: string, deps: DoctorDeps, opts: Doc
   const dispatch = await deps.probe(`${url}${opsProbePath("dispatch", opts)}`, op);
   out.push((dispatch.json as { ok?: boolean } | null)?.ok ? { name: opts.withDispatch ? "Cloud Run dispatch token and one execution" : "Cloud Run dispatcher key", status: "PASS" } : { name: "Cloud Run dispatch", status: "FAIL", detail: `HTTP ${dispatch.status || "none"}`, fix: "check GCP_DISPATCHER_KEY (npm run setup:prod -- --only worker)" });
   return out;
+}
+
+interface HttpJson {
+  ok: boolean;
+  status: number;
+  json: any;
+}
+
+/** The deployed Worker needs nothing from Workers Paid: no pipelines binding, no CPU limit, no Logpush, both
+ * Durable Object bindings, and exactly the one cron (from the Workers script settings and schedules APIs). */
+export function deployedWorkerChecks(settings: HttpJson, schedules: HttpJson): Check[] {
+  if (!settings.ok || !schedules.ok) {
+    return [{ name: "deployed Worker settings and schedules", status: "UNKNOWN", detail: `HTTP ${settings.status} and ${schedules.status}`, fix: "npx wrangler login (the OAuth token reads Workers scripts)" }];
+  }
+  const result = (settings.json?.result ?? {}) as { bindings?: { type?: string; name?: string; class_name?: string }[]; limits?: { cpu_ms?: number } | null; logpush?: boolean };
+  const problems: string[] = [];
+  const bindings = result.bindings ?? [];
+  if (bindings.some((b) => b.type === "pipelines")) problems.push("a pipelines binding (Workers Paid)");
+  if (result.limits?.cpu_ms !== undefined) problems.push(`limits.cpu_ms ${result.limits.cpu_ms} (Workers Paid)`);
+  if (result.logpush === true) problems.push("Logpush on (Workers Paid)");
+  const classes = bindings.filter((b) => b.type === "durable_object_namespace").map((b) => b.class_name).sort();
+  if (JSON.stringify(classes) !== JSON.stringify(["Coordinator", "LandingRoller"])) problems.push(`Durable Object classes ${JSON.stringify(classes)}`);
+  const crons = ((schedules.json?.result?.schedules ?? []) as { cron?: string }[]).map((x) => x.cron);
+  if (crons.length !== 1 || crons[0] !== CRON_EXPRESSION) problems.push(`crons ${JSON.stringify(crons)} (want exactly ${CRON_EXPRESSION})`);
+  return [
+    problems.length === 0
+      ? { name: "deployed Worker needs nothing from Workers Paid", status: "PASS", detail: `${bindings.length} bindings, cron ${CRON_EXPRESSION}` }
+      : { name: "deployed Worker settings", status: "FAIL", detail: problems.join("; "), fix: "npm run deploy (renders, checks and deploys wrangler.jsonc env.production)" },
+  ];
 }
 
 /** `peoplelake prod doctor-gcp --json`, merged into this doctor's checks. */
