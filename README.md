@@ -122,6 +122,8 @@ uv run --project pipeline peoplelake digest     # digests of the 10 published mo
 
 # SPEC 15.4 in one command: straight load, incremental build with unit tests, full refresh, equal digests
 uv run --project pipeline peoplelake dev reference-digests --profile small --out .data/reference/reference-digests-small.json
+uv run --project pipeline peoplelake eval parity --profile small                  # the same, reported as incremental equals full refresh
+uv run --project pipeline peoplelake eval oracle --profile small --duckdb <file>  # mart against the oracle seed (after stack down)
 
 # BigQuery SQL without credentials: both compile branches, sqlglot parse, ORDER BY NULLS lint
 uv run --project pipeline peoplelake dev bq-compile

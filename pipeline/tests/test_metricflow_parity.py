@@ -79,3 +79,25 @@ def test_metricflow_equals_the_metrics_mart_on_the_small_profile(tmp_path, monke
     assert result["rows_compared"] == 468  # 36 months x (12 departments + ALL)
     assert result["mismatched_rows"] == 0, result["first_mismatches"]
     assert result["passed"]
+
+
+@pytest.mark.dbt
+def test_eval_oracle_command_on_a_built_warehouse(tmp_path, monkeypatch, small, capsys) -> None:
+    from peoplelake.cli import main
+
+    env = make_env(tmp_path, monkeypatch, small)
+    env.load(env.items)
+    assert env.dbt.build().success
+    assert main(["eval", "oracle", "--profile", "small", "--duckdb", str(tmp_path / "wh.duckdb")]) == 0
+    assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])["oracle_rows_mismatched"] == 0
+    # The full profile's oracle cannot match a small-profile warehouse: the command must say so.
+    assert main(["eval", "oracle", "--profile", "full", "--duckdb", str(tmp_path / "wh.duckdb")]) == 1
+    assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])["oracle_rows_mismatched"] == 468
+
+
+def test_eval_commands_are_wired() -> None:
+    from peoplelake.cli import _cmd_eval_oracle, _cmd_eval_parity, build_parser
+
+    parser = build_parser()
+    assert parser.parse_args(["eval", "oracle"]).func is _cmd_eval_oracle
+    assert parser.parse_args(["eval", "parity", "--profile", "full"]).func is _cmd_eval_parity

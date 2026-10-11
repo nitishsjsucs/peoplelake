@@ -392,6 +392,33 @@ def _cmd_eval_freshness(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_eval_oracle(args: argparse.Namespace) -> int:
+    """SPEC 16.3: the metrics mart against the oracle seed, on a warehouse file (open it only after `stack down`)."""
+    from .evals.scenarios import oracle_mismatches
+
+    path = _duckdb_path(args.duckdb)
+    mismatched = oracle_mismatches(path, args.profile)
+    print(json.dumps({"duckdb": str(path), "profile": args.profile, "oracle_rows_mismatched": mismatched}))
+    return 0 if mismatched == 0 else 1
+
+
+def _cmd_eval_parity(args: argparse.Namespace) -> int:
+    """SPEC 16.3: incremental build on an empty warehouse equals a --full-refresh build (digests of 10 models)."""
+    from .devtools.reference import ReferenceError_, reference_digests
+    from .paths import data_dir
+
+    workdir = Path(args.workdir) if args.workdir else data_dir() / "parity" / args.profile
+    try:
+        result = reference_digests(args.profile, workdir)
+    except ReferenceError_ as exc:
+        print(json.dumps({"profile": args.profile, "incremental_equals_full_refresh": False, "error": str(exc)}))
+        return 1
+    print(
+        json.dumps({"profile": args.profile, "incremental_equals_full_refresh": True, "models": len(result["digests"])})
+    )
+    return 0
+
+
 def _cmd_eval_ask(args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
@@ -616,6 +643,15 @@ def build_parser() -> argparse.ArgumentParser:
     fr.add_argument("--from-delivery", help="production: the prod:e2e delivery id (default: the latest)")
     fr.add_argument("--out")
     fr.set_defaults(func=_cmd_eval_freshness)
+
+    orc = ev_sub.add_parser("oracle", help="metrics mart against the oracle seed (open the file only after stack down)")
+    orc.add_argument("--profile", choices=["small", "full"], default="small")
+    orc.add_argument("--duckdb", help="warehouse file (default: PL_DUCKDB_PATH or .data/warehouse/peoplelake.duckdb)")
+    orc.set_defaults(func=_cmd_eval_oracle)
+    par = ev_sub.add_parser("parity", help="incremental build on an empty warehouse equals a full refresh")
+    par.add_argument("--profile", choices=["small", "full"], default="small")
+    par.add_argument("--workdir")
+    par.set_defaults(func=_cmd_eval_parity)
 
     ask = ev_sub.add_parser("ask", help="score each AiProvider on the 60 questions in evals/ask/questions.jsonl")
     ask.add_argument(
