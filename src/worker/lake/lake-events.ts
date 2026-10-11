@@ -1,11 +1,12 @@
-// Queue consumer for R2-notification-shaped lake events (SPEC 7.5). Production: object-create on an
-// Iceberg `.metadata.json` (an optimization; the catalog poll is the primary trigger). Local: every
-// SinkRoller roll file under `local-sink/` (the primary local trigger). Malformed messages are acked and
-// counted; a Coordinator failure retries the batch (max 5, then the dead-letter queue).
+// Queue consumer for lake events (SPEC 29.4.1): the LandingRoller sends one message per roll, in both
+// environments, with the key under landing/raw_events/. Each batch marks new data and requests one run;
+// messages are only triggers (the cron backstop covers a lost one). Other keys are acked and ignored,
+// malformed messages are acked and counted, and a Coordinator failure retries the batch (then the DLQ).
 import { coordinatorStub } from "../orchestration/coordinator.ts";
+import { LANDING_PREFIX } from "./landing-roller.ts";
 
-export function isLakeCommitKey(key: string): boolean {
-  return key.endsWith(".metadata.json") || key.startsWith("local-sink/");
+export function isLakeEventKey(key: string): boolean {
+  return key.startsWith(LANDING_PREFIX) && key.endsWith(".ndjson");
 }
 
 export async function handleLakeEvents(batch: MessageBatch<unknown>, env: Env): Promise<{ relevant: number; malformed: number; ignored: number }> {
@@ -21,7 +22,7 @@ export async function handleLakeEvents(batch: MessageBatch<unknown>, env: Env): 
       msg.ack();
       continue;
     }
-    if (!isLakeCommitKey(key)) {
+    if (!isLakeEventKey(key)) {
       ignored++;
       msg.ack();
       continue;

@@ -28,8 +28,9 @@
     "JOB_CLAIM_TIMEOUT_SECONDS": "30",
     "JOB_MAX_ATTEMPTS": "3",
     "RUN_TIMEOUT_MINUTES": "10",
-    "SINK_ROLL_SECONDS": "60",
-    "LOCAL_SINK_MAX_RECORDS": "50000",
+    "LANDING_ROLL_SECONDS": "60",
+    "LANDING_ROLL_MAX_BYTES": "8388608",
+    "LANDING_MAX_BUFFER_BYTES": "67108864",
     "HEARTBEAT_MINUTES": "0",
     "RUNNER_SEEN_WINDOW_SECONDS": "60",
     "EVAL_FAULTS_ENABLED": "true",
@@ -40,30 +41,31 @@
     { "binding": "LAKE_BUCKET", "bucket_name": "peoplelake-lake-local" },
     { "binding": "REPORTS_BUCKET", "bucket_name": "peoplelake-reports-local" }
   ],
+  // One lake-event message per landing roll (SPEC 29.4.1). Locally the batch timeout is shorter so evals
+  // do not wait; production uses the values of SPEC 29.6.
   "queues": {
     "producers": [{ "binding": "LAKE_EVENTS", "queue": "peoplelake-lake-events" }],
     "consumers": [
       {
         "queue": "peoplelake-lake-events",
-        "max_batch_size": 50,
+        "max_batch_size": 10,
         "max_batch_timeout": 2,
-        "max_retries": 5,
+        "max_retries": 3,
         "dead_letter_queue": "peoplelake-lake-events-dlq"
       }
     ]
   },
+  // Both classes use the SQLite backend (the only one on the Workers Free plan). The migration tag v1 is
+  // still free to change: nothing has been deployed.
   "durable_objects": {
     "bindings": [
       { "name": "COORDINATOR", "class_name": "Coordinator" },
-      { "name": "SINK_ROLLER", "class_name": "SinkRoller" }
+      { "name": "LANDING_ROLLER", "class_name": "LandingRoller" }
     ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Coordinator", "SinkRoller"] }],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Coordinator", "LandingRoller"] }],
   "workflows": [{ "name": "peoplelake-warehouse-run", "binding": "WAREHOUSE_RUN", "class_name": "WarehouseRunWorkflow" }],
   "triggers": { "crons": ["* * * * *"] },
-  // Miniflare runs a Pipeline binding offline and its send() discards data; locally the SinkRoller
-  // Durable Object is the labeled stand-in for Basin Pipelines (ADR 0003).
-  "pipelines": [{ "binding": "RAW_STREAM", "stream": "00000000000000000000000000000000" }],
   "env": {
     "production": {
       "name": "peoplelake",
@@ -81,13 +83,13 @@
         "GCP_PROJECT": "__PL_GCP_PROJECT__",
         "GCP_REGION": "us-central1",
         "CLOUD_RUN_JOB": "peoplelake-runner",
-        "BASIN_CATALOG_URI": "__PL_CATALOG_URI__",
-        "BASIN_CATALOG_PREFIX": "__PL_CATALOG_PREFIX__",
         "JOB_LEASE_SECONDS": "600",
         "JOB_CLAIM_TIMEOUT_SECONDS": "300",
         "JOB_MAX_ATTEMPTS": "3",
         "RUN_TIMEOUT_MINUTES": "45",
-        "SINK_ROLL_SECONDS": "60",
+        "LANDING_ROLL_SECONDS": "60",
+        "LANDING_ROLL_MAX_BYTES": "8388608",
+        "LANDING_MAX_BUFFER_BYTES": "67108864",
         "HEARTBEAT_MINUTES": "360",
         "RUNNER_SEEN_WINDOW_SECONDS": "60",
         "EVAL_FAULTS_ENABLED": "false",
@@ -98,14 +100,18 @@
       // Production only: an `ai` binding makes `wrangler dev` wait for a remote connection, so local runs
       // use llama-server or the stub and tests inject a mocked AI binding.
       "ai": { "binding": "AI" },
-      "r2_buckets": [{ "binding": "REPORTS_BUCKET", "bucket_name": "peoplelake-reports" }],
+      "r2_buckets": [
+        { "binding": "LAKE_BUCKET", "bucket_name": "peoplelake-lake" },
+        { "binding": "REPORTS_BUCKET", "bucket_name": "peoplelake-reports" }
+      ],
       "queues": {
+        "producers": [{ "binding": "LAKE_EVENTS", "queue": "peoplelake-lake-events" }],
         "consumers": [
           {
             "queue": "peoplelake-lake-events",
-            "max_batch_size": 50,
+            "max_batch_size": 10,
             "max_batch_timeout": 5,
-            "max_retries": 5,
+            "max_retries": 3,
             "dead_letter_queue": "peoplelake-lake-events-dlq"
           }
         ]
@@ -113,11 +119,10 @@
       "durable_objects": {
         "bindings": [
           { "name": "COORDINATOR", "class_name": "Coordinator" },
-          { "name": "SINK_ROLLER", "class_name": "SinkRoller" }
+          { "name": "LANDING_ROLLER", "class_name": "LandingRoller" }
         ]
       },
       "workflows": [{ "name": "peoplelake-warehouse-run", "binding": "WAREHOUSE_RUN", "class_name": "WarehouseRunWorkflow" }],
-      "pipelines": [{ "binding": "RAW_STREAM", "stream": "__PL_STREAM_ID__" }],
       "triggers": { "crons": ["* * * * *"] }
     }
   }

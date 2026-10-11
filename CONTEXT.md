@@ -6,8 +6,9 @@ Single-context repo. Terms used in code, tests, docs and commit messages.
 - **Domain**: the four business areas the sources carry: HR (hris), recruiting (ats), compensation and performance (talent).
 - **Event**: a source fact with a stable `event_id` (UUIDv5 from profile, source and source sequence).
 - **Delivery**: one accepted copy of an event, with its own Worker-minted `delivery_id`. A client retry of the same event is a second delivery of one event.
-- **Raw record**: the normalized delivery row (14 columns) that is identical in the stream, the lake and the warehouse raw table.
-- **Sink file** (local only): an NDJSON roll file written by the `SinkRoller` Durable Object, the local stand-in for the Basin sink.
+- **Raw record**: the normalized delivery row (14 columns) that is identical in the landing rolls, the lake and the warehouse raw table.
+- **Landing roll**: an immutable NDJSON object `landing/raw_events/g<generation>/r<roll_seq>.ndjson` in R2, written by the `LandingRoller` Durable Object from the requests it buffered since the previous roll (the same code locally and in production). A retried roll rewrites identical bytes under the same key.
+- **Landing cursor**: `peoplelake.landing-through` in the newest Iceberg snapshot summary that has it; the committer appends only rolls after it.
 - **Snapshot**: an Iceberg snapshot of `peoplelake.raw_events`.
 - **Watermark**: the last snapshot whose data a committed run published.
 - **Run**: one `WarehouseRunWorkflow` instance, id `r-<generation base36>-<seq:06d>`.
@@ -28,5 +29,7 @@ Single-context repo. Terms used in code, tests, docs and commit messages.
 - **Bucket cursor**: the max load sequence a bucketed model has consumed, read from the model's own relation.
 - **Transform skip**: a run that loaded nothing new and commits without running dbt.
 - **Drill dataset**: a `pl_*_drill` BigQuery dataset used for scenario drills and restores, never for production reads.
-- **Generation**: the epoch second when the Coordinator's storage was initialized; it prefixes run ids and load sequences.
-- **Stand-in**: a local component that imitates a production service (SinkRoller, local SQL catalog, DuckDB, ticker, stub LLM). Always labeled as such.
+- **Generation**: the epoch second when the Coordinator's storage was initialized; it prefixes run ids, load sequences and landing roll keys.
+- **Planning share**: the part of a shared Free allowance this repo plans to use: 20% of each account-wide Cloudflare daily allowance, 25% of each Google free tier.
+- **Automatic run**: a run requested by a lake event or the cron backstop; the Free plan guards apply only to these.
+- **Stand-in**: a local component that imitates a production service (local SQL catalog, DuckDB, local runner process, ticker, stub LLM). Always labeled as such. The landing is not a stand-in: it is the production code.

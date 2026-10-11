@@ -19,7 +19,7 @@ from ..auth.dev_tokens import AccessHeaders
 from ..config import Settings, load_settings, open_lake
 from ..warehouse.dbt_runner import DbtRunner, env_overrides
 from ..warehouse.loader import run_load
-from .client import WorkerClient, WorkerSinkSource
+from .client import WorkerClient, WorkerLandingSource
 from .jobs import Faults, SimulatedCrash, failed_result, run_transform
 
 log = logging.getLogger("peoplelake.runner")
@@ -113,7 +113,7 @@ class Runner:
                 warehouse = self._warehouse(suffix)
                 if job["kind"] == "load":
                     table = open_lake(self.settings)
-                    sink = WorkerSinkSource(self.client) if self.settings.target == "local" else None
+                    sink = WorkerLandingSource(self.client) if self.settings.target == "local" else None
                     outcome = run_load(job, table=table, warehouse=warehouse, sink=sink, recommit=faults.recommit)
                     result = outcome.result
                     log.info(

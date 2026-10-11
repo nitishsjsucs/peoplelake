@@ -34,10 +34,13 @@ class FakeWorker:
         self.artifacts[run_id] = body
         return {"key": f"reports/metrics/{run_id}.json", "sha256": hashlib.sha256(body.encode()).hexdigest()}
 
-    def sink_files(self, after=None):
-        return [SinkFile(k, hashlib.md5(v).hexdigest(), len(v)) for k, v in sorted(self.files.items())]
+    def lake_files(self, prefix=None, after=None):
+        keys = sorted(
+            k for k in self.files if k.startswith(prefix or "landing/raw_events/") and (after is None or k > after)
+        )
+        return [SinkFile(k, hashlib.md5(self.files[k]).hexdigest(), len(self.files[k])) for k in keys]
 
-    def sink_file(self, key):
+    def lake_file(self, key):
         return self.files[key]
 
 
@@ -70,7 +73,8 @@ def runner(tmp_path, monkeypatch, small):
     env = make_env(tmp_path, monkeypatch, small)  # seeds the warehouse at PL_DUCKDB_PATH
     monkeypatch.setenv("PL_LAKE_DIR", str(tmp_path / "lake"))
     files = {
-        f"local-sink/raw_events/{i:08d}.ndjson": roll_file(env.items[(i - 1) * 2500 : i * 2500]) for i in range(1, 5)
+        f"landing/raw_events/g1790000000/r{i:010d}.ndjson": roll_file(env.items[(i - 1) * 2500 : i * 2500])
+        for i in range(1, 5)
     }
     worker = FakeWorker(files)
     r = Runner(load_settings("local"), worker, worker_id="test")  # type: ignore[arg-type]

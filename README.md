@@ -1,6 +1,6 @@
 # PeopleLake
 
-Replayable workforce ELT and historical analytics warehouse. Three simulated enterprise sources (`hris`, `ats`, `talent`) carrying HR, recruiting, compensation and performance data post events to a Cloudflare Worker, which streams them through Basin Pipelines into an Iceberg lake on R2. A Python runner loads the lake incrementally into BigQuery and dbt builds a dimensional model with effective-dated employee history, five workforce metrics and reconciliation checks. Cloudflare Workflows orchestrate every warehouse run so any step can fail, retry or be re-delivered without changing the outputs.
+Replayable workforce ELT and historical analytics warehouse. Three simulated enterprise sources (`hris`, `ats`, `talent`) carrying HR, recruiting, compensation and performance data post events to a Cloudflare Worker. The Worker lands every accepted request in a LandingRoller Durable Object, which rolls the records into immutable files in R2 once a minute, and a Python runner commits those rolls to an Apache Iceberg table on R2 (Basin Catalog in production) and loads the lake incrementally into BigQuery and dbt builds a dimensional model with effective-dated employee history, five workforce metrics and reconciliation checks. Cloudflare Workflows orchestrate every warehouse run so any step can fail, retry or be re-delivered without changing the outputs.
 
 All data is synthetic. The design is in [SPEC.md](SPEC.md); the domain glossary is in [CONTEXT.md](CONTEXT.md); build progress is in [PROGRESS.md](PROGRESS.md).
 
@@ -16,9 +16,9 @@ v1 is built and verified end to end on the local stack (every item of the build 
 | DuckDB loader and output digests | done: idempotent load on `delivery_id`, UTC sessions, engine-independent digests for the 10 published models |
 | dbt models, five metrics, reconciliation checks | done on DuckDB: staging, spells, SCD2 history with per-model bucket cursors, facts, metrics mart, reporting and ops models, 10 unit tests, reconciliation checks R1 to R11 |
 | BigQuery configs and offline compile | done offline: dbt-bigquery profiles, policy tags, authorized views, int64 range `insert_overwrite`, both compile branches parse as BigQuery, ORDER BY lint, BigQuery loader tested against a fake client; nothing has run on BigQuery yet |
-| Local Iceberg lake | done locally: pyiceberg SqlCatalog stand-in, committer for sink roll files (idempotent on key and etag), incremental reader with full-scan fallback; Basin Catalog configured through Iceberg REST but not exercised (needs production) |
-| Worker: auth, ingest, sinks | done locally: fail-closed config, Access JWT verification (RS256, iss, aud, exp) with locally generated dev keys, role gates, `POST /v1/ingest/:source` for three envelopes (zod, all-or-nothing), RawRecord normalization shared with Python through a golden, Basin stream sink (production) and the SinkRoller stand-in (local) |
-| Orchestration: Coordinator, Workflow, dispatchers | done locally (Miniflare Workflows): Coordinator ledger with single-flight runs, attempt-scoped jobs and leases, `WarehouseRunWorkflow` (load, transform or skip, verify, commit, release), poll and Cloud Run dispatchers, Basin Catalog poll, lake-events queue consumer, per-minute cron, eval faults; production Workflows not exercised yet |
+| Local Iceberg lake | done locally: pyiceberg SqlCatalog stand-in, committer for landing roll files (idempotent on key and etag), incremental reader with full-scan fallback; Basin Catalog configured through Iceberg REST but not exercised (needs production) |
+| Worker: auth, ingest, landing | done locally: fail-closed config, Access JWT verification (RS256, iss, aud, exp) with locally generated dev keys, role gates, `POST /v1/ingest/:source` for three envelopes (zod, all-or-nothing), RawRecord normalization shared with Python through a golden, and the LandingRoller Durable Object (one SQLite row per request, planned immutable roll files in R2 every 60 s, one Queue message per roll, backpressure), the same code locally and in production; no Basin Pipelines (Workers Paid only) |
+| Orchestration: Coordinator, Workflow, dispatchers | done locally (Miniflare Workflows): Coordinator ledger with single-flight runs, attempt-scoped jobs and leases, `WarehouseRunWorkflow` (load, transform or skip, verify, commit, release), poll and Cloud Run dispatchers, lake-events queue consumer (one message per landing roll), a cron backstop, eval faults; production Workflows not exercised yet |
 | Runner and local stack | done locally: `peoplelake runner poll` (in-process dbt, heartbeats, eval fault hooks) and `peoplelake stack up/down` (wrangler dev, runner, ticker in their own process groups, ports checked free) |
 | Scenario and freshness evals | done on the local stack (see Results): scenario equivalence on DuckDB, and the 60-minute local freshness measurement of the full profile (p95 78 s on the local stand-ins, ledger and ops histograms agree); production freshness is measured once by `npm run prod:e2e` |
 | CI | workflows written (`ci.yml` on every push, `eval-full.yml` weekly and on demand); they have not run on GitHub yet because the owner publishes the repo |
@@ -44,12 +44,14 @@ flowchart LR
   subgraph CF["Cloudflare"]
     ACC["Zero Trust Access<br/>service tokens and JWT"]
     W["Worker peoplelake<br/>Hono: /v1/ingest, /api, /internal"]
-    S[("Basin Pipelines stream<br/>(local stand-in: SinkRoller DO)")]
+    S["LandingRoller DO<br/>one row per request, roll every 60 s"]
+    LB[("R2 peoplelake-lake<br/>landing/raw_events roll files")]
+    Q[["Queue peoplelake-lake-events<br/>one message per roll"]]
     L[("R2 + Basin Catalog<br/>Iceberg table peoplelake.raw_events<br/>(local stand-in: pyiceberg SqlCatalog)")]
     C["Coordinator DO<br/>ledger, jobs, single-flight"]
     WF["Workflow peoplelake-warehouse-run"]
     AI["Workers AI via AI Gateway<br/>(local: llama-server or stub)"]
-    CRON["Cron every minute<br/>polls Basin Catalog<br/>(local: ticker process)"]
+    CRON["Cron backstop<br/>(local: ticker process)"]
   end
   subgraph GCP["Google Cloud (local stand-in: DuckDB via dbt-duckdb)"]
     CR["Cloud Run Job peoplelake-runner<br/>(local: peoplelake runner poll)"]
@@ -61,13 +63,16 @@ flowchart LR
   T --> ACC
   O -->|"Access session"| ACC
   ACC --> W
-  W -->|send records| S
-  S --> L
+  W -->|append NDJSON, one RPC| S
+  S -->|put roll file| LB
+  S -->|lake event| Q
+  Q --> W
   CRON --> W
   W --> C
   C -->|create instance| WF
   WF -->|jobs.run| CR
   CR -->|claim, heartbeat, result| W
+  CR -->|commit new rolls| L
   CR -->|incremental append scan| L
   CR -->|load + MERGE on delivery_id| RAW
   RAW --> DBT
@@ -79,9 +84,9 @@ flowchart LR
 | Concern | Local (offline, CI) | Production |
 |---|---|---|
 | Ingest API | wrangler dev 4.149.0 (workerd via Miniflare) on 127.0.0.1:8791, Worker name `peoplelake-local` | Worker `peoplelake` on workers.dev behind Cloudflare Access |
-| Stream to lake | **stand-in**: `SinkRoller` Durable Object writes NDJSON roll files to local R2 (Miniflare's Pipeline binding discards data) | Basin Pipelines stream, pipeline and sink (`r2-data-catalog`, roll 60 s) |
+| Landing | `LandingRoller` Durable Object writes immutable NDJSON roll files to local R2 and sends one Queue message per roll (the production code on Miniflare's Durable Object, R2 and Queue) | the same code: `LandingRoller` (SQLite Durable Object), R2 bucket `peoplelake-lake` under `landing/raw_events/`, Queue `peoplelake-lake-events` |
 | Lake catalog | **stand-in**: pyiceberg `SqlCatalog` (SQLite) on disk | Basin Catalog (Iceberg REST) on R2 bucket `peoplelake-lake` |
-| New-data trigger | **stand-in**: SinkRoller enqueues an R2-notification-shaped message on every roll | per-minute cron polls Basin Catalog table metadata; R2 notifications to a Queue as an optimization |
+| New-data trigger | one lake event per roll; backstop on the ticker | one lake event per roll; backstop on the Workers cron |
 | Orchestration | Workflows as implemented by Miniflare | Cloudflare Workflows |
 | Runner | `peoplelake runner poll` process | Cloud Run Job `peoplelake-runner` (us-central1) |
 | Warehouse | **stand-in**: DuckDB 1.5.6 via dbt-duckdb 1.11.0, session UTC | BigQuery (US) via dbt-bigquery 1.12.1 |
@@ -196,7 +201,7 @@ The generator (`pipeline/src/peoplelake/generator`) keeps the true world state a
 
 ### Scenario equivalence
 
-`peoplelake eval scenarios` starts every scenario from empty state (Worker storage, local lake, warehouse), delivers the same dataset through the local stack in chunks (each chunk: deliver, force a sink roll, wait for the run that loads it), ends at quiescence, and requires the 10 published digests to equal the reference digests of a straight load built with `--full-refresh`, the metrics to match the oracle on all 468 rows, and every warn-level check to be 0. Every result records its engine, orchestration, lake and runner.
+`peoplelake eval scenarios` starts every scenario from empty state (Worker storage, local lake, warehouse), delivers the same dataset through the local stack in chunks (each chunk: deliver, force a landing roll, wait for the run that loads it), ends at quiescence, and requires the 10 published digests to equal the reference digests of a straight load built with `--full-refresh`, the metrics to match the oracle on all 468 rows, and every warn-level check to be 0. Every result records its engine, orchestration, lake and runner.
 
 | Id | Scenario | Perturbation (full profile; the small profile scales event counts by 1/10) |
 |---|---|---|
@@ -246,6 +251,8 @@ GitHub Actions run CI only and hold no cloud credentials (`permissions: contents
 Scenario step timeouts are twice the slowest leg measured in the build session (small profile: S5, 342.2 s; full profile: B, 465.6 s, with S1, S3 and S5 at 165.0 s, 164.9 s and 169.5 s in a later, less loaded run): 12 minutes for the small profile and 16 minutes for the full profile.
 
 ## Production setup
+
+**Being migrated to the Workers Free plan** (SPEC section 29 and the commits in section 23.0): Basin Pipelines needs Workers Paid and is no longer used, so parts of this section still describe the earlier design. Do not run `setup:prod` until PROGRESS.md says the migration commits have landed.
 
 Production runs on Cloudflare (Workers, Workflows, Queues, Durable Objects, R2, Basin Pipelines, Basin Catalog, Workers AI, AI Gateway, Zero Trust Access) and Google Cloud (BigQuery and a Cloud Run Job runner). `npm run setup:prod` creates every resource from the CLIs and APIs once the accounts below exist, and `npm run doctor` checks every prerequisite and prints the exact fix for anything missing. Both are idempotent and safe to rerun. Nothing in production has been exercised from this repository yet: the commands below are what turns the offline-tested path on.
 
@@ -323,7 +330,7 @@ Then:
 
 ### What `setup:prod` does for you
 
-workers.dev subdomain registration, R2 buckets `peoplelake-lake` and `peoplelake-reports`, Basin Catalog on the lake bucket with snapshot expiration and compaction, Queues `peoplelake-lake-events` and its dead-letter queue, the Basin stream `peoplelake_raw_stream`, sink `peoplelake_raw_sink` (Iceberg table `peoplelake.raw_events`, 60 s rolls) and pipeline, the R2 notification rule, five Access service tokens (`pl-source-hris`, `pl-source-ats`, `pl-source-talent`, `pl-runner`, and `pl-doctor` for the operator checks), AI Gateway `peoplelake`, a fail-closed first deploy (every request 401, no runs), the Access application with an owner policy and a service-auth policy, everything in Google Cloud through `peoplelake prod bootstrap-gcp` (APIs, twelve datasets with time travel, policy tags and masking policies, service accounts and roles, secrets, Artifact Registry, the runner image built by Cloud Build, the Cloud Run Job, the dispatcher key), and the final deploy with the real Access AUD, the role map and `RUNS_ENABLED=true` only if the Google Cloud bootstrap passed. Files it writes: `.prod/state.json`, `.prod/secrets.env` (service token secrets), `.prod/gcp.json`, `.prod/gcp-dispatcher-key.json`, all mode 600.
+workers.dev subdomain registration, R2 buckets `peoplelake-lake` and `peoplelake-reports`, Basin Catalog on the lake bucket with snapshot expiration and compaction, Queues `peoplelake-lake-events` and its dead-letter queue, five Access service tokens (`pl-source-hris`, `pl-source-ats`, `pl-source-talent`, `pl-runner`, and `pl-doctor` for the operator checks), AI Gateway `peoplelake`, a fail-closed first deploy (every request 401, no runs), the Access application with an owner policy and a service-auth policy, everything in Google Cloud through `peoplelake prod bootstrap-gcp` (APIs, twelve datasets with time travel, policy tags and masking policies, service accounts and roles, secrets, Artifact Registry, the runner image built by Cloud Build, the Cloud Run Job, the dispatcher key), and the final deploy with the real Access AUD, the role map and `RUNS_ENABLED=true` only if the Google Cloud bootstrap passed. Files it writes: `.prod/state.json`, `.prod/secrets.env` (service token secrets), `.prod/gcp.json`, `.prod/gcp-dispatcher-key.json`, all mode 600.
 
 Deploy only with `npm run deploy` (render, safety check, `wrangler deploy --env production`): the top-level Worker in `wrangler.jsonc` is named `peoplelake-local` with `workers_dev: false`, so a plain `wrangler deploy` can never replace production. `npm run deploy:runner` rebuilds the runner image and updates the job.
 

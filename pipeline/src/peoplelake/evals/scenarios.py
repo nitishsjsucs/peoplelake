@@ -222,7 +222,7 @@ def run_scenario(
             before = newest_seq(c.operator)
             for req in chunk:
                 c.sources.deliver(req.source, req.envelopes, stats)
-            c.operator.flush_sink()
+            c.operator.flush_landing()
             settle(c.operator, before, timeout=chunk_timeout)
             chunk_seconds.append(round(time.monotonic() - t0, 2))
         before = newest_seq(c.operator)
@@ -325,7 +325,7 @@ def scenarios_report(results: list[dict], *, profile: str, reference: dict, comm
         "profile": profile,
         "engine": engine,
         "orchestration": "local (wrangler dev / Miniflare Workflows)",
-        "lake": "local stand-in (SinkRoller + pyiceberg SqlCatalog)",
+        "lake": "LandingRoller landing (same code as production) + pyiceberg SqlCatalog (local catalog stand-in)",
         "runner": "peoplelake runner poll (local process)",
         "machine": f"{platform.system()} {platform.machine()}",
         "reference_digests": reference,

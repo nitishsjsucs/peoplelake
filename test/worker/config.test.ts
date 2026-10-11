@@ -29,9 +29,6 @@ const production = (): Record<string, unknown> => ({
   EVAL_FAULTS_ENABLED: "false",
   GCP_PROJECT: "peoplelake-123",
   GCP_DISPATCHER_KEY: "{}",
-  R2_CATALOG_TOKEN: "token",
-  BASIN_CATALOG_URI: "https://catalog.example/iceberg",
-  BASIN_CATALOG_PREFIX: "abc_peoplelake-lake",
 });
 
 const fails = (env: Record<string, unknown>, host: string | null, pattern: RegExp) =>
@@ -76,13 +73,17 @@ describe("parseConfig fail-closed rules", () => {
     fails({ ...production(), [name]: value }, null, pattern);
   });
 
-  it.each(["GCP_DISPATCHER_KEY", "R2_CATALOG_TOKEN", "BASIN_CATALOG_URI", "BASIN_CATALOG_PREFIX"])(
-    "RUNS_ENABLED=true in production requires %s",
-    (name) => {
-      fails({ ...production(), [name]: "" }, null, new RegExp(`requires ${name}`));
-      expect(parseConfig({ ...production(), [name]: "", RUNS_ENABLED: "false" }, null).runsEnabled).toBe(false);
-    },
-  );
+  it("RUNS_ENABLED=true in production requires GCP_DISPATCHER_KEY and no catalog token or URI (the runner commits)", () => {
+    fails({ ...production(), GCP_DISPATCHER_KEY: "" }, null, /requires GCP_DISPATCHER_KEY/);
+    expect(parseConfig({ ...production(), GCP_DISPATCHER_KEY: "", RUNS_ENABLED: "false" }, null).runsEnabled).toBe(false);
+    expect(parseConfig(production(), null).runsEnabled).toBe(true);
+  });
+
+  it("reads the landing settings with Free plan defaults and refuses a buffer smaller than a roll", () => {
+    expect(parseConfig(local(), "127.0.0.1").landing).toEqual({ rollSeconds: 60, rollMaxBytes: 8388608, maxBufferBytes: 67108864 });
+    fails({ ...local(), LANDING_ROLL_MAX_BYTES: "4096", LANDING_MAX_BUFFER_BYTES: "2048" }, "127.0.0.1", /LANDING_MAX_BUFFER_BYTES/);
+    fails({ ...local(), LANDING_ROLL_SECONDS: "0" }, "127.0.0.1", /at least 1/);
+  });
 
   it("allows ACCESS_AUD=pending only while runs are disabled (fail-closed first deploy)", () => {
     fails({ ...production(), ACCESS_AUD: "pending" }, null, /pending/);

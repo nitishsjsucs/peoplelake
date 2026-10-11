@@ -10,7 +10,7 @@ const state = JSON.parse(readFileSync("scripts/fixtures/prod-state.example.json"
 type Config = {
   name: string;
   workers_dev: boolean;
-  env: { production: { name: string; workers_dev: boolean; vars: Record<string, string>; pipelines: { stream: string }[] } };
+  env: { production: { name: string; workers_dev: boolean; vars: Record<string, string>; pipelines?: unknown; r2_buckets: { binding: string; bucket_name: string }[] } };
 };
 
 describe("production config", () => {
@@ -30,7 +30,8 @@ describe("production config", () => {
     expect(JSON.parse(prod.vars["ACCESS_ROLE_MAP"] ?? "")).toEqual(state.role_map);
     expect(prod.vars["RUNS_ENABLED"]).toBe("true");
     expect(prod.vars["EVAL_FAULTS_ENABLED"]).toBe("false");
-    expect(prod.pipelines[0]?.stream).toBe(state.stream_id);
+    expect(prod.pipelines).toBeUndefined();
+    expect(prod.r2_buckets).toContainEqual({ binding: "LAKE_BUCKET", bucket_name: "peoplelake-lake" });
     expect(predeployProblems(rendered, state)).toEqual([]);
   });
 

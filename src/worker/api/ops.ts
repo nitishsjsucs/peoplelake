@@ -2,6 +2,7 @@
 import type { AiBinding } from "../ai/providers.ts";
 import type { App } from "../app.ts";
 import { requireRole } from "../app.ts";
+import { landingRollerStub } from "../lake/landing-roller.ts";
 import { coordinatorStub } from "../orchestration/coordinator.ts";
 import { makeDispatcher } from "../orchestration/dispatcher.ts";
 import { accessToken, parseServiceAccountKey, type TokenCache } from "../orchestration/gcp-token.ts";
@@ -10,13 +11,24 @@ export function mountOpsApi(app: App): void {
   app.get("/api/ops/lake", requireRole("operator"), async (c) => {
     const status = await coordinatorStub(c.env).status();
     const config = c.get("config");
+    const landing = await landingRollerStub(c.env).status();
     return c.json({
       lake_mode: config.lakeMode,
-      stand_in: config.lakeMode === "local" ? "SinkRoller Durable Object and pyiceberg SqlCatalog" : null,
+      // The landing (LandingRoller, R2, Queue) is the same code everywhere; only the catalog is a stand-in locally.
+      stand_in: config.lakeMode === "local" ? "pyiceberg SqlCatalog (local catalog stand-in for Basin Catalog)" : null,
+      landing: {
+        buffered_requests: landing.buffered_requests,
+        buffered_bytes: landing.buffered_bytes,
+        next_roll_seq: landing.next_roll_seq,
+        pending_roll: landing.pending_roll,
+        landed_through: status["landed_through"],
+        landed_rolls: status["landed_rolls"],
+        landed_records: status["landed_records"],
+        last_roll: status["last_roll"],
+      },
       watermark: status["watermark"],
       transformed_through_seq: status["transformed_through_seq"],
       last_lake_event_at: status["last_lake_event_at"],
-      catalog_last_poll: status["catalog_last_poll"],
       malformed_lake_events: status["malformed_lake_events"],
     });
   });

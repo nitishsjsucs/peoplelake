@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Every item of the SPEC 23 plan is done: the 18 core commits and, below the cut, the ask eval (19), the dashboard (20), MetricFlow (21) and refreshed Results (22). All six scenarios are identical to the reference on both profiles, and the stub, llama-server and MetricFlow results are recorded. Everything is verified on the local stack only; production go-live waits on the owner's accounts (README Production setup).
+Builder 3 is migrating production to the Cloudflare Workers Free plan (SPEC section 29, ADR 0009) with the nine commits of SPEC 23.0. Done: commit 1 (LandingRoller landing in both environments, Basin Pipelines removed). Next: commit 2 (the runner commits landing rolls with a snapshot-summary cursor). Everything before builder 3 (the 18 core commits and the four below the cut) is done and verified on the local stack only; production go-live waits for the migration and the owner's accounts.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -54,27 +54,30 @@ Freshness result: `peoplelake eval freshness --target local --duration 60m` (ful
 - SPEC 16.3 standalone commands, missing until now: `peoplelake eval oracle --profile --duckdb` (the scenario eval's independent mart against oracle query; exit 1 on any mismatch) and `peoplelake eval parity --profile` (the reference build: incremental on an empty warehouse equals a full refresh). Tested on a built small warehouse: 0 mismatches against its own oracle and 468 against the full profile's (negative control).
 - Fix: `npm run doctor -- --local-only` (README local setup) failed on every clone with "TZ=UTC in npm scripts: typecheck", because its `\bnode\b` rule matches `tsconfig.node.json`. `typecheck` now starts with `TZ=UTC`; the rule is `scriptsMissingTz` with a test that the repo's own `package.json` passes (it fails on the previous `package.json`). The local doctor now passes every check.
 
+## Builder 3 (Free plan migration, SPEC 23.0)
+1. `feat(lake): LandingRoller lands accepted records in R2 in both environments; drop Basin Pipelines`. `src/worker/lake/landing-roller.ts` replaces the `SinkRoller` stand-in and `BasinStreamSink` (binding `LANDING_ROLLER`, singleton `landing`, migration `v1` now `["Coordinator", "LandingRoller"]`, still undeployed): one SQLite row per ingest request (`buffer(seq INTEGER PRIMARY KEY, received_at_ms, records, ndjson)`, no AUTOINCREMENT), buffered bytes kept in memory, an alarm `LANDING_ROLL_SECONDS` (60) after the first row, an immediate roll at `LANDING_ROLL_MAX_BYTES` (8 MiB), 503 `landing_backpressure` above `LANDING_MAX_BUFFER_BYTES` (64 MiB); planned immutable rolls `landing/raw_events/g<generation>/r<roll_seq:010d>.ndjson` (plan row, put, delete plus `notify` phase in one transaction, then `Coordinator.noteRoll` and one Queue message, then the plan is dropped) under a single-flight promise; failed rolls retry from the alarm with backoff (5 s to 10 min). Ingest serializes the records once to NDJSON in `RAW_RECORD_COLUMNS` order and makes one RPC; no Coordinator call per request (`noteIngest` and `ingest_minutes` are gone, `noteRoll` sets `landed_through`, `landed_rolls`, `landed_records`, `last_ingest_at`). `/internal/lake/files?prefix=&after=` and `/internal/lake/files/<key>` (runner or operator) are mounted in every environment; `/internal/dev/landing/flush` stays local only. The queue consumer treats only `landing/` keys as lake events. Removed: the `pipelines` bindings, `BasinStreamSink`, the catalog poll (`catalog-poll.ts` and its test), the `.metadata.json` path, the Worker secret `R2_CATALOG_TOKEN`, the vars `BASIN_CATALOG_URI`, `BASIN_CATALOG_PREFIX`, `SINK_ROLL_SECONDS`, `LOCAL_SINK_MAX_RECORDS`, the placeholders for the stream id and the catalog prefix, setup steps 7 to 10 (stream, sink, pipeline, R2 notification) and their doctor checks (including the "Workers Paid" probe). `src/worker/lib/metered-sql.ts` (every LandingRoller SQL call; drains the cursor and adds `rowsRead` and `rowsWritten` to per-UTC-day counters). Tests: `landing-roller.test.ts` (an append writes exactly 1 row; a roll writes at most 6 rows plus one delete per buffered request; a crash after the put repeats the same key with byte-identical content and the same etag; concurrent triggers roll once; keys strictly increasing with the Coordinator generation; one `noteRoll` and one lake event per roll; the byte threshold; backpressure; the lake file routes and their roles; flush 404 and lake routes present in production), ingest (one row and no Coordinator write per request, NDJSON column order, 503), queue (`.metadata.json` ignored), config (production needs only `GCP_DISPATCHER_KEY` for runs), coordinator (`noteRoll` idempotent; the cron requests a run only for a roll noted after the last run started). The Python client and runner read rolls through the new routes (the committer itself changes in commit 2). Checked in this session: small-profile scenarios B (48.0 s) and S2 through `wrangler dev` with the new landing were identical to the reference.
+
 ## Next
-- Owner go-live (needs accounts): README Production setup steps 1 to 12, then step 13 (`npm run prod:e2e`, the BigQuery drill `eval scenarios --target prod-drill`, `prod demo-masking`, `eval ask --provider workers-ai`, `npm run results:readme`), `prod drill-restore` per `docs/runbooks/restore.md`, and a push of `main` so CI runs for the first time.
-- Not exercised against real services yet: Basin Pipelines, Basin Catalog (including whether a sink-created table can be dropped for `prod reset`), production Workflows, the Cloud Run Job, BigQuery, Workers AI and Access (including the dashboard sign-in). The S5 BigQuery drill skips its point-in-time half (no scratch `_pit` datasets).
+- Builder 3, SPEC 23.0 commits 2 to 9: runner commits with a snapshot-summary cursor and `lake init --target prod`; 50-event batches, schema prewarm, 10 s production ticks and `bench:ingest`; Coordinator indexes, row counters, `/api/ops/budget`, 5-minute cron backstop, failure backoff, minimum interval, daily cap, BigQuery monthly guard; Workers AI `max_tokens` and the neuron cap with a resumable eval; `peoplelake_*` names, scoped grants, the build identity and 1 GB caps; setup and doctor for the Free plan and `npm run budget`; docs; re-recorded local results.
+- Then the owner's go-live (SPEC 20.2 and 20.5), and a push of `main` so CI runs for the first time.
+- Not exercised against real services yet: Basin Catalog, production Workflows, the Cloud Run Job, BigQuery, Workers AI and Access (including the dashboard sign-in). The S5 BigQuery drill skips its point-in-time half (no scratch `_pit` datasets).
 
 ## Check status (last run at this commit)
 | Check | Result |
 |---|---|
 | `npm run typecheck` | pass (worker, worker tests, node, web) |
 | `npm run typegen:check` | pass |
-| `npm test` (vitest) | pass: 21 files, 210 tests (worker 13 files in workerd, node 6 files, web 2 files in happy-dom) |
-| `npm run check:prose` | pass (19 Markdown files) |
+| `npm test` (vitest) | pass: 20 files, 213 tests (worker 12 files in workerd, node 6, web 2) |
+| `npm run check:prose` | pass (20 Markdown files) |
 | `npm run contracts:check` | pass |
 | `npm run results:check` | pass |
-| `npm run deploy:dry-run` | pass (builds the dashboard; rendered production config bundles with assets) |
-| `npm run test:py` (pytest, all markers) | pass: 242 passed, 0 skipped, including both e2e tests (stack up and down, stub ask eval through `wrangler dev`) |
+| `npm run deploy:dry-run` | pass (no `pipelines` binding; production binds `LAKE_BUCKET`, `LAKE_EVENTS` and `LANDING_ROLLER`) |
+| `npm run test:py` (pytest, all markers) | pass: 242 passed (240 without the e2e marker, 2 e2e) |
 | `ruff check`, `ruff format --check` | pass |
-| `npm run doctor -- --local-only` | pass (every local check) |
-| `peoplelake dev bq-compile` | pass (both branches: 27 models and 94 tests compile, sqlglot parse and ORDER BY lint, semantic layer included) |
-| `peoplelake generate --profile small --check` | pass |
-| `peoplelake dev clean-clone-check` | pass at `bb82fd5` |
-| Ports 8791, 9241, 8150 after the run | free; no wrangler, workerd, runner, ticker or llama-server process of this repo left |
+| `npm run doctor -- --local-only` | pass |
+| `peoplelake eval scenarios --profile small --scenarios B,S2` | pass: both identical to the reference (48.0 s and 43.5 s), through the LandingRoller |
+| `peoplelake dev bq-compile`, `peoplelake dev clean-clone-check` | not rerun (no dbt or runner-file change in this commit); last pass at `bb82fd5` |
+| Ports 8791, 9241, 8150 after the run | free; no wrangler, workerd, runner or ticker process of this repo left |
 
 ## Deviations from SPEC.md
 - Dashboard: no Vite dev server (the shared machine allows only ports 8791, 9241 and 8150), so the dashboard is always served by `wrangler dev` from `web/dist`; locally the person pastes a dev token (kept in `sessionStorage` for the tab) because no Access session exists. `@types/react-dom` 19.3.0 and `@testing-library/dom` 10.4.2 are added (needed by `react-dom/client` types and as the peer of `@testing-library/react`).

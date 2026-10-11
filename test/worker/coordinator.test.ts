@@ -218,19 +218,36 @@ describe("Coordinator dispatch window and faults", () => {
     expect((await c().status())["faults_fired"]).toBe("1");
   });
 
-  it("starts cron runs until one starts late enough to include the last roll after the last ingest", async () => {
-    const t0 = Date.now();
-    await c().noteIngest(10, new Date(t0).toISOString());
+  it("notes each landing roll once, in key order, and the cron starts a run only for a roll noted after the last run started", async () => {
+    const roll = (n: number, at: string) => ({
+      key: `landing/raw_events/g1/r${String(n).padStart(10, "0")}.ndjson`,
+      etag: `e${n}`,
+      size: 100,
+      records: 5,
+      requests: 2,
+      first_received_at: at,
+      last_received_at: at,
+    });
     const finish = async () => {
       const runId = (await c().status())["active_run_id"] as string;
       await c().failRun(runId, "x");
       await c().releaseRun(runId);
     };
-    expect((await c().tick(t0 + 1000)).requested).toEqual(["cron"]); // may have missed the next 60 s roll
+    const t0 = Date.now();
+    expect((await c().tick(t0)).requested).toEqual([]);
+    expect(await c().noteRoll(roll(1, "2026-10-10T00:00:01.000Z"), t0)).toEqual({ noted: true });
+    expect(await c().noteRoll(roll(1, "2026-10-10T00:00:01.000Z"), t0)).toEqual({ noted: false });
+    const status = await c().status();
+    expect(status["landed_through"]).toBe(roll(1, "").key);
+    expect(status["landed_rolls"]).toBe("1");
+    expect(status["landed_records"]).toBe("5");
+    expect(status["last_ingest_at"]).toBe(String(Date.parse("2026-10-10T00:00:01.000Z")));
+    expect((await c().tick(t0 + 1000)).requested).toEqual(["cron"]);
     await finish();
-    expect((await c().tick(t0 + 200_000)).requested).toEqual(["cron"]); // starts after roll + 30 s: sees everything
-    await finish();
-    expect((await c().tick(t0 + 400_000)).requested).toEqual([]);
+    expect((await c().tick(t0 + 300_000)).requested).toEqual([]);
+    await c().noteRoll(roll(2, "2026-10-10T00:01:01.000Z"), t0 + 400_000);
+    expect((await c().tick(t0 + 400_001)).requested).toEqual(["cron"]);
+    expect((await c().status())["landed_rolls"]).toBe("2");
   });
 });
 

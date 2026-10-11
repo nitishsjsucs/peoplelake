@@ -1,14 +1,47 @@
-// Runner interface (SPEC 7.3): claim, heartbeat, result, metrics artifact. Runner role only.
+// Runner interface (SPEC 7.3, 29.4.1): claim, heartbeat, result, metrics artifact, and the landing roll
+// files the runner's committer appends to the Iceberg table. Mounted in every environment.
 import { LoadResult, TransformResult } from "../../shared/contracts.ts";
 import type { App } from "../app.ts";
 import { requireRole } from "../app.ts";
 import { sha256Hex } from "../ingest/canonical-json.ts";
+import { LANDING_PREFIX } from "../lake/landing-roller.ts";
 import { coordinatorStub } from "../orchestration/coordinator.ts";
 import { metricsKey } from "../reports.ts";
 
 const MAX_ARTIFACT_BYTES = 5 * 1024 * 1024;
+const LAKE_FILES = "/internal/lake/files";
+const MAX_FILES_PER_LIST = 1000;
 
 export function mountInternalApi(app: App): void {
+  // Landing rolls in key order after an optional cursor, under a prefix inside landing/raw_events/.
+  app.get(LAKE_FILES, requireRole("runner", "operator"), async (c) => {
+    const prefix = c.req.query("prefix") ?? LANDING_PREFIX;
+    if (!prefix.startsWith(LANDING_PREFIX)) return c.json({ error: "prefix_outside_landing" }, 400);
+    const after = c.req.query("after");
+    const files: { key: string; etag: string; size: number }[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await c.env.LAKE_BUCKET.list({
+        prefix,
+        limit: MAX_FILES_PER_LIST - files.length,
+        ...(after ? { startAfter: after } : {}),
+        ...(cursor ? { cursor } : {}),
+      });
+      for (const o of page.objects) files.push({ key: o.key, etag: o.etag, size: o.size });
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor !== undefined && files.length < MAX_FILES_PER_LIST);
+    // truncated: more rolls follow; the committer asks again with after=<last key>.
+    return c.json({ prefix, files, truncated: cursor !== undefined });
+  });
+
+  app.get(`${LAKE_FILES}/*`, requireRole("runner", "operator"), async (c) => {
+    const key = decodeURIComponent(c.req.path.slice(LAKE_FILES.length + 1));
+    if (!key.startsWith(LANDING_PREFIX)) return c.json({ error: "not_found" }, 404);
+    const obj = await c.env.LAKE_BUCKET.get(key);
+    if (obj === null) return c.json({ error: "not_found" }, 404);
+    return new Response(obj.body, { headers: { "content-type": "application/x-ndjson", etag: obj.httpEtag } });
+  });
+
   app.post("/internal/jobs/claim", requireRole("runner"), async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { worker_id?: unknown };
     const workerId = typeof body.worker_id === "string" && body.worker_id ? body.worker_id : c.get("principal").id;

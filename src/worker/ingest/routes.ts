@@ -1,18 +1,22 @@
-// POST /v1/ingest/:source (SPEC 7.3). A source token may post only to its own source. The whole batch is
-// validated with zod (max 500 events, max 1 MiB body) and accepted all-or-nothing: 422 with per-index
-// reasons, or 202 {request_id, accepted} after the lake sink has accepted every record.
+// POST /v1/ingest/:source (SPEC 7.3, 29.4.1). A source token may post only to its own source. The whole
+// batch is validated with zod (max MAX_BATCH_EVENTS events, max 1 MiB body) and accepted all-or-nothing:
+// 422 with per-index reasons, or 202 {request_id, accepted} once the LandingRoller holds the request as
+// one durable row (one RPC, no Coordinator call per request). 503 landing_backpressure when the landing
+// buffer is full; the source retries later.
 import { z } from "zod";
-import { AtsBatch, HrisBatch, MAX_BODY_BYTES, RawRecord, TalentBatch } from "../../shared/contracts.ts";
+import { AtsBatch, HrisBatch, MAX_BODY_BYTES, RAW_RECORD_COLUMNS, RawRecord, TalentBatch } from "../../shared/contracts.ts";
 import { isSourceId, type SourceId } from "../../shared/sources.ts";
 import type { App } from "../app.ts";
-import { selectSink } from "../lake/sink.ts";
+import { landingRollerStub } from "../lake/landing-roller.ts";
 import { PRODUCER } from "../version.ts";
 import { normalizeBatch } from "./normalize.ts";
 
 const BATCHES = { hris: [HrisBatch, "events"], ats: [AtsBatch, "records"], talent: [TalentBatch, "items"] } as const;
+const COLUMN_ORDER = [...RAW_RECORD_COLUMNS];
 
-export interface IngestHooks {
-  afterAccept?: (env: Env, accepted: number, receivedAt: string) => Promise<void>;
+/** Records as NDJSON in RAW_RECORD_COLUMNS order, one newline-terminated line each. */
+export function toNdjson(records: readonly RawRecord[]): string {
+  return records.map((r) => `${JSON.stringify(r, COLUMN_ORDER)}\n`).join("");
 }
 
 export interface Rejection {
@@ -34,7 +38,7 @@ export function rejections(issues: readonly z.core.$ZodIssue[]): Rejection[] {
     .map(([index, reasons]) => ({ index, reasons }));
 }
 
-export function mountIngest(app: App, hooks: IngestHooks = {}): void {
+export function mountIngest(app: App): void {
   app.post("/v1/ingest/:source", async (c) => {
     const source = c.req.param("source");
     if (!isSourceId(source)) return c.json({ error: "unknown_source" }, 404);
@@ -61,10 +65,13 @@ export function mountIngest(app: App, hooks: IngestHooks = {}): void {
     const receivedAt = new Date().toISOString();
     const requestId = crypto.randomUUID();
     const records = await normalizeBatch(source, items, { receivedAt, requestId, producer: PRODUCER });
-    // A structured Basin stream accepts invalid records and drops them later, so validate before send.
+    // The lake never receives a row the Iceberg schema would reject: validate every record first.
     for (const record of records) RawRecord.parse(record);
-    await selectSink(c.get("config"), c.env).send(records);
-    if (hooks.afterAccept) await hooks.afterAccept(c.env, records.length, receivedAt);
+    const landed = await landingRollerStub(c.env).append(toNdjson(records), records.length, Date.parse(receivedAt));
+    if (!landed.accepted) {
+      c.header("retry-after", "60");
+      return c.json({ error: landed.reason, accepted: 0 }, 503);
+    }
     return c.json({ request_id: requestId, accepted: records.length }, 202);
   });
 }

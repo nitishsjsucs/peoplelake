@@ -154,25 +154,14 @@ async function cloudflareChecks(root: string, withDispatch: boolean): Promise<Ch
   }
   const catalog = wrangler(["basin", "catalog", "get", "peoplelake-lake"]);
   out.push(catalog.ok && !/not enabled/i.test(catalog.out) ? { name: "Basin Catalog enabled", status: "PASS" } : { name: "Basin Catalog enabled", status: "MISSING", fix: "npm run setup:prod -- --only cloudflare" });
-  out.push(state.catalog.prefix ? { name: "catalog REST prefix recorded", status: "PASS" } : { name: "catalog REST prefix recorded", status: "MISSING", fix: "npm run setup:prod -- --only cloudflare" });
-  const streams = wrangler(["pipelines", "streams", "list", "--json"]);
-  const hasStream = streams.ok && streams.out.includes("peoplelake_raw_stream");
-  out.push(hasStream ? { name: "Basin Pipelines stream", status: "PASS" } : { name: "Basin Pipelines stream", status: "MISSING", fix: "subscribe to Workers Paid, then npm run setup:prod" });
-  out.push(hasStream ? { name: "Workers Paid", status: "PASS", detail: "a paid-only resource exists" } : { name: "Workers Paid", status: "UNKNOWN", detail: "could not confirm plan", fix: "Workers & Pages, Plans: Workers Paid" });
-  const sinks = wrangler(["pipelines", "sinks", "list", "--json"]);
-  out.push(sinks.out.includes("peoplelake_raw_sink") ? { name: "sink", status: "PASS" } : { name: "sink", status: "MISSING", fix: "npm run setup:prod" });
-  const pipes = wrangler(["pipelines", "list", "--json"]);
-  out.push(pipes.out.includes("peoplelake_raw_pipeline") ? { name: "pipeline", status: "PASS" } : { name: "pipeline", status: "MISSING", fix: "npm run setup:prod" });
   const queues = wrangler(["queues", "list"]).out;
   for (const q of ["peoplelake-lake-events", "peoplelake-lake-events-dlq"]) {
     out.push(queues.includes(q) ? { name: `queue ${q}`, status: "PASS" } : { name: `queue ${q}`, status: "MISSING", fix: "npm run setup:prod" });
   }
-  const notes = wrangler(["r2", "bucket", "notification", "list", "peoplelake-lake"]).out;
-  out.push(notes.includes("peoplelake-lake-events") ? { name: "R2 notification rule (optimization)", status: "PASS" } : { name: "R2 notification rule (optimization)", status: "WARN", fix: "npm run setup:prod" });
   const deployed = wrangler(["deployments", "list", "--name", "peoplelake"]);
   out.push(deployed.ok ? { name: "Worker peoplelake deployed", status: "PASS" } : { name: "Worker peoplelake deployed", status: "MISSING", fix: "npm run deploy" });
   const secretList = wrangler(["secret", "list", "--name", "peoplelake"]).out;
-  for (const s of ["R2_CATALOG_TOKEN", "GCP_DISPATCHER_KEY"]) {
+  for (const s of ["GCP_DISPATCHER_KEY"]) {
     out.push(secretList.includes(s) ? { name: `Worker secret ${s} (name only)`, status: "PASS" } : { name: `Worker secret ${s}`, status: "MISSING", fix: "npm run setup:prod -- --only worker" });
   }
   out.push(state.runs_enabled ? { name: "RUNS_ENABLED", status: "PASS" } : { name: "RUNS_ENABLED", status: "FAIL", detail: "false (fail-closed until GCP passes)", fix: "npm run setup:prod -- --only gcp, then --only worker" });
@@ -191,9 +180,12 @@ async function cloudflareChecks(root: string, withDispatch: boolean): Promise<Ch
   out.push(wrong && [401, 403].includes(wrong.status) ? { name: "wrong service token secret rejected", status: "PASS" } : { name: "wrong service token secret rejected", status: "FAIL", detail: `HTTP ${wrong?.status ?? "none"}` });
   const op = headers("PL_CF_DOCTOR");
   const lake = await fetch(`${url}/api/ops/lake`, { headers: op }).catch(() => null);
-  const lakeBody = lake?.ok ? ((await lake.json()) as { catalog_last_poll?: { ok?: boolean } | null; last_lake_event_at?: string | null }) : null;
-  out.push(lakeBody?.catalog_last_poll?.ok ? { name: "catalog poll", status: "PASS" } : { name: "catalog poll", status: "FAIL", detail: JSON.stringify(lakeBody?.catalog_last_poll ?? null).slice(0, 200), fix: "check R2_CATALOG_TOKEN and BASIN_CATALOG_PREFIX" });
-  out.push(lakeBody?.last_lake_event_at ? { name: "R2 notification received", status: "PASS" } : { name: "R2 notification received", status: "INFO", detail: "none yet (optimization only)" });
+  const lakeBody = lake?.ok ? ((await lake.json()) as { landing?: { landed_through?: string | null; pending_roll?: boolean } }) : null;
+  out.push(
+    lakeBody?.landing
+      ? { name: "landing (LandingRoller)", status: "PASS", detail: `landed through ${lakeBody.landing.landed_through ?? "nothing yet"}` }
+      : { name: "landing (LandingRoller)", status: "FAIL", detail: `HTTP ${lake?.status ?? "none"}`, fix: "npm run deploy" },
+  );
   const ai = await fetch(`${url}/api/ops/ai`, { headers: op }).catch(() => null);
   const aiBody = ai?.ok ? ((await ai.json()) as { ok?: boolean; gateway_log_id_present?: boolean }) : null;
   out.push(aiBody?.gateway_log_id_present ? { name: "Workers AI through AI Gateway", status: "PASS" } : { name: "Workers AI through AI Gateway", status: "FAIL", detail: `HTTP ${ai?.status ?? "none"}`, fix: "npm run setup:prod (AI Gateway peoplelake)" });

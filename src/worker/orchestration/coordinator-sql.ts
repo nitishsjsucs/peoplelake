@@ -31,7 +31,6 @@ export const COORDINATOR_DDL = [
     published_by TEXT, published_at INTEGER,
     PRIMARY KEY (run_id, bucket_start_s)
   )`,
-  `CREATE TABLE IF NOT EXISTS ingest_minutes (minute INTEGER PRIMARY KEY, requests INTEGER NOT NULL, records INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT)`,
 ];
 

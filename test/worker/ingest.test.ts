@@ -5,13 +5,13 @@ import rawGolden from "../../contracts/golden/raw-records.json";
 import ats from "../../contracts/fixtures/source-ats.valid.json";
 import hris from "../../contracts/fixtures/source-hris.valid.json";
 import talent from "../../contracts/fixtures/source-talent.valid.json";
-import { MAX_BATCH_EVENTS, type RawRecord } from "../../src/shared/contracts.ts";
+import { MAX_BATCH_EVENTS, RAW_RECORD_COLUMNS, type RawRecord } from "../../src/shared/contracts.ts";
 import type { SourceId } from "../../src/shared/sources.ts";
-import { parseConfig } from "../../src/worker/config.ts";
 import { normalize } from "../../src/worker/ingest/normalize.ts";
-import { selectSink } from "../../src/worker/lake/sink.ts";
+import { toNdjson } from "../../src/worker/ingest/routes.ts";
+import { coordinatorStub } from "../../src/worker/orchestration/coordinator.ts";
+import { bufferedRecords, bufferedRows, rollerStub } from "../helpers/landing.ts";
 import { call } from "../helpers/tokens.ts";
-import { bufferedRecords } from "../helpers/sink.ts";
 
 afterEach(async () => {
   await reset();
@@ -82,7 +82,7 @@ describe("POST /v1/ingest/:source", () => {
     expect(await bufferedRecords()).toHaveLength(0);
   });
 
-  it("enforces the 500 event and 1 MiB limits", async () => {
+  it("enforces the MAX_BATCH_EVENTS and 1 MiB limits", async () => {
     const tooMany = { events: Array.from({ length: MAX_BATCH_EVENTS + 1 }, () => hris.events[0]) };
     expect((await post("hris", "hris", tooMany)).status).toBe(422);
     const huge = { events: [{ ...hris.events[0], padding: "x".repeat(1024 * 1024) }] };
@@ -103,11 +103,32 @@ describe("POST /v1/ingest/:source", () => {
   });
 });
 
-describe("lake sink selection", () => {
-  it("uses the SinkRoller stand-in locally and the Basin stream with LAKE_MODE=basin", () => {
-    const local = parseConfig(env as unknown as Record<string, unknown>, "127.0.0.1");
-    expect(selectSink(local, env).kind).toBe("local-stand-in");
-    const basin = { ...local, lakeMode: "basin" as const };
-    expect(selectSink(basin, env).kind).toBe("basin");
+describe("landing", () => {
+  it("lands one request as one LandingRoller row and makes no Coordinator call", async () => {
+    const res = await post("hris", "hris", hris);
+    expect(res.status).toBe(202);
+    const rows = await bufferedRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveLength(hris.events.length);
+    const status = await coordinatorStub(env).status();
+    expect(status["last_ingest_at"]).toBeNull();
+    expect(status["landed_rolls"]).toBeNull();
+  });
+
+  it("writes NDJSON lines in RAW_RECORD_COLUMNS order", async () => {
+    const record = rawGolden.cases[0]?.raw_record as RawRecord;
+    const shuffled = Object.fromEntries(Object.entries(record).reverse()) as RawRecord;
+    const line = toNdjson([shuffled]);
+    expect(line.endsWith("\n")).toBe(true);
+    expect(Object.keys(JSON.parse(line) as object)).toEqual([...RAW_RECORD_COLUMNS]);
+  });
+
+  it("answers 503 landing_backpressure when the landing buffer is full and keeps nothing", async () => {
+    await rollerStub().setTestLimits({ rollMaxBytes: 1 << 30, maxBufferBytes: 2048 });
+    const res = await post("hris", "hris", hris);
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBe("60");
+    expect(await res.json()).toEqual({ error: "landing_backpressure", accepted: 0 });
+    expect(await bufferedRecords()).toHaveLength(0);
   });
 });

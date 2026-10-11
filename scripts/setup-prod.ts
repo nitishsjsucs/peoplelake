@@ -3,8 +3,9 @@
 // Idempotent production provisioning (SPEC 21.1). Reads .prod/config.env and .prod/secrets.env, writes
 // .prod/state.json (all mode 600). Every step checks before it creates. `--dry-run` runs the read-only
 // checks and prints every mutating command and API call with secrets redacted. Secret values go to
-// files with mode 600 (deploy --secrets-file) or the environment of a child process; the three wrangler
-// flags that only accept a token on the command line (--token, --catalog-token) are redacted in logs.
+// files with mode 600 (deploy --secrets-file) or the environment of a child process; the wrangler flag
+// that only accepts a token on the command line (--token) is redacted in logs. There is no Basin
+// Pipelines step: it needs Workers Paid, and production runs on the Free plan (SPEC 29).
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,9 +17,6 @@ const API = "https://api.cloudflare.com/client/v4";
 const LAKE_BUCKET = "peoplelake-lake";
 const REPORTS_BUCKET = "peoplelake-reports";
 const QUEUES = ["peoplelake-lake-events", "peoplelake-lake-events-dlq"];
-const STREAM = "peoplelake_raw_stream";
-const SINK = "peoplelake_raw_sink";
-const PIPELINE = "peoplelake_raw_pipeline";
 const GATEWAY = "peoplelake";
 const WORKER = "peoplelake";
 export const SERVICE_TOKENS = {
@@ -99,8 +97,7 @@ class Setup {
           workers_subdomain: "",
           access: { team_domain: "", aud: "pending" },
           role_map: { emails: {}, service_tokens: {} },
-          catalog: { uri: "", warehouse: "", prefix: "" },
-          stream_id: "",
+          catalog: { uri: "", warehouse: "" },
           gcp_project: "",
           runs_enabled: false,
           gcp_bootstrap_passed: false,
@@ -249,15 +246,6 @@ class Setup {
     }
     this.state.catalog.uri = uri;
     this.state.catalog.warehouse = warehouse;
-    if (uri && warehouse && !this.dryRun) {
-      const res = this.run(["uv", "run", "--project", "pipeline", "peoplelake", "lake", "catalog-info", "--target", "prod"], {
-        mutating: false,
-        env: { PL_R2_CATALOG_URI: uri, PL_R2_WAREHOUSE: warehouse, PL_R2_CATALOG_TOKEN: this.secrets["PL_R2_CATALOG_TOKEN"] ?? "" },
-      });
-      const prefix = res.ok ? ((JSON.parse(res.stdout) as { prefix?: string }).prefix ?? "") : "";
-      this.state.catalog.prefix = prefix;
-      this.say(prefix ? `  REST prefix recorded` : "  UNKNOWN REST prefix (catalog-info failed); rerun after the catalog is reachable");
-    }
     this.say("5. Basin Catalog maintenance");
     const sinkToken = this.secrets["PL_R2_SINK_TOKEN"] ?? "";
     this.wrangler(["basin", "catalog", "snapshot-expiration", "enable", LAKE_BUCKET, "--token", sinkToken, "--older-than-days", "7", "--retain-last", "50"], true);
@@ -271,55 +259,6 @@ class Setup {
     for (const q of QUEUES) {
       if (listed.includes(q)) this.say(`  exists: ${q}`);
       else this.wrangler(["queues", "create", q], true);
-    }
-  }
-
-  // 7, 8, 9 -------------------------------------------------------------------------------------------
-  pipeline(): void {
-    this.say("7. Basin Pipelines stream");
-    const streams = this.listJson(["pipelines", "streams", "list", "--json"]);
-    let stream = streams.find((s) => s["name"] === STREAM);
-    if (!stream) {
-      this.wrangler(["pipelines", "streams", "create", STREAM, "--schema-file", "infra/cloudflare/stream-schema.json", "--http-enabled", "false"], true);
-      stream = this.listJson(["pipelines", "streams", "list", "--json"]).find((s) => s["name"] === STREAM);
-    } else this.say(`  exists: ${STREAM}`);
-    if (stream?.["id"]) this.state.stream_id = String(stream["id"]);
-    this.say("8. sink");
-    if (this.listJson(["pipelines", "sinks", "list", "--json"]).some((s) => s["name"] === SINK)) this.say(`  exists: ${SINK}`);
-    else {
-      this.wrangler(
-        ["pipelines", "sinks", "create", SINK, "--type", "r2-data-catalog", "--bucket", LAKE_BUCKET, "--namespace", "peoplelake",
-         "--table", "raw_events", "--catalog-token", this.secrets["PL_R2_SINK_TOKEN"] ?? "", "--roll-interval", "60", "--compression", "zstd"],
-        true,
-      );
-    }
-    this.say("9. pipeline");
-    if (this.listJson(["pipelines", "list", "--json"]).some((s) => s["name"] === PIPELINE)) this.say(`  exists: ${PIPELINE}`);
-    else this.wrangler(["pipelines", "create", PIPELINE, "--sql-file", "infra/cloudflare/pipeline.sql"], true);
-  }
-
-  listJson(args: string[]): Record<string, unknown>[] {
-    const res = this.wrangler(args, false);
-    if (!res.ok) return [];
-    try {
-      const parsed = JSON.parse(res.stdout) as unknown;
-      return Array.isArray(parsed) ? (parsed as Record<string, unknown>[]) : [];
-    } catch {
-      return [];
-    }
-  }
-
-  // 10 ------------------------------------------------------------------------------------------------
-  notification(): void {
-    this.say("10. R2 event notification (optimization only)");
-    const listed = this.wrangler(["r2", "bucket", "notification", "list", LAKE_BUCKET], false).stdout;
-    if (listed.includes(QUEUES[0] ?? "")) this.say("  exists");
-    else {
-      this.wrangler(
-        ["r2", "bucket", "notification", "create", LAKE_BUCKET, "--event-type", "object-create", "--queue", QUEUES[0] ?? "",
-         "--suffix", ".metadata.json", "--description", "peoplelake iceberg commits"],
-        true,
-      );
     }
   }
 
@@ -459,8 +398,6 @@ class Setup {
       this.buckets();
       this.catalog();
       this.queues();
-      this.pipeline();
-      this.notification();
       ids = await this.serviceTokens();
       await this.gateway();
       this.saveState();
@@ -470,7 +407,7 @@ class Setup {
         this.state.access.aud = "pending";
         this.roleMap(ids);
         this.saveState();
-        this.deploy({ R2_CATALOG_TOKEN: this.secrets["PL_R2_CATALOG_TOKEN"] ?? "" });
+        this.deploy({});
       }
       await this.accessApp(ids);
       this.saveState();
@@ -488,7 +425,7 @@ class Setup {
       this.state.runs_enabled = finalRunsEnabled(this.state.gcp_bootstrap_passed, runsOverride);
       this.saveState();
       const key = join(this.prod, "gcp-dispatcher-key.json");
-      const secrets: Record<string, string> = { R2_CATALOG_TOKEN: this.secrets["PL_R2_CATALOG_TOKEN"] ?? "" };
+      const secrets: Record<string, string> = {};
       if (existsSync(key)) secrets["GCP_DISPATCHER_KEY"] = readFileSync(key, "utf8");
       this.deploy(secrets);
       this.say(`  RUNS_ENABLED=${this.state.runs_enabled}`);

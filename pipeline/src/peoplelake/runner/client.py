@@ -64,23 +64,31 @@ class WorkerClient:
             headers={"content-type": "application/json"},
         )
 
-    # -- local stand-in sink files (runner) -------------------------------------------------------------
+    # -- landing rolls (runner; mounted in every environment) --------------------------------------------
 
-    def sink_files(self, after: str | None = None) -> list[SinkFile]:
-        path = "/internal/dev/sink/files" + (f"?after={quote(after)}" if after else "")
-        body = self._json("GET", path)
-        return [SinkFile(f["key"], f["etag"], int(f["size"])) for f in body["files"]]
+    def lake_files(self, prefix: str | None = None, after: str | None = None) -> list[SinkFile]:
+        """Landing rolls in key order after `after`, following `truncated` pages."""
+        out: list[SinkFile] = []
+        cursor = after
+        while True:
+            params = {k: v for k, v in (("prefix", prefix), ("after", cursor)) if v}
+            body = self._json("GET", "/internal/lake/files", params=params)
+            out += [SinkFile(f["key"], f["etag"], int(f["size"])) for f in body["files"]]
+            if not body.get("truncated") or not body["files"]:
+                return out
+            cursor = body["files"][-1]["key"]
 
-    def sink_file(self, key: str) -> bytes:
-        res = self._req("GET", f"/internal/dev/sink/files/{key}")
+    def lake_file(self, key: str) -> bytes:
+        res = self._req("GET", f"/internal/lake/files/{quote(key, safe='/')}")
         if res.status_code != 200:
             raise WorkerError(res.status_code, res.text)
         return res.content
 
     # -- operator ---------------------------------------------------------------------------------------
 
-    def flush_sink(self) -> dict:
-        return self._json("POST", "/internal/dev/sink/flush")
+    def flush_landing(self) -> dict:
+        """Local only: roll everything the LandingRoller buffers now (the eval driver's chunk boundary)."""
+        return self._json("POST", "/internal/dev/landing/flush")
 
     def install_faults(self, faults: list[dict]) -> dict:
         return self._json("POST", "/internal/dev/faults", json={"faults": faults})
@@ -117,17 +125,17 @@ class WorkerClient:
         )
 
 
-class WorkerSinkSource:
-    """The SinkRoller roll files, read through the Worker's local-only routes (committer input)."""
+class WorkerLandingSource:
+    """The LandingRoller's roll files, read through the Worker's /internal/lake/files routes (committer input)."""
 
     def __init__(self, client: WorkerClient) -> None:
         self.client = client
 
     def list_files(self) -> list[SinkFile]:
-        return self.client.sink_files()
+        return self.client.lake_files()
 
     def get(self, key: str) -> bytes:
-        return self.client.sink_file(key)
+        return self.client.lake_file(key)
 
 
 def canonical_body(obj: Any) -> str:

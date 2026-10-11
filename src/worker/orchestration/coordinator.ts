@@ -1,10 +1,11 @@
 // Coordinator Durable Object (singleton "global", SQLite): the run ledger, the job queue with leases,
-// single-flight run requests, watermarks and eval faults (SPEC 8.1). Every method that can be retried
+// single-flight run requests, watermarks, the landed roll cursor and eval faults (SPEC 8.1, 29.4.3). Every method that can be retried
 // is idempotent: enqueueJob on (run, kind, attempt), completeJob on terminal jobs, commitRun on
 // committed runs.
 import { DurableObject } from "cloudflare:workers";
 import type { FaultSpec, JobKind, JobSpec, RunMode } from "../../shared/contracts.ts";
 import { type AppConfig, parseConfig } from "../config.ts";
+import type { LandingRoll } from "../lake/landing-roller.ts";
 import { COORDINATOR_DDL, type JobRow, type RunRow } from "./coordinator-sql.ts";
 
 export const COORDINATOR_NAME = "global";
@@ -533,16 +534,19 @@ export class Coordinator extends DurableObject<Env> {
 
   // -- triggers and signals -------------------------------------------------------------------------
 
-  noteIngest(records: number, receivedAt: string): void {
-    const ts = Date.parse(receivedAt);
-    const prev = Number(this.#get("last_ingest_at") ?? "0");
-    if (ts > prev) this.#set("last_ingest_at", String(ts));
-    this.#sql.exec(
-      `INSERT INTO ingest_minutes (minute, requests, records) VALUES (?, 1, ?)
-       ON CONFLICT (minute) DO UPDATE SET requests = requests + 1, records = records + excluded.records`,
-      Math.floor(ts / 60_000),
-      records,
-    );
+  /** Once per landing roll (LandingRoller step d). Idempotent: rolls arrive in key order, so a key at or
+   * below landed_through was already noted. */
+  noteRoll(roll: LandingRoll, now: number = Date.now()): { noted: boolean } {
+    const through = this.#get("landed_through");
+    if (through !== null && roll.key <= through) return { noted: false };
+    this.ctx.storage.transactionSync(() => {
+      this.#set("landed_through", roll.key);
+      this.#incr("landed_rolls");
+      this.#incr("landed_records", roll.records);
+      this.#set("last_ingest_at", String(Date.parse(roll.last_received_at)));
+      this.#set("last_roll_json", JSON.stringify({ ...roll, noted_at: now }));
+    });
+    return { noted: true };
   }
 
   markNewData(eventTime: string): void {
@@ -553,19 +557,16 @@ export class Coordinator extends DurableObject<Env> {
     this.#incr("malformed_lake_events", n);
   }
 
-  recordCatalogPoll(poll: Record<string, unknown>): void {
-    this.#set("catalog_last_poll_json", JSON.stringify(poll));
-  }
-
-  /** Cron logic (SPEC 7.6) minus the catalog poll, which the scheduled handler runs and records. */
+  /** Cron logic (SPEC 29.4.3): sweeps, a run when a roll landed after the last run started, heartbeat. */
   async tick(now: number = Date.now()): Promise<{ swept: { expired: number; timed_out: number }; requested: string[] }> {
     const cfg = this.#config();
     const swept = await this.sweep(now);
     const requested: string[] = [];
     if (!cfg.runsEnabled) return { swept, requested };
-    const lastIngest = Number(this.#get("last_ingest_at") ?? "0");
+    const lastRoll = this.#get("last_roll_json");
+    const notedAt = lastRoll ? Number((JSON.parse(lastRoll) as { noted_at?: number }).noted_at ?? 0) : 0;
     const lastStarted = this.#sql.exec<{ s: number | null }>("SELECT max(started_at) AS s FROM runs").one().s;
-    if (cfg.lakeMode === "local" && lastIngest > 0 && (lastStarted === null || lastIngest > lastStarted - (cfg.sink.rollSeconds + 30) * 1000)) {
+    if (notedAt > 0 && (lastStarted === null || notedAt > lastStarted)) {
       await this.requestRun("cron", "incremental", now);
       requested.push("cron");
     }
@@ -616,13 +617,16 @@ export class Coordinator extends DurableObject<Env> {
       "lease_expirations",
       "malformed_lake_events",
       "faults_fired",
+      "landed_through",
+      "landed_rolls",
+      "landed_records",
     ];
     const out: Record<string, unknown> = {};
     for (const k of keys) out[k] = this.#get(k);
     out["watermark"] = this.#watermark("raw_events");
     out["transformed_through_seq"] = this.#watermark("transformed_through_seq");
-    const poll = this.#get("catalog_last_poll_json");
-    out["catalog_last_poll"] = poll ? JSON.parse(poll) : null;
+    const roll = this.#get("last_roll_json");
+    out["last_roll"] = roll ? JSON.parse(roll) : null;
     return out;
   }
 

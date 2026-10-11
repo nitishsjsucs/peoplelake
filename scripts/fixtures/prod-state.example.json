@@ -11,8 +11,7 @@
       "example-runner.access": "runner"
     }
   },
-  "catalog": { "uri": "https://catalog.example.invalid/iceberg", "warehouse": "example_peoplelake-lake", "prefix": "example_prefix" },
-  "stream_id": "0123456789abcdef0123456789abcdef",
+  "catalog": { "uri": "https://catalog.example.invalid/iceberg", "warehouse": "example_peoplelake-lake" },
   "gcp_project": "peoplelake-example",
   "runs_enabled": true,
   "gcp_bootstrap_passed": true

@@ -32,7 +32,7 @@ export interface AppConfig {
     readonly maxAttempts: number;
     readonly runTimeoutMinutes: number;
   };
-  readonly sink: { readonly rollSeconds: number; readonly maxRecords: number };
+  readonly landing: { readonly rollSeconds: number; readonly rollMaxBytes: number; readonly maxBufferBytes: number };
   readonly heartbeatMinutes: number;
   readonly runnerSeenWindowSeconds: number;
   readonly evalFaultsEnabled: boolean;
@@ -44,7 +44,6 @@ export interface AppConfig {
     readonly llmBaseUrl: string | null;
   };
   readonly gcp: { readonly project: string; readonly region: string; readonly job: string } | null;
-  readonly basin: { readonly catalogUri: string; readonly catalogPrefix: string } | null;
 }
 
 /** The string variables and secrets parseConfig reads (a structural subset of the generated Env). */
@@ -118,10 +117,9 @@ export function parseConfig(env: ConfigEnv, requestHost: string | null): AppConf
       throw new ConfigError("ACCESS_TEAM_DOMAIN must be https://<team>.cloudflareaccess.com in production");
     }
     if (aud === "pending" && runsEnabled) throw new ConfigError("ACCESS_AUD=pending is allowed only with RUNS_ENABLED=false");
-    if (runsEnabled) {
-      for (const name of ["GCP_DISPATCHER_KEY", "R2_CATALOG_TOKEN", "BASIN_CATALOG_URI", "BASIN_CATALOG_PREFIX"]) {
-        if (secret(env, name) === null) throw new ConfigError(`RUNS_ENABLED=true requires ${name}`);
-      }
+    // The Worker holds no catalog token: the runner commits to Basin Catalog (SPEC 29.6).
+    if (runsEnabled && secret(env, "GCP_DISPATCHER_KEY") === null) {
+      throw new ConfigError("RUNS_ENABLED=true requires GCP_DISPATCHER_KEY");
     }
   } else {
     if (requestHost !== null && !LOCAL_HOSTS.has(requestHost)) {
@@ -133,8 +131,9 @@ export function parseConfig(env: ConfigEnv, requestHost: string | null): AppConf
   }
 
   const gcpProject = secret(env, "GCP_PROJECT");
-  const catalogUri = secret(env, "BASIN_CATALOG_URI");
-  const catalogPrefix = secret(env, "BASIN_CATALOG_PREFIX");
+  const rollMaxBytes = int(env, "LANDING_ROLL_MAX_BYTES", 8 * 1024 * 1024, 1024);
+  const maxBufferBytes = int(env, "LANDING_MAX_BUFFER_BYTES", 64 * 1024 * 1024, 1024);
+  if (maxBufferBytes < rollMaxBytes) throw new ConfigError("LANDING_MAX_BUFFER_BYTES must be at least LANDING_ROLL_MAX_BYTES");
   return Object.freeze({
     environment,
     authMode,
@@ -149,7 +148,7 @@ export function parseConfig(env: ConfigEnv, requestHost: string | null): AppConf
       maxAttempts: int(env, "JOB_MAX_ATTEMPTS", 3, 1),
       runTimeoutMinutes: int(env, "RUN_TIMEOUT_MINUTES", 10, 1),
     },
-    sink: { rollSeconds: int(env, "SINK_ROLL_SECONDS", 60, 1), maxRecords: int(env, "LOCAL_SINK_MAX_RECORDS", 50000, 1) },
+    landing: { rollSeconds: int(env, "LANDING_ROLL_SECONDS", 60, 1), rollMaxBytes, maxBufferBytes },
     heartbeatMinutes: int(env, "HEARTBEAT_MINUTES", 0),
     runnerSeenWindowSeconds: int(env, "RUNNER_SEEN_WINDOW_SECONDS", 60),
     evalFaultsEnabled,
@@ -163,6 +162,5 @@ export function parseConfig(env: ConfigEnv, requestHost: string | null): AppConf
     gcp: gcpProject
       ? { project: gcpProject, region: str(env, "GCP_REGION", "us-central1"), job: str(env, "CLOUD_RUN_JOB", "peoplelake-runner") }
       : null,
-    basin: catalogUri && catalogPrefix ? { catalogUri, catalogPrefix } : null,
   } satisfies AppConfig);
 }
