@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: fct_compensation_history
+    description: Restricted. Compensation per employee over time (valid_to exclusive).
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: ["employee_id", "valid_from"]
+    columns:
+      - name: employee_id
+        data_tests: [not_null]
+      - name: change_id
+        data_tests: [not_null, unique]
+      - name: base_salary
+        description: Annual base salary in whole currency units.
+      - name: bonus_target_pct
+        description: Bonus target as a percentage of base salary.
+
+  - name: fct_performance_reviews
+    description: Restricted. One row per performance review.
+    columns:
+      - name: review_id
+        data_tests: [not_null, unique]
+      - name: rating
+        description: Rating 1 to 5.

@@ -1,0 +1,14 @@
+version: 2
+
+sources:
+  - name: pl_raw
+    description: Raw deliveries loaded from the Iceberg lake by the Python runner (one row per delivery).
+    schema: "{{ 'pl_raw' ~ ('_' ~ env_var('PL_DATASET_SUFFIX') if env_var('PL_DATASET_SUFFIX', '') else '') }}"
+    tables:
+      - name: raw_event_deliveries
+        description: Every accepted delivery, deduplicated on delivery_id by the loader (ADR 0001).
+        columns:
+          - name: delivery_id
+            data_tests: [not_null, unique]
+          - name: event_id
+            data_tests: [not_null]

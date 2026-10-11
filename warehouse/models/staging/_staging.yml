@@ -1,0 +1,68 @@
+version: 2
+
+models:
+  - name: stg_events
+    description: >
+      One row per event (first delivery wins). Incremental and insert-only in effect: rows above this
+      model's load-sequence cursor are anti-joined on event_id, so duplicates never overwrite or re-dirty.
+    columns:
+      - name: event_id
+        data_tests: [not_null, unique]
+      - name: source
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["hris", "ats", "talent"]
+      - name: event_type
+        data_tests: [not_null]
+      - name: entity_id
+        data_tests: [not_null]
+      - name: effective_date
+        data_tests: [not_null]
+      - name: _pl_load_seq
+        description: Load sequence of the delivery that introduced the event (the cursor for bucketed models).
+        data_tests: [not_null]
+
+  - name: stg_hris__worker_events
+    description: HRIS events with the payload parsed (DuckDB json_extract_string, BigQuery JSON_VALUE).
+    columns:
+      - name: event_id
+        data_tests: [not_null, unique]
+      - name: employee_id
+        data_tests: [not_null]
+
+  - name: stg_ats__requisitions
+    columns:
+      - name: event_id
+        data_tests: [not_null, unique]
+      - name: requisition_id
+        data_tests: [not_null]
+
+  - name: stg_ats__applications
+    columns:
+      - name: event_id
+        data_tests: [not_null, unique]
+      - name: application_id
+        data_tests: [not_null]
+
+  - name: stg_ats__offers
+    columns:
+      - name: event_id
+        data_tests: [not_null, unique]
+      - name: offer_id
+        data_tests: [not_null]
+
+  - name: stg_talent__compensation_changes
+    columns:
+      - name: event_id
+        data_tests: [not_null, unique]
+      - name: change_id
+        data_tests: [not_null]
+
+  - name: stg_talent__reviews
+    columns:
+      - name: event_id
+        data_tests: [not_null, unique]
+      - name: review_id
+        data_tests: [not_null]

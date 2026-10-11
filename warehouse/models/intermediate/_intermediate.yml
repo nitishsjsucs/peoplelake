@@ -1,0 +1,130 @@
+version: 2
+
+models:
+  - name: int_hris__effective_events
+    description: HRIS business events after corrections (per field, latest correction wins) without rescinded events.
+    columns:
+      - name: event_id
+        data_tests: [not_null, unique]
+      - name: effective_date
+        data_tests: [not_null]
+
+  - name: int_hris__spells
+    description: Employment spells, last day worked inclusive; is_inferred_end marks a provisional close.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: ["employee_id", "spell_no"]
+    columns:
+      - name: employee_id
+        data_tests: [not_null]
+      - name: hire_date
+        data_tests: [not_null]
+
+  - name: int_hris__attribute_timeline
+    description: Forward-filled attribute change points per spell; valid_to is exclusive.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: ["employee_id", "valid_from"]
+
+unit_tests:
+  - name: ut_rehire_after_termination
+    description: A rehire starts spell 2 after the termination of spell 1; neither end is inferred.
+    model: int_hris__spells
+    given:
+      - input: ref('int_hris__effective_events')
+        rows:
+          - {event_id: h1, employee_id: E000001, event_type: worker.hired, effective_date: "2023-02-01", spell_no: 1, department_id: D01, job_code: J01, location_id: L1, fte_bp: 10000}
+          - {event_id: t1, employee_id: E000001, event_type: worker.terminated, effective_date: "2023-06-30", termination_type: voluntary}
+          - {event_id: h2, employee_id: E000001, event_type: worker.rehired, effective_date: "2024-01-15", spell_no: 2, department_id: D02, job_code: J02, location_id: L1, fte_bp: 8000}
+    expect:
+      rows:
+        - {employee_id: E000001, spell_no: 1, hire_date: "2023-02-01", termination_date: "2023-06-30", end_date: "2023-06-30", is_inferred_end: false}
+        - {employee_id: E000001, spell_no: 2, hire_date: "2024-01-15", termination_date: null, end_date: null, is_inferred_end: false}
+
+  - name: ut_rehire_with_open_prior_spell_is_inferred
+    description: A rehire that arrives before the prior termination closes spell 1 provisionally the day before.
+    model: int_hris__spells
+    given:
+      - input: ref('int_hris__effective_events')
+        rows:
+          - {event_id: h1, employee_id: E000001, event_type: worker.hired, effective_date: "2023-02-01", spell_no: 1}
+          - {event_id: h2, employee_id: E000001, event_type: worker.rehired, effective_date: "2024-01-15", spell_no: 2}
+    expect:
+      rows:
+        - {employee_id: E000001, spell_no: 1, end_date: "2024-01-14", is_inferred_end: true}
+        - {employee_id: E000001, spell_no: 2, end_date: null, is_inferred_end: false}
+
+  - name: ut_rescinded_termination_is_removed
+    model: int_hris__effective_events
+    given:
+      - input: ref('stg_hris__worker_events')
+        rows:
+          - {event_id: h1, employee_id: E000001, event_type: worker.hired, effective_date: "2023-02-01", source_sequence: 1, spell_no: 1}
+          - {event_id: t1, employee_id: E000001, event_type: worker.terminated, effective_date: "2023-05-10", source_sequence: 2}
+          - {event_id: x1, employee_id: E000001, event_type: worker.event_rescinded, effective_date: "2023-05-10", source_sequence: 3, rescinds_event_id: t1}
+    expect:
+      rows:
+        - {event_id: h1, event_type: worker.hired}
+
+  - name: ut_hire_date_correction_across_month_boundary
+    description: The corrected hire date (next month) replaces the recorded one; the event is flagged corrected.
+    model: int_hris__effective_events
+    given:
+      - input: ref('stg_hris__worker_events')
+        rows:
+          - {event_id: h1, employee_id: E000001, event_type: worker.hired, effective_date: "2024-01-29", source_sequence: 10, spell_no: 1}
+          - {event_id: c1, employee_id: E000001, event_type: worker.event_corrected, effective_date: "2024-02-05", source_sequence: 20, corrects_event_id: h1, corrected_effective_date: "2024-02-05"}
+    expect:
+      rows:
+        - {event_id: h1, effective_date: "2024-02-05", recorded_effective_date: "2024-01-29", is_corrected: true}
+
+  - name: ut_correction_arriving_before_its_base_event
+    description: A correction without its target yields no business event (ops_anomalies reports it as orphan).
+    model: int_hris__effective_events
+    given:
+      - input: ref('stg_hris__worker_events')
+        rows:
+          - {event_id: c1, employee_id: E000001, event_type: worker.event_corrected, effective_date: "2024-02-05", source_sequence: 20, corrects_event_id: h1, corrected_effective_date: "2024-02-05"}
+    expect:
+      rows: []
+
+  - name: ut_fte_correction
+    model: int_hris__effective_events
+    given:
+      - input: ref('stg_hris__worker_events')
+        rows:
+          - {event_id: f1, employee_id: E000001, event_type: worker.fte_changed, effective_date: "2024-03-01", source_sequence: 5, from_fte_bp: 10000, to_fte_bp: 6000}
+          - {event_id: c1, employee_id: E000001, event_type: worker.event_corrected, effective_date: "2024-03-01", source_sequence: 9, corrects_event_id: f1, corrected_to_fte_bp: 8000}
+    expect:
+      rows:
+        - {event_id: f1, effective_date: "2024-03-01", to_fte_bp: 8000, is_corrected: true}
+
+  - name: ut_two_corrections_latest_wins
+    model: int_hris__effective_events
+    given:
+      - input: ref('stg_hris__worker_events')
+        rows:
+          - {event_id: t1, employee_id: E000001, event_type: worker.transferred, effective_date: "2024-03-01", source_sequence: 5, from_department_id: D01, to_department_id: D02}
+          - {event_id: c2, employee_id: E000001, event_type: worker.event_corrected, effective_date: "2024-03-01", source_sequence: 12, corrects_event_id: t1, corrected_to_department_id: D04}
+          - {event_id: c1, employee_id: E000001, event_type: worker.event_corrected, effective_date: "2024-03-01", source_sequence: 9, corrects_event_id: t1, corrected_to_department_id: D03}
+    expect:
+      rows:
+        - {event_id: t1, to_department_id: D04, is_corrected: true}
+
+  - name: ut_transfer_then_termination_ordering
+    description: A transfer before a termination ends the spell in the new department; history rows stay contiguous.
+    model: int_hris__attribute_timeline
+    given:
+      - input: ref('int_hris__spells')
+        rows:
+          - {employee_id: E000001, spell_no: 1, hire_date: "2023-02-01", hire_event_id: h1, hire_event_type: worker.hired, hire_department_id: D01, hire_job_code: J01, location_id: L1, hire_fte_bp: 10000, end_date: "2024-06-30"}
+      - input: ref('int_hris__effective_events')
+        rows:
+          - {event_id: x1, employee_id: E000001, event_type: worker.transferred, effective_date: "2024-03-01", to_department_id: D05}
+          - {event_id: x2, employee_id: E000001, event_type: worker.fte_changed, effective_date: "2024-07-15", to_fte_bp: 5000}
+    expect:
+      rows:
+        - {employee_id: E000001, valid_from: "2023-02-01", valid_to: "2024-03-01", department_id: D01, fte_bp: 10000}
+        - {employee_id: E000001, valid_from: "2024-03-01", valid_to: "2024-07-01", department_id: D05, fte_bp: 10000}

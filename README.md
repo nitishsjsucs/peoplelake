@@ -14,7 +14,7 @@ v1 is under construction and this repository is published while it is built. Thi
 | Synthetic generator with exact counts and oracle | done: 100,000 events (full) and 10,000 (small) from `hris`, `ats`, `talent`, pinned sha256, committed oracle seeds |
 | Contracts and canonical JSON golden | done: zod contracts generate `contracts/*.schema.json`; pydantic mirrors; fixtures and a canonical JSON golden asserted by vitest (in workerd) and pytest |
 | DuckDB loader and output digests | done: idempotent load on `delivery_id`, UTC sessions, engine-independent digests for the 10 published models |
-| dbt models, five metrics, reconciliation checks | not started |
+| dbt models, five metrics, reconciliation checks | in progress: staging, spells, SCD2 history with per-model bucket cursors, facts, metrics mart (matches the oracle on all 468 rows for both profiles), 10 unit tests; reconciliation checks next |
 | BigQuery configs and offline compile | not started |
 | Local Iceberg lake | not started |
 | Worker: auth, ingest, sinks | not started (only `GET /v1/health` exists) |
@@ -105,8 +105,13 @@ uv run --project pipeline peoplelake generate --profile small --out .data/genera
 uv run --project pipeline peoplelake generate --profile full --out .data/generated/full --check
 uv run --project pipeline peoplelake generate --write-seeds   # rewrites warehouse/seeds (committed)
 
-# load generated events straight into the local DuckDB stand-in (no Worker, no lake)
+# load generated events straight into the local DuckDB stand-in (no Worker, no lake), then dbt
+export TZ=UTC PL_PROFILE=small PL_DUCKDB_PATH=$PWD/.data/warehouse/peoplelake.duckdb
 uv run --project pipeline peoplelake warehouse load-direct --profile small
+uv run --project pipeline peoplelake dbt seed
+uv run --project pipeline peoplelake dbt run --empty   # unit tests need the relations to exist
+uv run --project pipeline peoplelake dbt build         # models, unit tests and data tests
+uv run --project pipeline peoplelake digest     # digests of the 10 published models
 ```
 
 ### Synthetic data

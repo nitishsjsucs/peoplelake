@@ -34,3 +34,20 @@ def test_two_default_connections_in_one_process_coexist(tmp_path):
     finally:
         a.close()
         b.close()
+
+
+def test_load_dbt_build_and_digest_in_one_process(tmp_path, monkeypatch, small):
+    """The runner's sequence: load, in-process dbt build, digests, all in one process (ADR 0008)."""
+    from dbt_helpers import make_env
+    from peoplelake.warehouse.direct import part
+
+    env = make_env(tmp_path, monkeypatch, small)
+    env.load(part(env.items, 1, 3))
+    assert env.dbt.build().success
+    digests = env.wh.digests()
+    assert len(digests) == 10
+    proc = _open_in_other_process(env.wh.path)
+    assert proc.returncode != 0  # in-process dbt keeps the file open for the life of the process
+    env.load(part(env.items, 2, 3))
+    assert env.dbt.build().success
+    assert env.wh.digests() != digests

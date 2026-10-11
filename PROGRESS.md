@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Commit 4 of 18 (core) done: DuckDB loader and digests.
+Commit 5 of 18 (core) done: dbt core models.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -14,8 +14,10 @@ Commit 4 of 18 (core) done: DuckDB loader and digests.
 
 4. Warehouse: `open_duckdb` (default config, read-write, `SET TimeZone='UTC'`), `DuckDBWarehouse.load_deliveries` (batch dedupe by `delivery_id`, anti-join against `pl_raw.raw_event_deliveries`, stats incl. unique new events, 10 s histogram of first receipt of new events, `raw_max_load_seq`, `pl_ops.load_log`), digests by logical type with Python-side PK sort (`warehouse/digest.py`, 10 model specs), Python normalization mirror (`normalize.py`), direct loader and CLI `peoplelake warehouse load-direct`, `peoplelake digest`.
 
+5. dbt core: `stg_events` (incremental merge, insert-only via anti-join, first delivery wins), six staging views, `int_hris__effective_events` (per-field latest correction, rescinds removed), `int_hris__spells`, `int_hris__attribute_timeline`, `dim_*`, `dim_employee_history` / `fct_workforce_monthly` / `fct_compensation_history` (bucketed, per-model cursors, pre-delete of affected buckets), `fct_employment_events`, `fct_offers`, `fct_performance_reviews`, `metrics_workforce_monthly`; 10 dbt unit tests; in-process `DbtRunner`; pytest: bucket cursor fault recovery, shuffled-delivery parity, empty-bucket regression, dbt session UTC, single owner with in-process dbt. Measured: metrics equal the oracle on all 468 rows for both profiles after a direct load.
+
 ## Next
-5. dbt: staging, spells, effective-dated history with per-model bucket cursors, unit tests.
+6. dbt: reconciliation checks R1 to R11, reporting views, ops models, oracle test on the small profile.
 
 ## Check status (last run at this commit)
 | Check | Result |
@@ -24,7 +26,8 @@ Commit 4 of 18 (core) done: DuckDB loader and digests.
 | `npm run typegen:check` | pass |
 | `npm test` | pass (4 files, 42 tests) |
 | `npm run check:prose` | pass |
-| `npm run test:py` (pytest) | pass (125 tests) |
+| `npm run test:py` (pytest) | pass (130 tests) |
+| dbt unit tests (`dbt test --select test_type:unit` after `dbt run --empty`) | pass (10) |
 | `ruff check` | pass |
 | `peoplelake generate --profile small --check` | pass |
 
@@ -38,4 +41,7 @@ Commit 4 of 18 (core) done: DuckDB loader and digests.
 - Load job orchestration (`loader.py` in the spec) lands with the lake reader and runner; commit 4 puts the load SQL in `DuckDBWarehouse.load_deliveries` and the Worker-free path in `warehouse/direct.py`.
 - `received_histogram_10s` counts unique new events at their first `received_at` (what the freshness eval needs), not every inserted delivery.
 - Digest model specs live in `warehouse/digest.py` with logical column types; values are canonicalized by logical type so DuckDB `HUGEINT`/`DECIMAL` and BigQuery `INT64`/`NUMERIC` agree.
+- Bucketed models add a pre-hook (`pl_bucket_pre_delete`) that deletes every affected bucket before the replace. Found in this session: with shuffled delivery, an employee terminated before the first month end of the window leaves an affected bucket with zero new rows, and both `delete+insert` and `insert_overwrite` replace only buckets present in the new rows, so stale rows survived. `test_bucket_that_becomes_empty_is_cleared` fails without the hook.
+- Corrections apply per field (latest correction that sets a field wins) rather than whole-record latest; identical for the generated data and still covered by `ut_two_corrections_latest_wins`.
+- `fct_workforce_monthly` and the metrics read `int_hris__*` tables (full rebuilds) rather than `dim_employee_history`, so one bucketed model failing never leaves another reading stale history.
 - Correction events carry `effectiveDate` = the corrected date for date corrections and the target's date for value corrections; rescinds carry the target's date. The one-event-per-day rule is asserted on business events (hire, rehire, termination, transfer, job and FTE change) for both original and corrected dates.

@@ -1,0 +1,164 @@
+version: 2
+
+models:
+  - name: dim_date
+    description: Calendar 2010-01-01 to 2026-12-31 (DuckDB range, BigQuery GENERATE_DATE_ARRAY).
+    columns:
+      - name: date_day
+        data_tests: [not_null, unique]
+
+  - name: dim_department
+    columns:
+      - name: department_id
+        data_tests: [not_null, unique]
+
+  - name: dim_job
+    columns:
+      - name: job_code
+        data_tests: [not_null, unique]
+
+  - name: dim_location
+    columns:
+      - name: location_id
+        data_tests: [not_null, unique]
+
+  - name: dim_employee_history
+    description: >
+      Effective-dated (SCD2) employment history. valid_to is exclusive; 9999-12-31 is open. Rebuilt per
+      employee bucket from this model's own load-sequence cursor (ADR 0004).
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: ["employee_id", "valid_from"]
+    columns:
+      - name: employee_id
+        data_tests: [not_null]
+      - name: valid_from
+        data_tests: [not_null]
+      - name: valid_to
+        data_tests: [not_null]
+      - name: department_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_department')
+                field: department_id
+      - name: job_code
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_job')
+                field: job_code
+      - name: location_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_location')
+                field: location_id
+      - name: fte
+        data_tests: [not_null]
+      - name: employee_bucket
+        data_tests: [not_null]
+
+  - name: dim_employee
+    description: Current state per employee as of the latest data.
+    columns:
+      - name: employee_id
+        data_tests: [not_null, unique]
+      - name: employment_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["active", "terminated"]
+
+  - name: fct_employment_events
+    description: Effective (corrected, not rescinded) employment events with the state after and before each.
+    columns:
+      - name: event_id
+        data_tests: [not_null, unique]
+      - name: employee_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_employee')
+                field: employee_id
+      - name: event_kind
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["hire", "rehire", "termination", "transfer", "job_change", "fte_change"]
+
+  - name: fct_offers
+    description: Accumulating snapshot of offers (rescinded offers are excluded from acceptance rate).
+    columns:
+      - name: offer_id
+        data_tests: [not_null, unique]
+      - name: final_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["accepted", "declined", "rescinded", "pending"]
+
+  - name: fct_workforce_monthly
+    description: Periodic snapshot, one row per employee in headcount at each month end of the window.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: ["employee_id", "month_end"]
+    columns:
+      - name: employee_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_employee')
+                field: employee_id
+
+unit_tests:
+  - name: ut_offer_accepted_then_hire_with_corrected_date
+    description: The hire is matched by candidate even though its corrected date differs from the offer start.
+    model: fct_offers
+    given:
+      - input: ref('stg_ats__offers')
+        rows:
+          - {event_id: a1, event_type: offer.extended, source_sequence: 1, effective_date: "2024-02-01", offer_id: O000001, application_id: A000001, requisition_id: Q000001, candidate_id: C000001, proposed_start_date: "2024-03-04"}
+          - {event_id: a2, event_type: offer.accepted, source_sequence: 2, effective_date: "2024-02-10", offer_id: O000001, start_date: "2024-03-04"}
+          - {event_id: a3, event_type: offer.extended, source_sequence: 3, effective_date: "2024-02-02", offer_id: O000002, application_id: A000002, requisition_id: Q000001, candidate_id: C000002, proposed_start_date: "2024-03-18"}
+          - {event_id: a4, event_type: offer.rescinded, source_sequence: 4, effective_date: "2024-02-05", offer_id: O000002}
+      - input: ref('stg_ats__requisitions')
+        rows:
+          - {event_id: r1, event_type: requisition.opened, source_sequence: 1, effective_date: "2024-01-05", requisition_id: Q000001, department_id: D03, job_code: J07}
+      - input: ref('int_hris__spells')
+        rows:
+          - {employee_id: E000009, spell_no: 1, hire_date: "2024-03-11", ats_candidate_id: C000001}
+    expect:
+      rows:
+        - {offer_id: O000001, department_id: D03, final_status: accepted, decision_date: "2024-02-10", start_date: "2024-03-04", hired_employee_id: E000009}
+        - {offer_id: O000002, department_id: D03, final_status: rescinded, decision_date: "2024-02-05", start_date: "2024-03-18", hired_employee_id: null}
+
+  - name: ut_bucketed_history_rebuilds_only_buckets_past_its_cursor
+    description: >
+      With pl_is_incremental overridden and `this` given, only employees in buckets with HRIS events above
+      the model's own cursor are emitted, stamped with the newest load sequence consumed.
+    model: dim_employee_history
+    overrides:
+      macros:
+        pl_is_incremental: true
+    given:
+      - input: ref('int_hris__attribute_timeline')
+        rows:
+          - {employee_id: E000001, spell_no: 1, valid_from: "2023-02-01", valid_to: "9999-12-31", department_id: D01, job_code: J01, location_id: L1, fte_bp: 10000, employee_bucket: 1}
+          - {employee_id: E000002, spell_no: 1, valid_from: "2023-03-01", valid_to: "9999-12-31", department_id: D02, job_code: J02, location_id: L2, fte_bp: 8000, employee_bucket: 2}
+      - input: ref('stg_events')
+        rows:
+          - {event_id: e1, source: hris, entity_id: E000001, _pl_load_seq: 7}
+          - {event_id: e2, source: hris, entity_id: E000002, _pl_load_seq: 3}
+          - {event_id: e3, source: talent, entity_id: E000002, _pl_load_seq: 9}
+      - input: this
+        rows:
+          - {employee_id: E000002, spell_no: 1, valid_from: "2023-03-01", employee_bucket: 2, _pl_load_seq: 3}
+    expect:
+      rows:
+        - {employee_id: E000001, valid_from: "2023-02-01", fte: 1.000000, is_current: true, employee_bucket: 1, _pl_load_seq: 7}

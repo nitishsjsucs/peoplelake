@@ -1,0 +1,81 @@
+name: peoplelake
+version: "0.1.0"
+config-version: 2
+profile: peoplelake
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: "target"
+log-path: "logs"
+clean-targets: ["target", "logs"]
+
+flags:
+  send_anonymous_usage_stats: false
+
+vars:
+  # Generator profile whose oracle seeds the reconciliation checks compare against (full in production).
+  pl_profile: "{{ env_var('PL_PROFILE', 'small') }}"
+  pl_data_as_of: "2025-12-31"
+  pl_window_start: "2023-01-01"
+  pl_window_end: "2025-12-31"
+  # Offline BigQuery compile in CI (no connection): see macros/pl_is_incremental.sql.
+  pl_offline_compile: false
+  pl_force_incremental_compile: false
+  # BigQuery policy tag resource names, written by `peoplelake prod bootstrap-gcp`.
+  pl_pt_compensation: "{{ env_var('PL_PT_COMPENSATION', 'projects/peoplelake-offline/locations/us/taxonomies/0/policyTags/compensation') }}"
+  pl_pt_performance: "{{ env_var('PL_PT_PERFORMANCE', 'projects/peoplelake-offline/locations/us/taxonomies/0/policyTags/performance') }}"
+
+models:
+  peoplelake:
+    +persist_docs:
+      relation: true
+      columns: true
+    staging:
+      +schema: pl_staging
+      +materialized: view
+    intermediate:
+      +schema: pl_staging
+      +materialized: table
+    core:
+      +schema: pl_core
+      +materialized: table
+    restricted:
+      +schema: pl_restricted
+      +materialized: table
+    reporting:
+      +schema: pl_reporting
+      +materialized: view
+    ops:
+      +schema: pl_ops
+      +materialized: table
+
+seeds:
+  peoplelake:
+    +schema: pl_core
+    reference:
+      ref_jobs:
+        +column_types:
+          job_level: "{{ 'int64' if target.type == 'bigquery' else 'bigint' }}"
+    oracle:
+      +schema: pl_ops
+      oracle_workforce_monthly:
+        +column_types:
+          profile: "{{ 'string' if target.type == 'bigquery' else 'varchar' }}"
+          month: date
+          department_id: "{{ 'string' if target.type == 'bigquery' else 'varchar' }}"
+          headcount: "{{ 'int64' if target.type == 'bigquery' else 'bigint' }}"
+          fte: "{{ 'numeric' if target.type == 'bigquery' else 'decimal(18,6)' }}"
+          hires: "{{ 'int64' if target.type == 'bigquery' else 'bigint' }}"
+          rehires: "{{ 'int64' if target.type == 'bigquery' else 'bigint' }}"
+          departures: "{{ 'int64' if target.type == 'bigquery' else 'bigint' }}"
+          transfers_in: "{{ 'int64' if target.type == 'bigquery' else 'bigint' }}"
+          transfers_out: "{{ 'int64' if target.type == 'bigquery' else 'bigint' }}"
+          offers_extended: "{{ 'int64' if target.type == 'bigquery' else 'bigint' }}"
+          offers_accepted: "{{ 'int64' if target.type == 'bigquery' else 'bigint' }}"
+          offers_declined: "{{ 'int64' if target.type == 'bigquery' else 'bigint' }}"
+          offer_acceptance_rate: "{{ 'numeric' if target.type == 'bigquery' else 'decimal(18,6)' }}"
+      expected_event_counts:
+        +column_types:
+          expected_count: "{{ 'int64' if target.type == 'bigquery' else 'bigint' }}"
