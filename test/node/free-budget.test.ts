@@ -45,7 +45,9 @@ describe("Workers Free plan budget (SPEC 29.5, 15.7)", () => {
     expect(rows["doRowsWritten"]?.estimate).toBeLessThanOrEqual(20_000);
     expect(rows["workflowSteps"]?.estimate).toBeLessThanOrEqual(600);
     expect(rows["workersAiNeurons"]?.estimate).toBeLessThanOrEqual(2_000);
-    expect(rows["bigqueryQueries"]?.estimate).toBeLessThanOrEqual(275_000_000_000);
+    // Not clamped: the larger month (go-live with the drill scenarios that fit, or the next) within 25% of 1 TiB.
+    expect(rows["bigqueryQueries"]?.estimate).toBeLessThanOrEqual(Math.floor(1_099_511_627_776 * 0.25));
+    expect(rows["bigqueryQueries"]?.basis).toContain("not clamped");
     expect(rows["cronTriggers"]?.estimate).toBe(1);
   });
 
@@ -74,6 +76,31 @@ describe("Workers Free plan budget (SPEC 29.5, 15.7)", () => {
     expect(freePlanConfigProblems(paidModel).join(" ")).toContain("paid billing");
     const fastRuns = wrangler.replace('"RUN_MIN_INTERVAL_SECONDS": "240"', '"RUN_MIN_INTERVAL_SECONDS": "60"');
     expect(freePlanConfigProblems(fastRuns).join(" ")).toContain("RUN_MIN_INTERVAL_SECONDS must be 240");
+    // The values the peak-day estimates assume: rolls, retries, attempts and the run timeout.
+    const prodBlock = (from: string, to: string) => {
+      const at = wrangler.indexOf('"production"');
+      return wrangler.slice(0, at) + wrangler.slice(at).replace(from, to);
+    };
+    expect(freePlanConfigProblems(prodBlock('"LANDING_ROLL_SECONDS": "60"', '"LANDING_ROLL_SECONDS": "5"')).join(" ")).toContain("LANDING_ROLL_SECONDS must be at least 60");
+    expect(freePlanConfigProblems(prodBlock('"JOB_MAX_ATTEMPTS": "3"', '"JOB_MAX_ATTEMPTS": "5"')).join(" ")).toContain("JOB_MAX_ATTEMPTS must be at most 3");
+    expect(freePlanConfigProblems(prodBlock('"RUN_TIMEOUT_MINUTES": "45"', '"RUN_TIMEOUT_MINUTES": "90"')).join(" ")).toContain("RUN_TIMEOUT_MINUTES must be at most 45");
+    expect(freePlanConfigProblems(prodBlock('"max_retries": 3', '"max_retries": 10')).join(" ")).toContain("max_retries must be at most 3");
+  });
+
+  it("reports Artifact Registry and Secret Manager past the share without gating them", () => {
+    const rows = byId(inputs);
+    for (const id of ["artifactRegistryStorage", "secretVersions"] as const) {
+      expect(rows[id]?.gated).toBe(false);
+      expect(rows[id]?.estimate).toBeGreaterThan(rows[id]?.limit ?? 0);
+    }
+    expect(overBudget(budgetRows(inputs)).map((r) => r.id)).toEqual([]);
+    expect(renderBudget(budgetRows(inputs), null, [])).toContain("no (reported, not gated)");
+  });
+
+  it("puts the drill scenarios that do not fit under the guard into the next month", () => {
+    const rows = byId(inputs);
+    expect(rows["bigqueryQueries"]?.basis).toContain("5 of 6 drill scenarios");
+    expect(rows["bigqueryQueries"]?.estimate).toBe(246_000_000_000); // prod:e2e 60 GB + checks 6 GB + 5 x 36 GB
   });
 
   it("renders the README table without dashes in prose and replaces only the marked section", () => {

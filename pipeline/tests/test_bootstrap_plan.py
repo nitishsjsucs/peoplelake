@@ -26,6 +26,8 @@ class FakeRunner:
     def __init__(self, exists: bool, billing: str = "True"):
         self.exists = exists
         self.billing = billing
+        self.secret_value = "token-value"
+        self.enabled_versions = ["1"]
         self.calls = []
         self.kwargs = []
 
@@ -44,7 +46,9 @@ class FakeRunner:
         elif "get-default-service-account" in joined:
             rc, out = 0, "projects/peoplelake-123/serviceAccounts/123-compute@developer.gserviceaccount.com"
         elif "secrets versions access" in joined:
-            rc, out = (0, "token-value") if self.exists else (1, "")
+            rc, out = (0, self.secret_value) if self.exists else (1, "")
+        elif "secrets versions list" in joined:
+            rc, out = 0, "\n".join(self.enabled_versions)
         return subprocess.CompletedProcess(argv, rc, out, "")
 
 
@@ -399,3 +403,20 @@ def test_an_analyst_entry_on_the_restricted_dataset_is_removed(tmp_path, monkeyp
     assert [a.target for a in updates] == [
         "peoplelake-analyst@peoplelake-123.iam.gserviceaccount.com removed from peoplelake_restricted"
     ]
+
+
+def test_bootstrap_keeps_one_active_version_per_secret(tmp_path, monkeypatch):
+    """6 active versions are free per billing account (four repos): superseded versions are destroyed."""
+    boot, runner, gcloud = bootstrap(tmp_path, monkeypatch, exists=True)
+    runner.enabled_versions = ["3", "2", "1"]  # newest first; the latest is current
+    boot.run()
+    destroyed = [m for m in gcloud.mutations if "secrets versions destroy" in m]
+    assert len(destroyed) == 3 * 2
+    assert all(" 3 " not in f" {m.split('destroy', 1)[1]} " for m in destroyed)
+    (tmp_path / "rotated").mkdir()
+    boot, runner, gcloud = bootstrap(tmp_path / "rotated", monkeypatch, exists=True)
+    runner.secret_value = "old-value"  # a rotation: the plan adds a version, so every current one goes
+    runner.enabled_versions = ["2", "1"]
+    boot.run()
+    assert sum("secrets versions add" in m for m in gcloud.mutations) == 3
+    assert sum("secrets versions destroy" in m for m in gcloud.mutations) == 3 * 2

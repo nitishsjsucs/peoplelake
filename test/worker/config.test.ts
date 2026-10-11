@@ -91,13 +91,13 @@ describe("parseConfig fail-closed rules", () => {
       failureBackoffBaseMinutes: 5,
       failureBackoffMaxMinutes: 360,
       autoRunsMaxPerDay: 30,
-      bqMonthlyBytesCap: 275_000_000_000,
+      bqMonthlyBytesCap: 274_000_000_000,
     });
     expect(parseConfig(production(), null).heartbeatMinutes).toBe(0);
     fails({ ...production(), RUN_MIN_INTERVAL_SECONDS: "60" }, null, /RUN_MIN_INTERVAL_SECONDS >= 240/);
     fails({ ...production(), FAILURE_BACKOFF_BASE_MINUTES: "1" }, null, /FAILURE_BACKOFF_BASE_MINUTES >= 5/);
     fails({ ...production(), AUTO_RUNS_MAX_PER_DAY: "31" }, null, /AUTO_RUNS_MAX_PER_DAY <= 30/);
-    fails({ ...production(), BQ_MONTHLY_BYTES_CAP: "300000000000" }, null, /BQ_MONTHLY_BYTES_CAP <= 275000000000/);
+    fails({ ...production(), BQ_MONTHLY_BYTES_CAP: "300000000000" }, null, /BQ_MONTHLY_BYTES_CAP <= 274000000000/);
     fails({ ...production(), HEARTBEAT_MINUTES: "360" }, null, /HEARTBEAT_MINUTES=0/);
     fails({ ...production(), AI_DAILY_NEURON_CAP: "2001" }, null, /AI_DAILY_NEURON_CAP <= 2000/);
     fails({ ...production(), AI_MAX_TOKENS: "256" }, null, /AI_MAX_TOKENS <= 96/);
@@ -105,6 +105,9 @@ describe("parseConfig fail-closed rules", () => {
     // A runner seen within the window must still be polling: below its 15 s idle exit minus one 2 s poll.
     expect(parseConfig(production(), null).runnerSeenWindowSeconds).toBe(10);
     fails({ ...production(), RUNNER_SEEN_WINDOW_SECONDS: "60" }, null, /RUNNER_SEEN_WINDOW_SECONDS <= 10/);
+    fails({ ...production(), LANDING_ROLL_SECONDS: "5" }, null, /LANDING_ROLL_SECONDS >= 60/);
+    fails({ ...production(), JOB_MAX_ATTEMPTS: "4" }, null, /JOB_MAX_ATTEMPTS <= 3/);
+    fails({ ...production(), RUN_TIMEOUT_MINUTES: "46" }, null, /RUN_TIMEOUT_MINUTES <= 45/);
     fails({ ...local(), FAILURE_BACKOFF_BASE_MINUTES: "10", FAILURE_BACKOFF_MAX_MINUTES: "5" }, "127.0.0.1", /FAILURE_BACKOFF_MAX_MINUTES/);
     expect(parseConfig(local(), "127.0.0.1").guards.runMinIntervalSeconds).toBe(0);
   });

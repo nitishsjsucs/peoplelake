@@ -9,4 +9,6 @@ All secrets live in `.prod/*` (mode 600, gitignored), in the Worker secret `GCP_
 | `PL_CF_SETUP_TOKEN` | setup only | create a new custom token with the same three permissions (Access: Apps and Policies, Access: Service Tokens, AI Gateway, all edit) and replace it in `.prod/secrets.env` |
 | `.prod/gcp-dispatcher-key.json` | Worker secret `GCP_DISPATCHER_KEY` | `gcloud iam service-accounts keys list --iam-account peoplelake-dispatcher@<project>.iam.gserviceaccount.com`, delete the old key after moving the file aside, run `npm run setup:prod -- --only gcp` (creates a new key because the file is absent) and `--only worker` |
 
+Secret Manager versions: `bootstrap-gcp` keeps one active version per secret and destroys the superseded ones after adding a new one (the free tier is 6 active versions per billing account, shared with three other repos), so a rotation through `npm run setup:prod -- --only gcp` leaves no extra billed version behind. A version added by hand is destroyed by the next bootstrap run, or by `gcloud secrets versions destroy <version> --secret=<secret>`.
+
 Access signing keys rotate on Cloudflare's side every 6 weeks; the Worker fetches the team JWKS, so nothing changes here.

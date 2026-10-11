@@ -8,7 +8,8 @@ export const PRODUCTION_GUARDS = {
   FAILURE_BACKOFF_BASE_MINUTES: 5,
   FAILURE_BACKOFF_MAX_MINUTES: 360,
   AUTO_RUNS_MAX_PER_DAY: 30,
-  BQ_MONTHLY_BYTES_CAP: 275_000_000_000,
+  // At most 25% of the 1 TiB free tier (274,877,906,944 bytes), rounded down.
+  BQ_MONTHLY_BYTES_CAP: 274_000_000_000,
   HEARTBEAT_MINUTES: 0,
 } as const;
 
@@ -17,8 +18,14 @@ export const GUARD_BOUNDS = {
   runMinIntervalSecondsAtLeast: 240,
   failureBackoffBaseMinutesAtLeast: 5,
   autoRunsMaxPerDayAtMost: 30,
-  bqMonthlyBytesCapAtMost: 275_000_000_000,
+  bqMonthlyBytesCapAtMost: 274_000_000_000,
   heartbeatMinutesAtMost: 0,
+  // What the peak-day estimates assume (a smaller roll interval or more retries multiply Queue operations
+  // and Workflow steps); parseConfig and predeploy-check refuse values outside them.
+  landingRollSecondsAtLeast: 60,
+  queueMaxRetriesAtMost: 3,
+  jobMaxAttemptsAtMost: 3,
+  runTimeoutMinutesAtMost: 45,
 } as const;
 
 /** Bytes a transform run is assumed to bill (SPEC 29.5: about 3 GB, mostly the 10 MB minimum per table). */
@@ -127,6 +134,8 @@ export const ALLOWANCES = {
   bigqueryQueries: { label: "BigQuery queries", value: 1_099_511_627_776, unit: "bytes", scope: "a month, billing account", share: GOOGLE_PLANNING_SHARE, source: "https://cloud.google.com/bigquery/pricing" },
   bigqueryStorage: { label: "BigQuery storage", value: 10_737_418_240, unit: "bytes", scope: "a month, billing account", share: GOOGLE_PLANNING_SHARE, source: "https://cloud.google.com/bigquery/pricing" },
   cloudBuildMinutes: { label: "Cloud Build minutes", value: 2_500, unit: "build-minutes", scope: "a month, billing account", share: GOOGLE_PLANNING_SHARE, source: "https://cloud.google.com/build/pricing" },
+  artifactRegistryStorage: { label: "Artifact Registry storage", value: 500_000_000, unit: "bytes", scope: "a month, billing account", share: GOOGLE_PLANNING_SHARE, source: "https://cloud.google.com/artifact-registry/pricing" },
+  secretVersions: { label: "Secret Manager active versions", value: 6, unit: "versions", scope: "a month, billing account", share: GOOGLE_PLANNING_SHARE, source: "https://cloud.google.com/secret-manager/pricing" },
 } as const satisfies Record<string, Allowance>;
 
 /** Per-invocation limits on the Workers Free plan (not shared): CPU per request or step, subrequests. */
@@ -178,6 +187,12 @@ export const PEAK_DAY = {
   buildsPerMonth: 3,
   minutesPerBuild: 8,
   bqStorageBytes: 500_000_000,
+  // SPEC 29.5 estimates about 1.2 GB for 2 runner images (not measured); the cleanup policy keeps 1.
+  runnerImageBytes: 600_000_000,
+  runnerImagesKept: 1,
+  // One active version per secret: bootstrap destroys superseded versions (peoplelake-r2-catalog-token,
+  // peoplelake-runner-client-id, peoplelake-runner-client-secret).
+  secretActiveVersions: 3,
 } as const;
 
 // Runs of one cron expression per day (minute and hour fields: a star, a step such as "every 5", or a list).
@@ -221,12 +236,20 @@ export function budgetRows(i: BudgetInputs): BudgetRow[] {
   const requestsPerRoll = Math.ceil(ingestRequests / rolls);
   const rowsRead = runs * 100 + crons * 10 + ingestRequests * 2 + rolls * (requestsPerRoll + 10) + P.operatorRequests * 50;
   const duration = Math.ceil((2 * (i.deliveryMinutes + P.activeObjectMinutesExtra) * 60 + crons * P.secondsBilledPerCronActivation) * P.objectMemoryGb);
-  const goLiveTransforms = runs + i.drillScenarios * (i.drillChunks + 2) + P.goLiveOtherTransforms;
-  const bqMonth = Math.min(goLiveTransforms * P.bqBytesPerTransform, i.bqMonthlyBytesCap);
+  // BigQuery, unclamped: prod:e2e and the other go-live checks, then the drill scenarios the monthly guard
+  // lets into the same month (it stops before one that would pass the cap); the rest run the next month.
+  const transform = P.bqBytesPerTransform;
+  const otherBytes = P.goLiveOtherTransforms * transform;
+  const perScenario = (i.drillChunks + 2) * transform;
+  const roomForDrill = i.bqMonthlyBytesCap - runs * transform - otherBytes;
+  const drillThisMonth = Math.max(0, Math.min(i.drillScenarios, Math.floor(roomForDrill / perScenario)));
+  const bqGoLiveMonth = runs * transform + otherBytes + drillThisMonth * perScenario;
+  const bqNextMonth = (i.drillScenarios - drillThisMonth) * perScenario + otherBytes;
+  const bqMonth = Math.max(bqGoLiveMonth, bqNextMonth);
   const r2Bytes = i.deliveryEvents * P.ndjsonBytesPerRecord + P.icebergAndReportBytes;
-  const row = (id: keyof typeof ALLOWANCES, estimate: number, basis: string, limit?: number): BudgetRow => {
+  const row = (id: keyof typeof ALLOWANCES, estimate: number, basis: string, gated = true): BudgetRow => {
     const a: Allowance = ALLOWANCES[id];
-    return { id, label: a.label, estimate, limit: limit ?? Math.floor(a.value * a.share), allowance: a.value, unit: a.unit, scope: a.scope, share: a.share, basis, gated: true };
+    return { id, label: a.label, estimate, limit: Math.floor(a.value * a.share), allowance: a.value, unit: a.unit, scope: a.scope, share: a.share, basis, gated };
   };
   return [
     row("workerRequests", workerRequests, `ingest ${ingestRequests} (${i.deliveryEvents} events / ${i.maxBatchEvents} + ${ticks} ticks x ${i.sources} sources), runner ${runs * P.runnerCallsPerRun}, cron ${crons}, queue ${rolls}, Workflow ${runs * P.stepsPerCommittedRun}, operator ${P.operatorRequests}`),
@@ -251,11 +274,13 @@ export function budgetRows(i: BudgetInputs): BudgetRow[] {
     row(
       "bigqueryQueries",
       bqMonth,
-      `go-live month: ${goLiveTransforms} transforms x 3 GB (prod:e2e ${runs}, drill ${i.drillScenarios} x ${i.drillChunks + 2}), capped by the ${i.bqMonthlyBytesCap / 1e9} GB monthly guard`,
-      i.bqMonthlyBytesCap <= ALLOWANCES.bigqueryQueries.value * GOOGLE_PLANNING_SHARE * 1.001 ? i.bqMonthlyBytesCap : Math.floor(ALLOWANCES.bigqueryQueries.value * GOOGLE_PLANNING_SHARE),
+      `the larger of two months at 3 GB a transform: go-live ${Math.round(bqGoLiveMonth / 1e9)} GB (prod:e2e ${runs}, other checks ${P.goLiveOtherTransforms}, ${drillThisMonth} of ${i.drillScenarios} drill scenarios x ${i.drillChunks + 2} under the ${i.bqMonthlyBytesCap / 1e9} GB guard) and the next ${Math.round(bqNextMonth / 1e9)} GB (the remaining ${i.drillScenarios - drillThisMonth} of the drill), not clamped`,
     ),
     row("bigqueryStorage", P.bqStorageBytes, "raw table and models of one full delivery"),
     row("cloudBuildMinutes", P.buildsPerMonth * P.minutesPerBuild, `${P.buildsPerMonth} builds of about ${P.minutesPerBuild} minutes`),
+    // Reported, not gated: past the 25% planning share (SPEC 29.5), cents a month beyond the free tier.
+    row("artifactRegistryStorage", P.runnerImageBytes * P.runnerImagesKept, `${P.runnerImagesKept} runner image of about ${P.runnerImageBytes / 1e6} MB (SPEC 29.5 estimate, not measured); about $0.10 per GB-month beyond the free 0.5 GB`, false),
+    row("secretVersions", P.secretActiveVersions, `one active version of each of the ${P.secretActiveVersions} runner secrets (bootstrap destroys superseded versions); $0.06 per version-month beyond the free 6`, false),
   ];
 }
 

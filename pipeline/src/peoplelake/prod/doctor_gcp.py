@@ -13,7 +13,7 @@ once a `peoplelake-*` service account exists, since nothing can be billed to acc
 The project is shared by four repos: besides the resources, it checks that this repo's service accounts
 hold no project-level role other than `roles/bigquery.jobUser` and `roles/logging.logWriter`, that no
 `peoplelake_*` dataset has a default expiration, and the bytes billed this month by this repo's jobs
-(`peoplelake-*` service accounts or the `app=peoplelake` label) against the 275 GB monthly guard."""
+(`peoplelake-*` service accounts or the `app=peoplelake` label) against the 274 GB monthly guard."""
 
 from __future__ import annotations
 
@@ -494,8 +494,8 @@ def doctor(
         return Check(
             name,
             "PASS" if share < 0.9 else "WARN",
-            f"{b:,} bytes ({share:.1%} of the 275 GB monthly guard)",
-            "the guard skips transforms past 275 GB; drills resume next month with --scenarios",
+            f"{b:,} bytes ({share:.1%} of the 274 GB monthly guard)",
+            "the guard skips transforms past 274 GB; drills resume next month with --scenarios",
         )
 
     def files() -> Check:

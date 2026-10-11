@@ -33,6 +33,15 @@ describe("Workers Free plan configuration", () => {
     expect(predeployProblems(paid, state).join(" ")).toContain("limits (cpu_ms) is a Workers Paid setting");
   });
 
+  it("refuses a working tree whose peak-day estimate passes a planning share, before CI could", () => {
+    const rendered = renderWrangler(wrangler, state);
+    const at = rendered.indexOf('"production"');
+    const fastRolls = rendered.slice(0, at) + rendered.slice(at).replace('"LANDING_ROLL_SECONDS": "60"', '"LANDING_ROLL_SECONDS": "5"');
+    const problems = predeployProblems(fastRolls, state).join(" ");
+    expect(problems).toContain("LANDING_ROLL_SECONDS must be at least 60");
+    expect(problems).toContain("Queue operations: peak estimate 8664 passes the planning share 2000");
+  });
+
   it("sets the production run guards to the Free plan values (heartbeat off)", () => {
     const prod = config.env.production.vars;
     for (const [name, value] of Object.entries(PRODUCTION_GUARDS)) expect(prod[name], name).toBe(String(value));

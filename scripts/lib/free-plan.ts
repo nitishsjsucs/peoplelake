@@ -8,6 +8,7 @@ import {
   AI_PAID_BILLING_MODELS,
   type BudgetInputs,
   CRON_EXPRESSION,
+  GUARD_BOUNDS,
   PRODUCTION_GUARDS,
 } from "../../src/shared/free-budget.ts";
 import { parseJsonc } from "../render-wrangler.ts";
@@ -15,6 +16,7 @@ import { parseJsonc } from "../render-wrangler.ts";
 interface QueueConsumer {
   queue: string;
   max_retries?: number;
+  max_batch_size?: number;
 }
 
 interface EnvConfig {
@@ -74,6 +76,17 @@ export function freePlanConfigProblems(configText: string): string[] {
     };
     for (const [k, v] of Object.entries(expected)) {
       if (vars[k] !== v) problems.push(`production ${k} must be ${v} (is ${vars[k] ?? "unset"})`);
+    }
+    // Values the peak-day estimates assume (more rolls, retries or attempts multiply Queue operations and
+    // Workflow steps): the same bounds parseConfig enforces in production.
+    const b = GUARD_BOUNDS;
+    const n = (k: string, fallback: number) => (/^\d+$/.test(vars[k] ?? "") ? Number(vars[k]) : fallback);
+    if (n("LANDING_ROLL_SECONDS", 60) < b.landingRollSecondsAtLeast) problems.push(`production LANDING_ROLL_SECONDS must be at least ${b.landingRollSecondsAtLeast}`);
+    if (n("JOB_MAX_ATTEMPTS", 3) > b.jobMaxAttemptsAtMost) problems.push(`production JOB_MAX_ATTEMPTS must be at most ${b.jobMaxAttemptsAtMost}`);
+    if (n("RUN_TIMEOUT_MINUTES", 10) > b.runTimeoutMinutesAtMost) problems.push(`production RUN_TIMEOUT_MINUTES must be at most ${b.runTimeoutMinutesAtMost}`);
+    for (const c of prod.queues?.consumers ?? []) {
+      if ((c.max_retries ?? 3) > b.queueMaxRetriesAtMost) problems.push(`production queue consumer ${c.queue}: max_retries must be at most ${b.queueMaxRetriesAtMost}`);
+      if (c.max_batch_size !== undefined && c.max_batch_size > 10) problems.push(`production queue consumer ${c.queue}: max_batch_size must be at most 10`);
     }
     if (!(prod.r2_buckets ?? []).some((b) => b.binding === "LAKE_BUCKET" && b.bucket_name === "peoplelake-lake")) {
       problems.push("production must bind LAKE_BUCKET to peoplelake-lake (the landing)");

@@ -656,11 +656,13 @@ class Bootstrap:
                 self.act("secrets", "create", secret)
             else:
                 current = self.g.read(["secrets", "versions", "access", "latest", f"--secret={secret}"])
-                if current.returncode == 0 and current.stdout == value:
+                added = not (current.returncode == 0 and current.stdout == value)
+                if not added:
                     self.act("secrets", "exists", secret, "latest version current")
                 else:
                     self.g.mutate(["secrets", "versions", "add", secret, "--data-file=-"], stdin=value)
                     self.act("secrets", "update", secret, "new version")
+                self.prune_secret_versions(secret, new_version_pending=added and self.g.plan)
             # Every secret, new or existing: the runner job is deployed with --set-secrets for all three, so a
             # secret created in this run needs the binding before the job deploy (idempotent).
             self.g.mutate(
@@ -673,6 +675,26 @@ class Bootstrap:
                     "--quiet",
                 ]
             )
+
+    def prune_secret_versions(self, secret: str, *, new_version_pending: bool) -> None:
+        """Keep one active version per secret: the free tier is 6 active versions per billing account,
+        shared with three other repos, and every rotation would otherwise add one for good. Destroys every
+        enabled version but the newest (all of them in a plan that is about to add a new one)."""
+        listed = self.g.read(
+            [
+                "secrets",
+                "versions",
+                "list",
+                secret,
+                "--filter=state:ENABLED",
+                "--sort-by=~createTime",
+                "--format=value(name.basename())",
+            ]
+        )
+        versions = [v for v in listed.stdout.split() if v] if listed.returncode == 0 else []
+        for version in versions[0 if new_version_pending else 1 :]:
+            self.g.mutate(["secrets", "versions", "destroy", version, f"--secret={secret}", "--quiet"])
+            self.act("secrets", "update", f"{secret} version {version}", "superseded version destroyed")
 
     # 7, 8 ---------------------------------------------------------------------------------------------
     def artifact_registry_and_build(self) -> str:

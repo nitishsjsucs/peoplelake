@@ -61,20 +61,20 @@ const pct = (x: number) => `${(x * 100).toFixed(x < 0.01 ? 2 : 1)}%`;
 
 export function renderBudget(rows: readonly BudgetRow[], cpu: CpuEvidence | null, problems: readonly string[]): string {
   const lines = [
-    "Computed by `npm run budget` from the repo's constants and `wrangler.jsonc` `env.production` (estimates, not measurements, except the CPU row). The go-live day is the peak: one 60-minute delivery of 100,000 events from three sources posting every 10 s, the runs it triggers, the cron, the doctor and the 60-question Workers AI eval. Planning share: 20% of each account-wide Cloudflare allowance, 25% of each Google free tier.",
+    "Computed by `npm run budget` from the repo's constants and `wrangler.jsonc` `env.production` (estimates, not measurements; the CPU row is a Node measurement standing in for workerd). Rows marked \"reported, not gated\" pass this repo's planning share by the SPEC's own estimate and cost cents a month beyond the free tier; `--check` fails on every other row. The go-live day is the peak: one 60-minute delivery of 100,000 events from three sources posting every 10 s, the runs it triggers, the cron, the doctor and the 60-question Workers AI eval. Planning share: 20% of each account-wide Cloudflare allowance, 25% of each Google free tier.",
     "",
     "| Path | Free allowance | Planning share | Peak estimate | Share of the allowance | Within share | Basis |",
     "|---|---|---:|---:|---:|---|---|",
   ];
   for (const r of rows) {
     lines.push(
-      `| ${r.label} | ${fmt(r.allowance, r.unit)} ${r.unit === "bytes" ? "" : `${r.unit} `}(${r.scope}) | ${fmt(r.limit, r.unit)} | ${fmt(r.estimate, r.unit)} | ${pct(r.estimate / r.allowance)} | ${r.estimate <= r.limit ? "yes" : "NO"} | ${r.basis} |`,
+      `| ${r.label} | ${fmt(r.allowance, r.unit)} ${r.unit === "bytes" ? "" : `${r.unit} `}(${r.scope}) | ${fmt(r.limit, r.unit)} | ${fmt(r.estimate, r.unit)} | ${pct(r.estimate / r.allowance)} | ${r.estimate <= r.limit ? "yes" : r.gated ? "NO" : "no (reported, not gated)"} | ${r.basis} |`,
     );
   }
   if (cpu) {
     const ok = cpu.warmP99Ms < FREE_CPU_MS && cpu.firstAfterPrewarmMs < FREE_CPU_MS;
     lines.push(
-      `| CPU per ingest request (${cpu.batchLimit} events) | ${FREE_CPU_MS} ms per request | ${FREE_CPU_MS} ms | warm p99 ${cpu.warmP99Ms} ms, first after prewarm ${cpu.firstAfterPrewarmMs} ms | ${pct(Math.max(cpu.warmP99Ms, cpu.firstAfterPrewarmMs) / FREE_CPU_MS)} | ${ok ? "yes" : "NO"} | measured: \`${cpu.file}\` (${cpu.date}), the worst of the three sources |`,
+      `| CPU per ingest request (${cpu.batchLimit} events) | ${FREE_CPU_MS} ms per request | ${FREE_CPU_MS} ms | warm p99 ${cpu.warmP99Ms} ms, first after prewarm ${cpu.firstAfterPrewarmMs} ms | ${pct(Math.max(cpu.warmP99Ms, cpu.firstAfterPrewarmMs) / FREE_CPU_MS)} | ${ok ? "yes" : "NO"} | measured in Node as a proxy for workerd (not yet on Cloudflare): \`${cpu.file}\` (${cpu.date}), the worst of the three sources |`,
     );
   }
   lines.push("", problems.length === 0 ? "Configuration rules (no `pipelines`, no `limits`, one `*/5 * * * *` cron, SQLite Durable Objects only, the production guard values, a Free plan model): all hold." : `Configuration rules broken: ${problems.join("; ")}.`);
@@ -123,7 +123,8 @@ function main(): number {
     ];
     for (const f of failures) console.error(`budget: ${f}`);
     if (failures.length > 0) return 1;
-    console.log("\nbudget: every estimate is within its planning share");
+    const reported = rows.filter((r) => !r.gated && r.estimate > r.limit).map((r) => r.label);
+    console.log(`\nbudget: every gated estimate is within its planning share${reported.length ? `; reported past the share: ${reported.join(", ")}` : ""}`);
   }
   return 0;
 }

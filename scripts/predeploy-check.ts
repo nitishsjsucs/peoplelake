@@ -3,7 +3,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { freePlanConfigProblems } from "./lib/free-plan.ts";
+import { budgetRows, overBudget } from "../src/shared/free-budget.ts";
+import { budgetInputsFromConfig, freePlanConfigProblems } from "./lib/free-plan.ts";
 import type { ProdState } from "./lib/prod-state.ts";
 import { parseJsonc } from "./render-wrangler.ts";
 
@@ -48,8 +49,13 @@ export function predeployProblems(configText: string, state: Pick<ProdState, "gc
   if (!/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com$/.test(vars["ACCESS_TEAM_DOMAIN"] ?? "")) {
     problems.push("ACCESS_TEAM_DOMAIN must be https://<team>.cloudflareaccess.com");
   }
-  // Workers Free plan (SPEC 29): nothing that needs Workers Paid, and the budget's production values.
+  // Workers Free plan (SPEC 29): nothing that needs Workers Paid, the budget's production values, and every
+  // gated peak-day estimate of this config within its planning share (what `npm run budget -- --check`
+  // checks in CI, here for the working tree that is about to be deployed).
   problems.push(...freePlanConfigProblems(configText));
+  for (const r of overBudget(budgetRows(budgetInputsFromConfig(configText)))) {
+    problems.push(`${r.label}: peak estimate ${r.estimate} passes the planning share ${r.limit}`);
+  }
   if (config.assets) {
     const first = config.assets.run_worker_first;
     const missing = Array.isArray(first) ? API_PATHS.filter((p) => !first.includes(p)) : first === true ? [] : API_PATHS;

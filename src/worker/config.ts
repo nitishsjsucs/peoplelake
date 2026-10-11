@@ -183,6 +183,10 @@ export function parseConfig(env: ConfigEnv, requestHost: string | null): AppConf
       throw new ConfigError(`production requires BQ_MONTHLY_BYTES_CAP <= ${b.bqMonthlyBytesCapAtMost}`);
     }
     if (heartbeatMinutes > b.heartbeatMinutesAtMost) throw new ConfigError("production requires HEARTBEAT_MINUTES=0 (heartbeat off)");
+    const landingRoll = int(env, "LANDING_ROLL_SECONDS", 60, 1);
+    if (landingRoll < b.landingRollSecondsAtLeast) throw new ConfigError(`production requires LANDING_ROLL_SECONDS >= ${b.landingRollSecondsAtLeast}`);
+    if (int(env, "JOB_MAX_ATTEMPTS", 3, 1) > b.jobMaxAttemptsAtMost) throw new ConfigError(`production requires JOB_MAX_ATTEMPTS <= ${b.jobMaxAttemptsAtMost}`);
+    if (int(env, "RUN_TIMEOUT_MINUTES", 10, 1) > b.runTimeoutMinutesAtMost) throw new ConfigError(`production requires RUN_TIMEOUT_MINUTES <= ${b.runTimeoutMinutesAtMost}`);
     if (runnerSeenWindowSeconds > RUNNER_SEEN_WINDOW_SECONDS_AT_MOST) {
       throw new ConfigError(
         `production requires RUNNER_SEEN_WINDOW_SECONDS <= ${RUNNER_SEEN_WINDOW_SECONDS_AT_MOST} (the runner exits after ${RUNNER_IDLE_EXIT_SECONDS} idle seconds)`,

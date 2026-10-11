@@ -371,7 +371,7 @@ def _cmd_eval_scenarios(args: argparse.Namespace) -> int:
         print(f"scenario {scenario}: passed={result['passed']} in {result['duration_s']} s", flush=True)
         return result
 
-    # The BigQuery drill stops before a scenario that would pass the 275 GB monthly guard (SPEC 29.4.6).
+    # The BigQuery drill stops before a scenario that would pass the 274 GB monthly guard (SPEC 29.4.6).
     month_billed = drill_target().month_billed if args.target == "prod-drill" else None
     try:
         results, deferred, billed = run_scenarios(wanted, run_one, month_billed=month_billed, chunks=chunks)
@@ -381,7 +381,7 @@ def _cmd_eval_scenarios(args: argparse.Namespace) -> int:
     if deferred:
         print(
             f"eval scenarios: stopping before {deferred[0]}: {billed:,} bytes billed this month and about "
-            f"{(chunks + 2) * 3} GB more would pass the 275 GB monthly guard; next month run "
+            f"{(chunks + 2) * 3} GB more would pass the 274 GB monthly guard; next month run "
             f"--scenarios {','.join(deferred)}",
             file=sys.stderr,
         )

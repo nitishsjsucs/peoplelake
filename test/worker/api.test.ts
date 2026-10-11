@@ -64,7 +64,7 @@ describe("API role gates", () => {
     expect(Object.keys(body.runs)).toEqual(
       expect.arrayContaining(["automatic_today", "automatic_max_per_day", "consecutive_failures", "failure_backoff_until", "workflow_steps_today"]),
     );
-    expect(body.bigquery).toMatchObject({ ok: true, cap_bytes: 275_000_000_000, reserve_bytes: 3_000_000_000 });
+    expect(body.bigquery).toMatchObject({ ok: true, cap_bytes: 274_000_000_000, reserve_bytes: 3_000_000_000 });
     expect(body.durable_objects.rows_read_today).toBeGreaterThan(0);
   });
 

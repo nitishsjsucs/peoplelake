@@ -269,7 +269,7 @@ export function opsBudgetChecks(b: OpsBudget): Check[] {
     within("Workflow steps today", runs.workflow_steps_today ?? 0, share(3_000), "steps (20% of 3,000)"),
     within("automatic runs today", runs.automatic_today ?? 0, runs.automatic_max_per_day ?? 30, "(daily cap)"),
     within("Workers AI neurons today", b.workers_ai?.neurons_today ?? 0, b.workers_ai?.cap ?? 1_800, "neurons (daily cap)"),
-    within(`BigQuery bytes billed this month (${b.bigquery?.month ?? "?"})`, b.bigquery?.bytes_billed ?? 0, b.bigquery?.cap_bytes ?? 275_000_000_000, "bytes (monthly guard)"),
+    within(`BigQuery bytes billed this month (${b.bigquery?.month ?? "?"})`, b.bigquery?.bytes_billed ?? 0, b.bigquery?.cap_bytes ?? 274_000_000_000, "bytes (monthly guard)"),
     (runs.consecutive_failures ?? 0) > 0
       ? { name: "failure backoff", status: "WARN", detail: `${runs.consecutive_failures} consecutive failed runs; automatic runs wait until ${new Date(runs.failure_backoff_until ?? 0).toISOString()}`, fix: "GET /api/runs to see the error" }
       : { name: "failure backoff", status: "PASS", detail: "no consecutive failures" },

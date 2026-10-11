@@ -1,8 +1,8 @@
 [
   {
-    "name": "keep-2-most-recent",
+    "name": "keep-1-most-recent",
     "action": { "type": "Keep" },
-    "mostRecentVersions": { "keepCount": 2 }
+    "mostRecentVersions": { "keepCount": 1 }
   },
   {
     "name": "delete-older",

@@ -261,7 +261,7 @@ describe("doctor on the Workers Free plan", () => {
       durable_objects: { rows_read_today: 12_000, rows_written_today: 25_000 },
       runs: { automatic_today: 4, automatic_max_per_day: 30, consecutive_failures: 2, failure_backoff_until: Date.parse("2026-10-12T00:10:00Z"), workflow_steps_today: 40 },
       workers_ai: { neurons_today: 34, cap: 1800 },
-      bigquery: { bytes_billed: 3_000_000_000, cap_bytes: 275_000_000_000, month: "2026-10" },
+      bigquery: { bytes_billed: 3_000_000_000, cap_bytes: 274_000_000_000, month: "2026-10" },
     });
     const by = Object.fromEntries(checks.map((c) => [c.name, c]));
     expect(by["Durable Object rows written today"]).toMatchObject({ status: "WARN", detail: "25,000 of 20,000 rows (20% of 100,000)" });
