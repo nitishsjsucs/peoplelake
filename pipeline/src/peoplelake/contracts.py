@@ -24,6 +24,9 @@ ApplicationId = Annotated[str, StringConstraints(pattern=r"^A\d{6}$")]
 CandidateId = Annotated[str, StringConstraints(pattern=r"^C\d{6}$")]
 OfferId = Annotated[str, StringConstraints(pattern=r"^O\d{6}$")]
 Code = Annotated[str, StringConstraints(min_length=1, max_length=64)]
+
+# Mirrors MAX_BATCH_EVENTS in src/shared/contracts.ts: at most 50 events per ingest request (Workers Free CPU).
+MAX_BATCH_EVENTS = 50
 NonEmpty = Annotated[str, StringConstraints(min_length=1)]
 NonNegInt = Annotated[int, Field(ge=0, le=2**53 - 1)]
 PosInt = Annotated[int, Field(gt=0, le=2**53 - 1)]
@@ -178,7 +181,7 @@ HrisEvent = Annotated[
 
 
 class HrisBatch(Strict):
-    events: Annotated[list[HrisEvent], Field(min_length=1, max_length=500)]
+    events: Annotated[list[HrisEvent], Field(min_length=1, max_length=MAX_BATCH_EVENTS)]
 
 
 # --- ats ----------------------------------------------------------------------------------------
@@ -302,7 +305,7 @@ AtsRecord = Annotated[
 
 
 class AtsBatch(Strict):
-    records: Annotated[list[AtsRecord], Field(min_length=1, max_length=500)]
+    records: Annotated[list[AtsRecord], Field(min_length=1, max_length=MAX_BATCH_EVENTS)]
 
 
 # --- talent -------------------------------------------------------------------------------------
@@ -346,7 +349,7 @@ TalentItem = Annotated[TalentComp | TalentReview, Field(discriminator="kind")]
 
 
 class TalentBatch(Strict):
-    items: Annotated[list[TalentItem], Field(min_length=1, max_length=500)]
+    items: Annotated[list[TalentItem], Field(min_length=1, max_length=MAX_BATCH_EVENTS)]
 
 
 # --- raw record ---------------------------------------------------------------------------------

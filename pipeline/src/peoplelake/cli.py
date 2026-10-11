@@ -390,7 +390,9 @@ def _cmd_eval_freshness(args: argparse.Namespace) -> int:
     minutes = float(args.duration[:-1]) * (60 if unit == "h" else 1) if unit in "mh" else float(args.duration)
     rate = None if args.rate == "auto" else float(args.rate)
     try:
-        report = run_freshness(args.profile, minutes, workdir=data_dir() / "eval", rate=rate)
+        report = run_freshness(
+            args.profile, minutes, workdir=data_dir() / "eval", rate=rate, tick_seconds=args.tick_seconds
+        )
     except EvalError as exc:
         print(f"eval freshness: {exc}", file=sys.stderr)
         return 1
@@ -485,7 +487,7 @@ def _cmd_prod(args: argparse.Namespace) -> int:
 
         unit = args.duration[-1]
         minutes = float(args.duration[:-1]) * (60 if unit == "h" else 1) if unit in "mh" else float(args.duration)
-        print(json.dumps(e2e(minutes), indent=2))
+        print(json.dumps(e2e(minutes, tick_seconds=args.tick_seconds), indent=2))
         return 0
     if args.prod_command == "deploy-runner":
         from .prod.bootstrap_gcp import Bootstrap, Gcloud, git_head, real_clients
@@ -540,7 +542,13 @@ def _cmd_sim_deliver(args: argparse.Namespace) -> int:
         return 2
     unit = args.duration[-1]
     minutes = float(args.duration[:-1]) * (60 if unit == "h" else 1) if unit in "mh" else float(args.duration)
-    record = deliver(target=args.target, profile=args.profile, mode=args.mode, duration_minutes=minutes)
+    record = deliver(
+        target=args.target,
+        profile=args.profile,
+        mode=args.mode,
+        duration_minutes=minutes,
+        tick_seconds=args.tick_seconds,
+    )
     print(json.dumps(record))
     return 0
 
@@ -614,6 +622,12 @@ def build_parser() -> argparse.ArgumentParser:
     dl.add_argument("--scenario", default="baseline")
     dl.add_argument("--mode", choices=["chunk", "live"], default="chunk")
     dl.add_argument("--duration", default="60m")
+    dl.add_argument(
+        "--tick-seconds",
+        type=float,
+        default=None,
+        help="live mode: post every N seconds (default 10 in production, 1 locally)",
+    )
     dl.set_defaults(func=_cmd_sim_deliver)
 
     runner = sub.add_parser("runner", help="claim and run warehouse jobs")
@@ -660,6 +674,9 @@ def build_parser() -> argparse.ArgumentParser:
     fr.add_argument("--profile", choices=["small", "full"], default="full")
     fr.add_argument("--duration", default="60m", help="for example 60m or 1h")
     fr.add_argument("--rate", default="auto", help="events per second, or auto = events / duration")
+    fr.add_argument(
+        "--tick-seconds", type=float, default=1.0, help="local live delivery: post every N seconds (default 1)"
+    )
     fr.add_argument("--from-delivery", help="production: the prod:e2e delivery id (default: the latest)")
     fr.add_argument("--out")
     fr.set_defaults(func=_cmd_eval_freshness)
@@ -704,6 +721,7 @@ def build_parser() -> argparse.ArgumentParser:
     ver.set_defaults(func=_cmd_prod)
     e2e_p = prod_sub.add_parser("e2e", help="one live delivery of the full profile, verify, production freshness")
     e2e_p.add_argument("--duration", default="60m")
+    e2e_p.add_argument("--tick-seconds", type=float, default=10.0, help="sources post every N seconds (default 10)")
     e2e_p.set_defaults(func=_cmd_prod)
     prod_sub.add_parser("demo-masking", help="query restricted columns as pl-analyst").set_defaults(func=_cmd_prod)
     dr = prod_sub.add_parser("drill-restore", help="time-travel restore into _drill datasets and compare digests")

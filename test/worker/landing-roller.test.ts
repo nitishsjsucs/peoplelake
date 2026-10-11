@@ -2,7 +2,7 @@ import { env, reset, runDurableObjectAlarm, runInDurableObject, SELF } from "clo
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import raw from "../../contracts/golden/raw-records.json";
 import type { RawRecord } from "../../src/shared/contracts.ts";
-import { toNdjson } from "../../src/worker/ingest/routes.ts";
+import { toNdjson } from "../../src/worker/ingest/normalize.ts";
 import { lakeEventMessage, type LandingRoller, rollKey } from "../../src/worker/lake/landing-roller.ts";
 import { coordinatorStub } from "../../src/worker/orchestration/coordinator.ts";
 import { bufferedRows, rollerStub, rollFiles } from "../helpers/landing.ts";

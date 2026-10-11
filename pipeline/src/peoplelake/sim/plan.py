@@ -1,15 +1,23 @@
 """Delivery plans for the baseline and the five scenarios (SPEC 16.1).
 
 A plan is a list of chunks; each chunk is a list of requests (source, envelopes) delivered in order,
-after which the driver forces a sink roll and waits for the run that loads it. Counts are for the full
-profile and scale by 1/10 for the small profile; run numbers and file counts stay the same.
+after which the driver forces a landing roll and waits for the run that loads it. Counts are for the full
+profile and scale by 1/10 for the small profile; run numbers and file counts stay the same. Requests carry
+at most MAX_BATCH envelopes in every environment (the Worker's 50-event limit, SPEC 29.4.2), so tests
+and production share one request shape; output digests do not depend on the batch size.
+
+`live_ticks` is the live-mode schedule (`sim deliver --mode live`, the freshness eval, `prod:e2e`): the
+events due in each tick, sent as one request per source per 50 events. Production sources post every
+10 s, so a 60-minute delivery of the full profile makes at most 100,000 / 50 + 360 x 3 = 3,080 requests.
 """
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from dataclasses import dataclass, field
 
+from ..contracts import MAX_BATCH_EVENTS
 from ..generator import Dataset
 from ..prng import SplitMix64
 from ..warehouse.direct import canonical_order, envelopes_from_dataset
@@ -23,7 +31,9 @@ SCENARIO_NAMES = {
     "S4": "recovery-step-failures",
     "S5": "recovery-warehouse-rebuild",
 }
-MAX_BATCH = 500
+MAX_BATCH = MAX_BATCH_EVENTS
+PROD_TICK_SECONDS = 10.0
+LOCAL_TICK_SECONDS = 1.0
 SEED = 20261010
 TYPE_FIELD = {"hris": "eventType", "ats": "type", "talent": "kind"}
 
@@ -74,6 +84,25 @@ def _batches(entries: list[tuple[str, list[dict]]]) -> list[Request]:
     for i in range(max((len(q) for q in queues), default=0)):
         out += [q[i] for q in queues if i < len(q)]
     return out
+
+
+def live_ticks(items: list[tuple[str, dict]], duration_s: float, tick_s: float) -> list[list[Request]]:
+    """Live delivery schedule: tick k carries items [k*n/T, (k+1)*n/T) for T = ceil(duration / tick), each
+    source's events in order in requests of at most MAX_BATCH (sources alternate by first appearance)."""
+    n_ticks = max(1, math.ceil(duration_s / tick_s))
+    ticks: list[list[Request]] = []
+    for k in range(n_ticks):
+        by_source: dict[str, list[dict]] = {}
+        for source, env in items[k * len(items) // n_ticks : (k + 1) * len(items) // n_ticks]:
+            by_source.setdefault(source, []).append(env)
+        ticks.append(
+            [
+                Request(s, envs[i : i + MAX_BATCH])
+                for s, envs in by_source.items()
+                for i in range(0, len(envs), MAX_BATCH)
+            ]
+        )
+    return ticks
 
 
 def _baseline_chunks(items: list[tuple[str, dict]], n_chunks: int) -> list[list[Request]]:

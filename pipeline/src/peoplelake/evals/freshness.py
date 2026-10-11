@@ -1,5 +1,5 @@
 """Freshness eval (SPEC 16.2): deliver a profile at a constant rate through the local stack in live mode
-(60 s sink rolls, the cron ticker every 60 s, single-flight runs) and measure, per unique event, the
+(60 s landing rolls, the cron ticker, single-flight runs) and measure, per unique event, the
 commit time of the run that published it minus its first receipt by the Worker.
 
 Numbers come from the Coordinator ledger (10 s buckets of first receipt against `published_at`, so each
@@ -19,7 +19,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ..generator import generate, get_profile
-from ..sim.plan import MAX_BATCH
+from ..sim.client import DeliveryStats
+from ..sim.deliver import send_live
+from ..sim.plan import LOCAL_TICK_SECONDS
 from ..stack import LocalStack
 from ..warehouse.direct import canonical_order, envelopes_from_dataset
 from .scenarios import EvalError, clients
@@ -53,23 +55,16 @@ def summarize(values: list[tuple[float, int]]) -> dict:
     }
 
 
-def _deliver_paced(sources, items: list[tuple[str, dict]], rate: float, *, tick: float = 1.0) -> dict:
+def _deliver_paced(sources, items: list[tuple[str, dict]], rate: float, *, tick: float = LOCAL_TICK_SECONDS) -> dict:
     start = time.monotonic()
-    sent = 0
-    requests = 0
-    while sent < len(items):
-        target = min(len(items), int(rate * (time.monotonic() - start)) + 1)
-        if target > sent:
-            by_source: dict[str, list[dict]] = {}
-            for source, env in items[sent:target]:
-                by_source.setdefault(source, []).append(env)
-            for source, envs in by_source.items():
-                for i in range(0, len(envs), MAX_BATCH):
-                    sources.deliver(source, envs[i : i + MAX_BATCH])
-                    requests += 1
-            sent = target
-        time.sleep(tick)
-    return {"delivered": sent, "requests": requests, "seconds": round(time.monotonic() - start, 1)}
+    stats = DeliveryStats()
+    send_live(sources, items, len(items) / rate, tick, stats)
+    return {
+        "delivered": stats.records,
+        "requests": stats.requests,
+        "seconds": round(time.monotonic() - start, 1),
+        "tick_seconds": tick,
+    }
 
 
 def run_freshness(
@@ -78,6 +73,7 @@ def run_freshness(
     *,
     workdir: Path,
     rate: float | None = None,
+    tick_seconds: float = LOCAL_TICK_SECONDS,
     quiesce_timeout: float = 1800.0,
 ) -> dict:
     ds = generate(get_profile(profile))
@@ -90,7 +86,7 @@ def run_freshness(
     try:
         c = clients()
         delivery_start = time.time()
-        delivery = _deliver_paced(c.sources, items, rate)
+        delivery = _deliver_paced(c.sources, items, rate, tick=tick_seconds)
         deadline = time.monotonic() + quiesce_timeout
         while True:
             fresh = c.operator.freshness("7d")

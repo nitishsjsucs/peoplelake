@@ -6,9 +6,9 @@ import ats from "../../contracts/fixtures/source-ats.valid.json";
 import hris from "../../contracts/fixtures/source-hris.valid.json";
 import talent from "../../contracts/fixtures/source-talent.valid.json";
 import { MAX_BATCH_EVENTS, RAW_RECORD_COLUMNS, type RawRecord } from "../../src/shared/contracts.ts";
-import type { SourceId } from "../../src/shared/sources.ts";
-import { normalize } from "../../src/worker/ingest/normalize.ts";
-import { toNdjson } from "../../src/worker/ingest/routes.ts";
+import { ATS_EVENT_TYPES, HRIS_EVENT_TYPES, type SourceId, TALENT_EVENT_TYPES } from "../../src/shared/sources.ts";
+import { PREWARMED } from "../../src/worker/ingest/prewarm.ts";
+import { normalize, toNdjson } from "../../src/worker/ingest/normalize.ts";
 import { coordinatorStub } from "../../src/worker/orchestration/coordinator.ts";
 import { bufferedRecords, bufferedRows, rollerStub } from "../helpers/landing.ts";
 import { call } from "../helpers/tokens.ts";
@@ -82,9 +82,14 @@ describe("POST /v1/ingest/:source", () => {
     expect(await bufferedRecords()).toHaveLength(0);
   });
 
-  it("enforces the MAX_BATCH_EVENTS and 1 MiB limits", async () => {
-    const tooMany = { events: Array.from({ length: MAX_BATCH_EVENTS + 1 }, () => hris.events[0]) };
-    expect((await post("hris", "hris", tooMany)).status).toBe(422);
+  it("enforces the 50-event (Workers Free CPU) and 1 MiB limits", async () => {
+    expect(MAX_BATCH_EVENTS).toBe(50);
+    const tooMany = { events: Array.from({ length: 51 }, () => hris.events[0]) };
+    const refused = await post("hris", "hris", tooMany);
+    expect(refused.status).toBe(422);
+    expect(JSON.stringify(await refused.json())).toContain("50");
+    const fifty = { events: Array.from({ length: 50 }, () => hris.events[0]) };
+    expect(await (await post("hris", "hris", fifty)).json()).toMatchObject({ accepted: 50 });
     const huge = { events: [{ ...hris.events[0], padding: "x".repeat(1024 * 1024) }] };
     expect((await post("hris", "hris", huge)).status).toBe(413);
     const invalidJson = await call("/v1/ingest/hris", "hris", { method: "POST", body: "{not json" });
@@ -100,6 +105,16 @@ describe("POST /v1/ingest/:source", () => {
     expect(buffered[0]?.event_id).toBe(buffered[1]?.event_id);
     expect(buffered[0]?.delivery_id).not.toBe(buffered[1]?.delivery_id);
     expect(buffered[0]?.payload_sha256).toBe(buffered[1]?.payload_sha256);
+  });
+});
+
+describe("schema prewarm", () => {
+  it("runs the whole ingest path for one envelope of every event type when the module is imported", () => {
+    expect([...new Set(PREWARMED.hris)].sort()).toEqual([...HRIS_EVENT_TYPES].sort());
+    expect([...new Set(PREWARMED.ats)].sort()).toEqual([...ATS_EVENT_TYPES].sort());
+    expect([...new Set(PREWARMED.talent)].sort()).toEqual([...TALENT_EVENT_TYPES].sort());
+    expect(PREWARMED.raw_record).toBe(true);
+    expect(PREWARMED.normalized).toBe(18);
   });
 });
 

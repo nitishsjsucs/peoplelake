@@ -247,7 +247,9 @@ export const TalentItem = z.discriminatedUnion("kind", [
 ]);
 export type TalentItem = z.infer<typeof TalentItem>;
 
-export const MAX_BATCH_EVENTS = 500;
+// At most 50 events per request: a 50-event request measured 2.8 to 3.7 ms of CPU at p99 against the
+// Workers Free plan's 10 ms per request (500 events: 16 to 22 ms). SPEC 29.4.2, `npm run bench:ingest`.
+export const MAX_BATCH_EVENTS = 50;
 export const MAX_BODY_BYTES = 1024 * 1024;
 
 export const HrisBatch = z.object({ events: z.array(HrisEvent).min(1).max(MAX_BATCH_EVENTS) }).strict();

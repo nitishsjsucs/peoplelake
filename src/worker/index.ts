@@ -5,6 +5,7 @@ import { mountInternalApi } from "./api/internal.ts";
 import { mountOpsApi } from "./api/ops.ts";
 import { mountPublicApi } from "./api/public.ts";
 import { createApp } from "./app.ts";
+import "./ingest/prewarm.ts"; // module scope: zod setup runs at isolate startup, not in the first request
 import { mountIngest } from "./ingest/routes.ts";
 import { handleLakeEvents } from "./lake/lake-events.ts";
 import { runScheduled } from "./orchestration/triggers.ts";

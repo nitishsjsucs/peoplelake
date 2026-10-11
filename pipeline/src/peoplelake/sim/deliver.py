@@ -4,7 +4,9 @@ Local: dev JWTs against wrangler dev. Production: Access service-token headers f
 against https://peoplelake.<subdomain>.workers.dev. `--mode live` paces the whole profile over
 `--duration` (the production freshness measurement uses exactly one such delivery); `--mode chunk`
 sends it as fast as possible. Each delivery writes a record with its id, window and counts, which
-`peoplelake eval freshness --target prod --from-delivery <id>` reads.
+`peoplelake eval freshness --target prod --from-delivery <id>` reads. Live mode posts once per tick:
+every 10 s in production (at most 50 events per request, so at most 3,080 requests for the full profile)
+and every second locally unless `--tick-seconds` says otherwise.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from ..envfile import read_env_file
 from ..generator import generate, get_profile
 from ..paths import data_dir, repo_root
 from ..sim.client import DeliveryStats, SourceClients
-from ..sim.plan import MAX_BATCH
+from ..sim.plan import LOCAL_TICK_SECONDS, MAX_BATCH, PROD_TICK_SECONDS, live_ticks
 from ..warehouse.direct import canonical_order, envelopes_from_dataset
 
 DELIVERIES = "deliveries"
@@ -36,31 +38,28 @@ def prod_clients() -> tuple[SourceClients, str]:
     return SourceClients(url, local=False, service_tokens=tokens), url
 
 
-def deliver(*, target: str, profile: str, mode: str, duration_minutes: float) -> dict:
+def deliver(
+    *, target: str, profile: str, mode: str, duration_minutes: float, tick_seconds: float | None = None
+) -> dict:
     items = canonical_order(envelopes_from_dataset(generate(get_profile(profile))))
     if target == "prod":
         sources, url = prod_clients()
     else:
         url = "http://127.0.0.1:8791"
         sources = SourceClients(url, local=True, keys_dir=repo_root() / ".dev" / "keys")
+    tick = tick_seconds or (PROD_TICK_SECONDS if target == "prod" else LOCAL_TICK_SECONDS)
     delivery_id = datetime.now(UTC).strftime("d-%Y%m%dT%H%M%SZ")
     stats = DeliveryStats()
     started = datetime.now(UTC)
-    t0 = time.monotonic()
-    rate = len(items) / (duration_minutes * 60) if mode == "live" else None
-    sent = 0
-    while sent < len(items):
-        target_count = len(items) if rate is None else min(len(items), int(rate * (time.monotonic() - t0)) + 1)
-        if target_count > sent:
-            by_source: dict[str, list[dict]] = {}
-            for source, env in items[sent:target_count]:
-                by_source.setdefault(source, []).append(env)
-            for source, envs in by_source.items():
-                for i in range(0, len(envs), MAX_BATCH):
-                    sources.deliver(source, envs[i : i + MAX_BATCH], stats)
-            sent = target_count
-        if rate is not None:
-            time.sleep(1.0)
+    if mode == "live":
+        send_live(sources, items, duration_minutes * 60, tick, stats)
+    else:
+        by_source: dict[str, list[dict]] = {}
+        for source, env in items:
+            by_source.setdefault(source, []).append(env)
+        for source, envs in by_source.items():
+            for i in range(0, len(envs), MAX_BATCH):
+                sources.deliver(source, envs[i : i + MAX_BATCH], stats)
     record = {
         "delivery_id": delivery_id,
         "target": target,
@@ -68,6 +67,7 @@ def deliver(*, target: str, profile: str, mode: str, duration_minutes: float) ->
         "profile": profile,
         "mode": mode,
         "duration_minutes": duration_minutes if mode == "live" else None,
+        "tick_seconds": tick if mode == "live" else None,
         "started_at": started.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "finished_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "records": stats.records,
@@ -79,6 +79,19 @@ def deliver(*, target: str, profile: str, mode: str, duration_minutes: float) ->
     out.write_text(json.dumps(record, indent=2) + "\n")
     sources.close()
     return record
+
+
+def send_live(
+    sources: SourceClients, items: list[tuple[str, dict]], duration_s: float, tick_s: float, stats: DeliveryStats
+) -> None:
+    """Send tick k's requests at start + k * tick (live_ticks), never early; a late tick is sent at once."""
+    start = time.monotonic()
+    for k, requests in enumerate(live_ticks(items, duration_s, tick_s)):
+        wait = start + k * tick_s - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        for r in requests:
+            sources.deliver(r.source, r.envelopes, stats)
 
 
 def load_delivery(delivery_id: str) -> dict:

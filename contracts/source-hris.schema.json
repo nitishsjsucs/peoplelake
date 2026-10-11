@@ -5,7 +5,7 @@
   "properties": {
     "events": {
       "minItems": 1,
-      "maxItems": 500,
+      "maxItems": 50,
       "type": "array",
       "items": {
         "oneOf": [

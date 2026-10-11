@@ -88,9 +88,31 @@ export interface ParityReport {
   machine?: string;
 }
 
-export type Report = ScenarioReport | FreshnessReport | AskReport | ParityReport;
+export interface IngestCpuReport {
+  kind: "ingest-cpu";
+  command: string;
+  date: string;
+  method: string;
+  runtime: string;
+  machine: string;
+  load_average_1m?: number;
+  iterations_per_size_and_source: number;
+  fresh_processes_per_size_and_source: number;
+  free_cpu_limit_ms: number;
+  batch_limit: number;
+  sizes: {
+    events: number;
+    warm_p50_ms: [number, number];
+    warm_p99_ms: [number, number];
+    first_request_fresh_ms: [number, number];
+    first_request_after_prewarm_ms: [number, number];
+    ndjson_bytes: [number, number];
+  }[];
+}
 
-export const REPORT_KINDS: readonly Report["kind"][] = ["scenario-equivalence", "freshness", "ask", "metricflow-parity"];
+export type Report = ScenarioReport | FreshnessReport | AskReport | ParityReport | IngestCpuReport;
+
+export const REPORT_KINDS: readonly Report["kind"][] = ["scenario-equivalence", "freshness", "ask", "metricflow-parity", "ingest-cpu"];
 
 const fmtS = (s: number | null | undefined): string => (s === null || s === undefined ? "n/a" : `${s} s`);
 
@@ -169,8 +191,28 @@ export function renderParityReport(r: ParityReport, file: string): string {
   ].join("\n");
 }
 
+const span = ([a, b]: [number, number], unit = ""): string => (a === b ? `${a}${unit}` : `${a} to ${b}${unit}`);
+
+export function renderIngestCpuReport(r: IngestCpuReport, file: string): string {
+  const rows = r.sizes.map(
+    (s) =>
+      `| ${s.events}${s.events === r.batch_limit ? " (the limit)" : ""} | ${span(s.warm_p50_ms)} | ${span(s.warm_p99_ms)} | ${span(s.first_request_fresh_ms)} | ${span(s.first_request_after_prewarm_ms)} | ${span([Math.round(s.ndjson_bytes[0] / 1024), Math.round(s.ndjson_bytes[1] / 1024)], " KB")} |`,
+  );
+  return [
+    `#### Ingest CPU per request (${r.date})`,
+    "",
+    `Command: \`${r.command}\`. Method: ${r.method}. Runtime: ${r.runtime}. Machine: ${r.machine}${r.load_average_1m !== undefined ? ` (load average ${r.load_average_1m})` : ""}. ${r.iterations_per_size_and_source} warm requests and ${r.fresh_processes_per_size_and_source} fresh processes per size and source; ranges are across the three sources. The Workers Free plan allows ${r.free_cpu_limit_ms} ms of CPU per request; the Worker accepts at most ${r.batch_limit} events. Source: \`${file}\`.`,
+    "",
+    "| Events per request | Warm p50 (ms) | Warm p99 (ms) | First request, fresh process (ms) | First request after prewarm (ms) | NDJSON per request |",
+    "|---:|---|---|---|---|---|",
+    ...rows,
+  ].join("\n");
+}
+
 function renderReport(report: Report, file: string): string {
   switch (report.kind) {
+    case "ingest-cpu":
+      return renderIngestCpuReport(report, file);
     case "metricflow-parity":
       return renderParityReport(report, file);
     case "freshness":

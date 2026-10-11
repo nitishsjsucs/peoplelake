@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type AskReport, END, type ParityReport, type FreshnessReport, renderResults, replaceSection, type ScenarioReport, START } from "../../scripts/lib/results.ts";
+import { type AskReport, END, type FreshnessReport, type IngestCpuReport, type ParityReport, renderResults, replaceSection, type ScenarioReport, START } from "../../scripts/lib/results.ts";
 import { findProseViolations } from "../../scripts/lib/prose.ts";
 
 const scenario: ScenarioReport = {
@@ -41,7 +41,32 @@ const freshness: FreshnessReport = {
   stand_ins: "SinkRoller, SqlCatalog",
 };
 
+const ingest: IngestCpuReport = {
+  kind: "ingest-cpu",
+  command: "npm run bench:ingest",
+  date: "2026-10-11",
+  method: "Worker code path in Node",
+  runtime: "node v25.9.0",
+  machine: "darwin arm64",
+  load_average_1m: 3.1,
+  iterations_per_size_and_source: 300,
+  fresh_processes_per_size_and_source: 9,
+  free_cpu_limit_ms: 10,
+  batch_limit: 50,
+  sizes: [
+    { events: 50, warm_p50_ms: [0.75, 0.81], warm_p99_ms: [2.8, 3.7], first_request_fresh_ms: [7.8, 12.2], first_request_after_prewarm_ms: [2.8, 3.3], ndjson_bytes: [30720, 34816] },
+  ],
+};
+
 describe("results renderer", () => {
+  it("renders the ingest CPU benchmark with ranges and the 10 ms limit", () => {
+    const text = renderResults([{ file: "evals/results/ingest-cpu-2026-10-11.json", report: ingest }]);
+    expect(text).toContain("#### Ingest CPU per request (2026-10-11)");
+    expect(text).toContain("| 50 (the limit) | 0.75 to 0.81 | 2.8 to 3.7 | 7.8 to 12.2 | 2.8 to 3.3 | 30 to 34 KB |");
+    expect(text).toContain("allows 10 ms of CPU per request");
+    expect(findProseViolations(text)).toEqual([]);
+  });
+
   it("renders every report with its command and date, and no dashes in prose", () => {
     const text = renderResults([
       { file: "evals/results/a.json", report: scenario },

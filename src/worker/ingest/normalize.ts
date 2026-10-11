@@ -2,9 +2,9 @@
 // its sha256. delivery_id is minted per record per request, so a client retry is a new delivery of the
 // same event (ADR 0001). pipeline/src/peoplelake/normalize.py mirrors this; contracts/golden/raw-records.json
 // pins both.
-import type { AtsRecord, HrisEvent, RawRecord, TalentItem } from "../../shared/contracts.ts";
+import { type AtsRecord, type HrisEvent, RAW_RECORD_COLUMNS, type RawRecord, type TalentItem } from "../../shared/contracts.ts";
 import type { SourceId } from "../../shared/sources.ts";
-import { canonicalJson, sha256Hex } from "./canonical-json.ts";
+import { canonicalJson, sha256HexSync } from "./canonical-json.ts";
 
 export interface DeliveryContext {
   readonly receivedAt: string;
@@ -70,7 +70,7 @@ export function viewEnvelope(source: SourceId, item: Envelope): EnvelopeView {
   }
 }
 
-export async function normalize(source: SourceId, item: Envelope, ctx: DeliveryContext): Promise<RawRecord> {
+export function normalize(source: SourceId, item: Envelope, ctx: DeliveryContext): RawRecord {
   const v = viewEnvelope(source, item);
   const payload = canonicalJson(v.payload);
   return {
@@ -83,7 +83,7 @@ export async function normalize(source: SourceId, item: Envelope, ctx: DeliveryC
     effective_date: v.effective_date,
     schema_version: v.schema_version,
     payload,
-    payload_sha256: await sha256Hex(payload),
+    payload_sha256: sha256HexSync(payload),
     received_at: ctx.receivedAt,
     delivery_id: ctx.newDeliveryId ? ctx.newDeliveryId() : crypto.randomUUID(),
     ingest_request_id: ctx.requestId,
@@ -91,6 +91,13 @@ export async function normalize(source: SourceId, item: Envelope, ctx: DeliveryC
   };
 }
 
-export async function normalizeBatch(source: SourceId, items: readonly Envelope[], ctx: DeliveryContext): Promise<RawRecord[]> {
-  return Promise.all(items.map((item) => normalize(source, item, ctx)));
+export function normalizeBatch(source: SourceId, items: readonly Envelope[], ctx: DeliveryContext): RawRecord[] {
+  return items.map((item) => normalize(source, item, ctx));
+}
+
+const COLUMN_ORDER = [...RAW_RECORD_COLUMNS];
+
+/** Records as NDJSON in RAW_RECORD_COLUMNS order, one newline-terminated line each (one landing row). */
+export function toNdjson(records: readonly RawRecord[]): string {
+  return records.map((r) => `${JSON.stringify(r, COLUMN_ORDER)}\n`).join("");
 }

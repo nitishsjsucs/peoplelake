@@ -19,12 +19,15 @@ from .bootstrap_gcp import GcpConfig
 from .verify import landing_committed, verify
 
 
-def e2e(duration_minutes: float, *, quiesce_timeout_s: float = 3600.0) -> dict:
+def e2e(duration_minutes: float, *, tick_seconds: float = 10.0, quiesce_timeout_s: float = 3600.0) -> dict:
     op = prod_operator()
     status = op.status()
     if status.get("run_seq") not in (None, "0"):
         raise SystemExit("production already holds runs; reset first (docs/runbooks/prod-reset.md)")
-    record = deliver(target="prod", profile="full", mode="live", duration_minutes=duration_minutes)
+    # Sources post every 10 s with at most 50 events per request: at most 3,080 requests (SPEC 29.4.2).
+    record = deliver(
+        target="prod", profile="full", mode="live", duration_minutes=duration_minutes, tick_seconds=tick_seconds
+    )
     deadline = time.monotonic() + quiesce_timeout_s
     while time.monotonic() < deadline:
         fresh = op.freshness("7d")["overall"]

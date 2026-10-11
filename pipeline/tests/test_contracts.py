@@ -36,6 +36,14 @@ def test_invalid_fixture(name):
         _validate(MODELS[name], (CONTRACTS / "fixtures" / f"{name}.invalid.json").read_text())
 
 
+def test_batches_hold_at_most_50_events_like_the_worker():
+    assert c.MAX_BATCH_EVENTS == 50 == _schema("source-hris")["properties"]["events"]["maxItems"]
+    raw = json.loads((CONTRACTS / "fixtures" / "source-hris.valid.json").read_text())
+    c.HrisBatch.model_validate_json(json.dumps({"events": raw["events"][:1] * 50}))
+    with pytest.raises(ValidationError):
+        c.HrisBatch.model_validate_json(json.dumps({"events": raw["events"][:1] * 51}))
+
+
 def test_integers_stay_integers():
     raw = json.loads((CONTRACTS / "fixtures" / "source-hris.valid.json").read_text())
     raw["events"][0]["data"]["fte_bp"] = 1.0
@@ -60,8 +68,8 @@ def test_every_generated_envelope_validates(profile):
     batches = {"hris": (c.HrisBatch, "events"), "ats": (c.AtsBatch, "records"), "talent": (c.TalentBatch, "items")}
     for source, (model, key) in batches.items():
         lines = ds.lines[source]
-        for i in range(0, len(lines), 500):
-            model.model_validate_json(f'{{"{key}":[{",".join(lines[i : i + 500])}]}}')
+        for i in range(0, len(lines), c.MAX_BATCH_EVENTS):
+            model.model_validate_json(f'{{"{key}":[{",".join(lines[i : i + c.MAX_BATCH_EVENTS])}]}}')
 
 
 def _schema(name: str) -> dict:

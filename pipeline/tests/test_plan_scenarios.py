@@ -4,7 +4,8 @@ from collections import Counter
 
 import pytest
 
-from peoplelake.sim.plan import MAX_BATCH, SCENARIOS, TYPE_FIELD, build_plan
+from peoplelake.sim.plan import MAX_BATCH, PROD_TICK_SECONDS, SCENARIOS, TYPE_FIELD, build_plan, live_ticks
+from peoplelake.warehouse.direct import canonical_order, envelopes_from_dataset
 
 CHUNKS = {"small": 10, "full": 20}
 
@@ -104,3 +105,24 @@ def test_results_file_is_named_after_the_engine_that_produced_it() -> None:
     assert (
         results_name("small", "duckdb", "2026-10-11", list(reversed(every))) == "scenarios-small-duckdb-2026-10-11.json"
     )
+
+
+def test_requests_carry_at_most_50_events_in_every_environment():
+    assert MAX_BATCH == 50
+
+
+def test_a_production_live_delivery_at_10_s_ticks_makes_at_most_3080_requests(full):
+    items = canonical_order(envelopes_from_dataset(full))
+    ticks = live_ticks(items, 60 * 60, PROD_TICK_SECONDS)
+    assert PROD_TICK_SECONDS == 10.0 and len(ticks) == 360
+    requests = [r for tick in ticks for r in tick]
+    assert len(requests) <= 100_000 // 50 + 360 * 3 == 3_080
+    assert all(1 <= len(r.envelopes) <= 50 for r in requests)
+    delivered = [e for r in requests for e in r.envelopes]
+    assert len(delivered) == 100_000
+    key = {"hris": "eventId", "ats": "id", "talent": "uuid"}
+    assert len({e[key[r.source]] for r in requests for e in r.envelopes}) == 100_000
+    # each source's events keep their canonical order
+    for source in ("hris", "ats", "talent"):
+        sent = [e[key[source]] for r in requests if r.source == source for e in r.envelopes]
+        assert sent == [e[key[source]] for s, e in items if s == source]

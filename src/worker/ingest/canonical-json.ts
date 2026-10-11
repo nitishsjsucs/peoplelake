@@ -4,6 +4,11 @@
 // Rules: keys sorted by Unicode code point (not UTF-16 code units), no whitespace, every character
 // outside printable ASCII escaped as lowercase \uXXXX (astral characters as surrogate pairs, DEL
 // included), integers only and within the safe range.
+//
+// SHA-256 uses node:crypto (nodejs_compat; native and synchronous in workerd) rather than
+// crypto.subtle: a 50-event request hashes 50 payloads, and the synchronous hash keeps the request's
+// CPU well inside the Workers Free plan's 10 ms and lets the startup prewarm run normalization too.
+import { createHash } from "node:crypto";
 
 export class CanonicalJsonError extends Error {
   override name = "CanonicalJsonError";
@@ -59,7 +64,10 @@ export function canonicalJson(value: unknown): string {
   return encode(value, "$");
 }
 
+export function sha256HexSync(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
 export async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return sha256HexSync(text);
 }

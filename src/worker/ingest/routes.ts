@@ -4,20 +4,15 @@
 // one durable row (one RPC, no Coordinator call per request). 503 landing_backpressure when the landing
 // buffer is full; the source retries later.
 import { z } from "zod";
-import { AtsBatch, HrisBatch, MAX_BODY_BYTES, RAW_RECORD_COLUMNS, RawRecord, TalentBatch } from "../../shared/contracts.ts";
+import { AtsBatch, HrisBatch, MAX_BODY_BYTES, RawRecord, TalentBatch } from "../../shared/contracts.ts";
 import { isSourceId, type SourceId } from "../../shared/sources.ts";
 import type { App } from "../app.ts";
 import { landingRollerStub } from "../lake/landing-roller.ts";
 import { PRODUCER } from "../version.ts";
-import { normalizeBatch } from "./normalize.ts";
+import { normalizeBatch, toNdjson } from "./normalize.ts";
+import "./prewarm.ts";
 
 const BATCHES = { hris: [HrisBatch, "events"], ats: [AtsBatch, "records"], talent: [TalentBatch, "items"] } as const;
-const COLUMN_ORDER = [...RAW_RECORD_COLUMNS];
-
-/** Records as NDJSON in RAW_RECORD_COLUMNS order, one newline-terminated line each. */
-export function toNdjson(records: readonly RawRecord[]): string {
-  return records.map((r) => `${JSON.stringify(r, COLUMN_ORDER)}\n`).join("");
-}
 
 export interface Rejection {
   index: number | null;
@@ -64,7 +59,7 @@ export function mountIngest(app: App): void {
     const items = (parsed.data as Record<string, unknown>)[key] as Parameters<typeof normalizeBatch>[1];
     const receivedAt = new Date().toISOString();
     const requestId = crypto.randomUUID();
-    const records = await normalizeBatch(source, items, { receivedAt, requestId, producer: PRODUCER });
+    const records = normalizeBatch(source, items, { receivedAt, requestId, producer: PRODUCER });
     // The lake never receives a row the Iceberg schema would reject: validate every record first.
     for (const record of records) RawRecord.parse(record);
     const landed = await landingRollerStub(c.env).append(toNdjson(records), records.length, Date.parse(receivedAt));

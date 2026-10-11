@@ -17,7 +17,7 @@ v1 is built and verified end to end on the local stack (every item of the build 
 | dbt models, five metrics, reconciliation checks | done on DuckDB: staging, spells, SCD2 history with per-model bucket cursors, facts, metrics mart, reporting and ops models, 10 unit tests, reconciliation checks R1 to R11 |
 | BigQuery configs and offline compile | done offline: dbt-bigquery profiles, policy tags, authorized views, int64 range `insert_overwrite`, both compile branches parse as BigQuery, ORDER BY lint, BigQuery loader tested against a fake client; nothing has run on BigQuery yet |
 | Iceberg lake and landing commits | done locally: the runner's load job commits new landing rolls to `peoplelake.raw_events` (one append snapshot per roll whose summary carries the landing cursor `peoplelake.landing-through`, so snapshot expiration can never cause a re-append; conflicts re-read the cursor; only the current generation's rolls are listed; every line validated as a RawRecord), the same code against the pyiceberg SqlCatalog stand-in locally and Basin Catalog through `RestCatalog` in production (`peoplelake lake init --target prod` creates the table); incremental reader with full-scan fallback. Basin Catalog itself is not exercised yet (needs production) |
-| Worker: auth, ingest, landing | done locally: fail-closed config, Access JWT verification (RS256, iss, aud, exp) with locally generated dev keys, role gates, `POST /v1/ingest/:source` for three envelopes (zod, all-or-nothing), RawRecord normalization shared with Python through a golden, and the LandingRoller Durable Object (one SQLite row per request, planned immutable roll files in R2 every 60 s, one Queue message per roll, backpressure), the same code locally and in production; no Basin Pipelines (Workers Paid only) |
+| Worker: auth, ingest, landing | done locally: fail-closed config, Access JWT verification (RS256, iss, aud, exp) with locally generated dev keys, role gates, `POST /v1/ingest/:source` for three envelopes (zod, all-or-nothing, at most 50 events per request so a request stays well inside the Workers Free plan's 10 ms of CPU, the ingest path prewarmed at isolate startup), RawRecord normalization shared with Python through a golden, and the LandingRoller Durable Object (one SQLite row per request, planned immutable roll files in R2 every 60 s, one Queue message per roll, backpressure), the same code locally and in production; no Basin Pipelines (Workers Paid only) |
 | Orchestration: Coordinator, Workflow, dispatchers | done locally (Miniflare Workflows): Coordinator ledger with single-flight runs, attempt-scoped jobs and leases, `WarehouseRunWorkflow` (load, transform or skip, verify, commit, release), poll and Cloud Run dispatchers, lake-events queue consumer (one message per landing roll), a cron backstop, eval faults; production Workflows not exercised yet |
 | Runner and local stack | done locally: `peoplelake runner poll` (in-process dbt, heartbeats, eval fault hooks) and `peoplelake stack up/down` (wrangler dev, runner, ticker in their own process groups, ports checked free) |
 | Scenario and freshness evals | done on the local stack (see Results): scenario equivalence on DuckDB, and the 60-minute local freshness measurement of the full profile (p95 78 s on the local stand-ins, ledger and ops histograms agree); production freshness is measured once by `npm run prod:e2e` |
@@ -206,7 +206,7 @@ The generator (`pipeline/src/peoplelake/generator`) keeps the true world state a
 
 | Id | Scenario | Perturbation (full profile; the small profile scales event counts by 1/10) |
 |---|---|---|
-| B | baseline | each event once, canonical order, batches of 500 per source |
+| B | baseline | each event once, canonical order, batches of at most 50 per source (the Worker's limit) |
 | S1 | duplicate-client-retries | 10,000 events delivered twice and 1,000 of them three times (111,000 deliveries); 30% of duplicates in the same request, the rest in a later chunk |
 | S2 | duplicate-lake-redelivery | the watermark rewound by two snapshots on runs 3, 6 and 9; 3 committed sink files appended again as new snapshots on run 5 |
 | S3 | late-arrival | 5,000 events withheld (300 corrections, 30 rescinds, 200 terminations, 100 hires, 50 accepted offers among them): 3,000 delivered 1 to 3 chunks late, 2,000 after everything else; every request shuffled |
@@ -218,6 +218,10 @@ uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10 
 uv run --project pipeline peoplelake eval scenarios --profile small --scenarios S4   # one scenario
 npm run results:readme                                                                 # renders evals/results into Results
 ```
+
+### Ingest CPU on the Workers Free plan
+
+The Free plan allows 10 ms of CPU per request. `npm run bench:ingest` runs the Worker's own ingest code path (JSON parse, zod batch parse, normalization with SHA-256, RawRecord parse, NDJSON) in Node on full-profile envelopes at 25, 50, 100, 200 and 500 events per request, with zod jitless as in workerd: warm requests in one process, and the first request of fresh processes with and without the prewarm the Worker runs at startup. It writes `evals/results/ingest-cpu-<date>.json` (see Results) and never gates CI, because Node on this machine is a proxy for workerd on Cloudflare's CPUs. The measured cost is why the Worker accepts at most 50 events per request (422 above that), hashes payloads with the synchronous native `node:crypto` SHA-256, and runs the whole ingest path once at isolate startup (the contract fixtures, one envelope of every event type) so the first request does not pay for zod's lazy setup or V8's first compilation.
 
 ### Asking questions
 
@@ -233,7 +237,7 @@ uv run --project pipeline peoplelake eval ask --provider workers-ai   # producti
 
 ### Freshness
 
-`peoplelake eval freshness --target local --duration 60m` delivers the full profile at a constant rate (100,000 events over 60 minutes, 27.8 per second) in live mode: 60 s sink rolls (the Basin minimum), the cron ticker every 60 s, single-flight runs. Per unique event, freshness is the commit time of the run that published it minus the Worker's first receipt, read from the Coordinator ledger (10 s buckets, so conservative by up to 10 s) and cross-checked against the `ops_event_freshness` histograms the runner returns. The 15-minute p95 is a target that is reported, never asserted. Local numbers describe the local stack on the machine named in the result; the production number comes from the single live delivery of `npm run prod:e2e`. The recorded local run (see Results) used the code at commit `685ba53`; later commits change no ingest, sink, orchestration or runner path it exercises.
+`peoplelake eval freshness --target local --duration 60m` delivers the full profile at a constant rate (100,000 events over 60 minutes, 27.8 per second) in live mode: the sources post every second (`--tick-seconds`; production sources post every 10 s), at most 50 events per request, 60 s landing rolls, the cron ticker, single-flight runs. Per unique event, freshness is the commit time of the run that published it minus the Worker's first receipt, read from the Coordinator ledger (10 s buckets, so conservative by up to 10 s) and cross-checked against the `ops_event_freshness` histograms the runner returns. The 15-minute p95 is a target that is reported, never asserted. Local numbers describe the local stack on the machine named in the result; the production number comes from the single live delivery of `npm run prod:e2e`. The recorded local run (see Results) used the code at commit `685ba53`; later commits change no ingest, sink, orchestration or runner path it exercises.
 
 ## CI
 
@@ -371,6 +375,18 @@ Command: `peoplelake eval freshness --target local --duration 60m`. Method: ledg
 | 100000 | 60 min | 121 | 48 s | 74 s | 78 s | 86 s | 93 s | 100.00% | 78 s |
 
 p95 split: first receipt to run start 65 s, run start to commit 22 s. Runs committed: 121 of 121, transforms skipped (the load inserted nothing new): 61. Cross-check against the runner's `ops_event_freshness` histograms: 100000 ledger events, 100000 ops events, 0 mismatched 10 s buckets (agrees). 15-minute p95 target (reported, not asserted): met.
+
+#### Ingest CPU per request (2026-10-11)
+
+Command: `npm run bench:ingest`. Method: Worker code path in Node (JSON parse, zod batch parse, normalization with SHA-256, RawRecord parse, NDJSON) on full-profile envelopes, zod jitless, process.cpuUsage() per request, Node's WebCrypto module (globalThis.crypto) loaded before timing in fresh processes (workerd's is built in); a proxy for workerd CPU time. Runtime: node v25.9.0. Machine: darwin arm64 Apple M5 (load average 6.1). 300 warm requests and 9 fresh processes per size and source; ranges are across the three sources. The Workers Free plan allows 10 ms of CPU per request; the Worker accepts at most 50 events. Source: `evals/results/ingest-cpu-2026-10-11.json`.
+
+| Events per request | Warm p50 (ms) | Warm p99 (ms) | First request, fresh process (ms) | First request after prewarm (ms) | NDJSON per request |
+|---:|---|---|---|---|---|
+| 25 | 0.21 to 0.3 | 0.48 to 1.9 | 3.97 to 8.67 | 0.75 to 2.39 | 14 to 15 KB |
+| 50 (the limit) | 0.47 to 0.55 | 0.85 to 1.03 | 5.53 to 9.59 | 1.48 to 2.76 | 29 to 32 KB |
+| 100 | 0.91 to 1.49 | 1.32 to 2.52 | 7.78 to 15.84 | 4.57 to 7.05 | 57 to 64 KB |
+| 200 | 2.31 to 3.24 | 3.07 to 5.04 | 11.78 to 23.06 | 6.93 to 12.44 | 114 to 127 KB |
+| 500 | 5.69 to 6.78 | 7.87 to 10.03 | 19.71 to 27.25 | 14.72 to 23.8 | 286 to 301 KB |
 
 #### MetricFlow parity, full profile, duckdb (2026-10-11)
 
