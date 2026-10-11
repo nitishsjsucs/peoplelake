@@ -1,0 +1,60 @@
+{"id":"q01","question":"What was our total headcount at the end of 2024?","expected":{"metric":"headcount","department_id":"ALL","start_month":"2024-12","end_month":"2024-12"}}
+{"id":"q02","question":"How many employees did Engineering have in June 2023?","expected":{"metric":"headcount","department_id":"D01","start_month":"2023-06","end_month":"2023-06"}}
+{"id":"q03","question":"Show me headcount for the Sales department across 2025.","expected":{"metric":"headcount","department_id":"D04","start_month":"2025-01","end_month":"2025-12"}}
+{"id":"q04","question":"Monthly headcount in Q3 2024 for Customer Success","expected":{"metric":"headcount","department_id":"D06","start_month":"2024-07","end_month":"2024-09"}}
+{"id":"q05","question":"How many people worked in Finance in March 2025?","expected":{"metric":"headcount","department_id":"D07","start_month":"2025-03","end_month":"2025-03"}}
+{"id":"q06","question":"Company headcount by month from January 2023 to June 2023","expected":{"metric":"headcount","department_id":"ALL","start_month":"2023-01","end_month":"2023-06"}}
+{"id":"q07","question":"Headcount for D03 in the first half of 2025","expected":{"metric":"headcount","department_id":"D03","start_month":"2025-01","end_month":"2025-06"}}
+{"id":"q08","question":"How big was the Legal team in Q4 2023?","expected":{"metric":"headcount","department_id":"D09","start_month":"2023-10","end_month":"2023-12"}}
+{"id":"q09","question":"What is the headcount trend for the whole company?","expected":{"metric":"headcount","department_id":"ALL","start_month":"2023-01","end_month":"2025-12"}}
+{"id":"q10","question":"Number of active employees in Operations at year-end 2023","expected":{"metric":"headcount","department_id":"D10","start_month":"2023-12","end_month":"2023-12"}}
+{"id":"q11","question":"Staff count in the Data department since July 2025","expected":{"metric":"headcount","department_id":"D11","start_month":"2025-07","end_month":"2025-12"}}
+{"id":"q12","question":"How many employees were in the People department in 2023?","expected":{"metric":"headcount","department_id":"D08","start_month":"2023-01","end_month":"2023-12"}}
+{"id":"q13","question":"What was total FTE in December 2025?","expected":{"metric":"fte","department_id":"ALL","start_month":"2025-12","end_month":"2025-12"}}
+{"id":"q14","question":"Full-time equivalents in Engineering during 2024","expected":{"metric":"fte","department_id":"D01","start_month":"2024-01","end_month":"2024-12"}}
+{"id":"q15","question":"FTE for the Product department in Q1 2023","expected":{"metric":"fte","department_id":"D02","start_month":"2023-01","end_month":"2023-03"}}
+{"id":"q16","question":"Show FTE for D12 between April 2024 and September 2024","expected":{"metric":"fte","department_id":"D12","start_month":"2024-04","end_month":"2024-09"}}
+{"id":"q17","question":"How many full-time equivalents did Marketing have at the end of 2023?","expected":{"metric":"fte","department_id":"D05","start_month":"2023-12","end_month":"2023-12"}}
+{"id":"q18","question":"Company-wide FTE over the second half of 2024","expected":{"metric":"fte","department_id":"ALL","start_month":"2024-07","end_month":"2024-12"}}
+{"id":"q19","question":"FTE in Design for 2025","expected":{"metric":"fte","department_id":"D03","start_month":"2025-01","end_month":"2025-12"}}
+{"id":"q20","question":"What is the FTE of the Security team in May 2024?","expected":{"metric":"fte","department_id":"D12","start_month":"2024-05","end_month":"2024-05"}}
+{"id":"q21","question":"Give me the FTE trend across all departments","expected":{"metric":"fte","department_id":"ALL","start_month":"2023-01","end_month":"2025-12"}}
+{"id":"q22","question":"FTE in Customer Success in Q2 2025","expected":{"metric":"fte","department_id":"D06","start_month":"2025-04","end_month":"2025-06"}}
+{"id":"q23","question":"Total full-time equivalent capacity in Finance from October 2023 through March 2024","expected":{"metric":"fte","department_id":"D07","start_month":"2023-10","end_month":"2024-03"}}
+{"id":"q24","question":"What was the FTE for Operations in 2023?","expected":{"metric":"fte","department_id":"D10","start_month":"2023-01","end_month":"2023-12"}}
+{"id":"q25","question":"How many people did we hire in 2024?","expected":{"metric":"hires","department_id":"ALL","start_month":"2024-01","end_month":"2024-12"}}
+{"id":"q26","question":"New hires in Engineering in Q2 2023","expected":{"metric":"hires","department_id":"D01","start_month":"2023-04","end_month":"2023-06"}}
+{"id":"q27","question":"How many hires did Sales make in January 2025?","expected":{"metric":"hires","department_id":"D04","start_month":"2025-01","end_month":"2025-01"}}
+{"id":"q28","question":"Hiring in the Data department during the first half of 2024","expected":{"metric":"hires","department_id":"D11","start_month":"2024-01","end_month":"2024-06"}}
+{"id":"q29","question":"Show monthly hires for Marketing from February 2023 to August 2023","expected":{"metric":"hires","department_id":"D05","start_month":"2023-02","end_month":"2023-08"}}
+{"id":"q30","question":"How many employees joined the company in Q4 2025?","expected":{"metric":"hires","department_id":"ALL","start_month":"2025-10","end_month":"2025-12"}}
+{"id":"q31","question":"Hires for D06 in 2025","expected":{"metric":"hires","department_id":"D06","start_month":"2025-01","end_month":"2025-12"}}
+{"id":"q32","question":"How many people were hired into Product overall?","expected":{"metric":"hires","department_id":"D02","start_month":"2023-01","end_month":"2025-12"}}
+{"id":"q33","question":"Total hires including rehires in Legal in 2023","expected":{"metric":"hires","department_id":"D09","start_month":"2023-01","end_month":"2023-12"}}
+{"id":"q34","question":"How many new employees started in Security in November 2024?","expected":{"metric":"hires","department_id":"D12","start_month":"2024-11","end_month":"2024-11"}}
+{"id":"q35","question":"Hiring volume company-wide since October 2024","expected":{"metric":"hires","department_id":"ALL","start_month":"2024-10","end_month":"2025-12"}}
+{"id":"q36","question":"New hires in Design in Q3 2025","expected":{"metric":"hires","department_id":"D03","start_month":"2025-07","end_month":"2025-09"}}
+{"id":"q37","question":"How many employees left in 2023?","expected":{"metric":"departures","department_id":"ALL","start_month":"2023-01","end_month":"2023-12"}}
+{"id":"q38","question":"Departures from Engineering in Q1 2025","expected":{"metric":"departures","department_id":"D01","start_month":"2025-01","end_month":"2025-03"}}
+{"id":"q39","question":"What was attrition in Sales during 2024?","expected":{"metric":"departures","department_id":"D04","start_month":"2024-01","end_month":"2024-12"}}
+{"id":"q40","question":"Terminations in Finance in August 2023","expected":{"metric":"departures","department_id":"D07","start_month":"2023-08","end_month":"2023-08"}}
+{"id":"q41","question":"How many people quit or were let go from Customer Success in the second half of 2025?","expected":{"metric":"departures","department_id":"D06","start_month":"2025-07","end_month":"2025-12"}}
+{"id":"q42","question":"Monthly departures for D05 between June 2024 and December 2024","expected":{"metric":"departures","department_id":"D05","start_month":"2024-06","end_month":"2024-12"}}
+{"id":"q43","question":"Show company departures across the whole period","expected":{"metric":"departures","department_id":"ALL","start_month":"2023-01","end_month":"2025-12"}}
+{"id":"q44","question":"How many leavers did the Data team have in Q2 2024?","expected":{"metric":"departures","department_id":"D11","start_month":"2024-04","end_month":"2024-06"}}
+{"id":"q45","question":"Exits from Operations in 2025","expected":{"metric":"departures","department_id":"D10","start_month":"2025-01","end_month":"2025-12"}}
+{"id":"q46","question":"How many people left the People department in March 2024?","expected":{"metric":"departures","department_id":"D08","start_month":"2024-03","end_month":"2024-03"}}
+{"id":"q47","question":"Departures in Product since April 2025","expected":{"metric":"departures","department_id":"D02","start_month":"2025-04","end_month":"2025-12"}}
+{"id":"q48","question":"Employee turnover count in Legal for Q3 2023","expected":{"metric":"departures","department_id":"D09","start_month":"2023-07","end_month":"2023-09"}}
+{"id":"q49","question":"What was the offer acceptance rate in 2024?","expected":{"metric":"offer_acceptance_rate","department_id":"ALL","start_month":"2024-01","end_month":"2024-12"}}
+{"id":"q50","question":"Offer acceptance rate for Engineering in Q3 2023","expected":{"metric":"offer_acceptance_rate","department_id":"D01","start_month":"2023-07","end_month":"2023-09"}}
+{"id":"q51","question":"What share of offers did candidates accept in Sales in 2025?","expected":{"metric":"offer_acceptance_rate","department_id":"D04","start_month":"2025-01","end_month":"2025-12"}}
+{"id":"q52","question":"Offer accept rate for the Design department in October 2024","expected":{"metric":"offer_acceptance_rate","department_id":"D03","start_month":"2024-10","end_month":"2024-10"}}
+{"id":"q53","question":"How often were our offers accepted company-wide in the first half of 2023?","expected":{"metric":"offer_acceptance_rate","department_id":"ALL","start_month":"2023-01","end_month":"2023-06"}}
+{"id":"q54","question":"Acceptance rate of offers in D10 from May 2025 to November 2025","expected":{"metric":"offer_acceptance_rate","department_id":"D10","start_month":"2025-05","end_month":"2025-11"}}
+{"id":"q55","question":"Offer acceptance in Marketing over the whole period","expected":{"metric":"offer_acceptance_rate","department_id":"D05","start_month":"2023-01","end_month":"2025-12"}}
+{"id":"q56","question":"What percentage of offers extended by Finance were accepted in Q1 2024?","expected":{"metric":"offer_acceptance_rate","department_id":"D07","start_month":"2024-01","end_month":"2024-03"}}
+{"id":"q57","question":"Offer acceptance rate for Security in 2023","expected":{"metric":"offer_acceptance_rate","department_id":"D12","start_month":"2023-01","end_month":"2023-12"}}
+{"id":"q58","question":"Candidate offer acceptance rate in Customer Success during Q4 2024","expected":{"metric":"offer_acceptance_rate","department_id":"D06","start_month":"2024-10","end_month":"2024-12"}}
+{"id":"q59","question":"Offer acceptance rate for the Data department since January 2025","expected":{"metric":"offer_acceptance_rate","department_id":"D11","start_month":"2025-01","end_month":"2025-12"}}
+{"id":"q60","question":"How did offer acceptance look in Product in December 2023?","expected":{"metric":"offer_acceptance_rate","department_id":"D02","start_month":"2023-12","end_month":"2023-12"}}

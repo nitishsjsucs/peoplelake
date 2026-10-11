@@ -51,7 +51,30 @@ export interface FreshnessReport {
   target_15_minutes_p95_met?: boolean;
 }
 
-export type Report = ScenarioReport | FreshnessReport;
+export interface AskReport {
+  kind: "ask";
+  command: string;
+  date: string;
+  provider: string;
+  provider_label: string;
+  model: string | null;
+  target: string;
+  route: string;
+  questions_file: string;
+  questions_sha256: string;
+  machine?: string;
+  summary: {
+    questions: number;
+    exact_match: number;
+    field_accuracy: { metric: number | null; department_id: number | null; start_month: number | null; end_month: number | null };
+    invalid_answers: number;
+    latency_ms: { p50: number | null; p95: number | null };
+  };
+}
+
+export type Report = ScenarioReport | FreshnessReport | AskReport;
+
+export const REPORT_KINDS: readonly Report["kind"][] = ["scenario-equivalence", "freshness", "ask"];
 
 const fmtS = (s: number | null | undefined): string => (s === null || s === undefined ? "n/a" : `${s} s`);
 
@@ -101,6 +124,34 @@ export function renderFreshnessReport(r: FreshnessReport, file: string): string 
   ].join("\n");
 }
 
+const pct = (x: number | null): string => (x === null ? "n/a" : `${(x * 100).toFixed(1)}%`);
+const ms = (x: number | null): string => (x === null ? "n/a" : `${Math.round(x)} ms`);
+
+export function renderAskReport(r: AskReport, file: string): string {
+  const s = r.summary;
+  const f = s.field_accuracy;
+  return [
+    `#### Ask accuracy, ${r.provider} (${r.date})`,
+    "",
+    `Command: \`${r.command}\`. Provider: ${r.provider_label}${r.model ? `, model \`${r.model}\`` : ""}. Target: ${r.target}, route \`${r.route}\`. Questions: \`${r.questions_file}\` (sha256 \`${r.questions_sha256.slice(0, 12)}\`).${r.machine ? ` Machine: ${r.machine}.` : ""} Source: \`${file}\`.`,
+    "",
+    "| Questions | Exact match | Metric | Department | Start month | End month | Invalid answers | Latency p50 | Latency p95 |",
+    "|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    `| ${s.questions} | ${s.exact_match} (${pct(s.questions ? s.exact_match / s.questions : null)}) | ${pct(f.metric)} | ${pct(f.department_id)} | ${pct(f.start_month)} | ${pct(f.end_month)} | ${s.invalid_answers} | ${ms(s.latency_ms.p50)} | ${ms(s.latency_ms.p95)} |`,
+  ].join("\n");
+}
+
+function renderReport(report: Report, file: string): string {
+  switch (report.kind) {
+    case "freshness":
+      return renderFreshnessReport(report, file);
+    case "ask":
+      return renderAskReport(report, file);
+    default:
+      return renderScenarioReport(report, file);
+  }
+}
+
 export function renderResults(reports: { file: string; report: Report }[]): string {
   const sorted = [...reports].sort((a, b) => a.file.localeCompare(b.file));
   const parts = [
@@ -108,7 +159,7 @@ export function renderResults(reports: { file: string; report: Report }[]): stri
   ];
   if (sorted.length === 0) parts.push("", "No results recorded yet.");
   for (const { file, report } of sorted) {
-    parts.push("", report.kind === "freshness" ? renderFreshnessReport(report, file) : renderScenarioReport(report, file));
+    parts.push("", renderReport(report, file));
   }
   return parts.join("\n");
 }

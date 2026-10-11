@@ -22,7 +22,7 @@ v1 is under construction and this repository is published while it is built. Thi
 | Runner and local stack | done locally: `peoplelake runner poll` (in-process dbt, heartbeats, eval fault hooks) and `peoplelake stack up/down` (wrangler dev, runner, ticker in their own process groups, ports checked free) |
 | Scenario and freshness evals | done on the local stack (see Results): scenario equivalence on DuckDB, and the 60-minute local freshness measurement of the full profile (p95 78 s on the local stand-ins, ledger and ops histograms agree); production freshness is measured once by `npm run prod:e2e` |
 | CI | workflows written (`ci.yml` on every push, `eval-full.yml` weekly and on demand); they have not run on GitHub yet because the owner publishes the repo |
-| Workers AI and `/api/ask` | done: `AiProvider` with a deterministic stub (CI), llama-server (local) and Workers AI through AI Gateway (production, mocked in tests), `POST /api/ask` answering only from the committed metrics snapshot, `/api/ops/ai` gateway check; the 60-question ask eval is below the core cut and not built |
+| Workers AI and `/api/ask` | done: `AiProvider` with a deterministic stub (CI), llama-server (local) and Workers AI through AI Gateway (production, mocked in tests), `POST /api/ask` answering only from the committed metrics snapshot, `/api/ops/ai` gateway check; the 60-question ask eval (`peoplelake eval ask`) scores each provider through the Worker, local results pending, Workers AI needs production |
 | Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | built and tested offline (dry run, fake clients, rendered config bundles with `wrangler deploy --dry-run`); not run against real accounts yet, see Production setup |
 | Front end | none in v1 (the dashboard is below the core cut line); `/api/*` is the read interface |
 
@@ -181,7 +181,15 @@ npm run results:readme                                                          
 
 ### Asking questions
 
-`POST /api/ask {"question": "..."}` (viewer) turns a question into a validated query (one of the five metrics, a department or `ALL`, a month range inside 2023-01 to 2025-12) and answers with the values from the committed metrics snapshot (`reports/metrics/latest.json`); numbers never come from a model. `AI_PROVIDER` picks the translator: `stub` (a deterministic rule parser, the local and CI default), `openai-compatible` (llama-server with Qwen3-1.7B on 127.0.0.1:8150, `llama-server -m <gguf> --host 127.0.0.1 --port 8150 -np 1 -c 8192 -ngl 99` and `--var AI_PROVIDER:openai-compatible` on `wrangler dev`), or `workers-ai` (production: `@cf/meta/llama-3.3-70b-instruct-fp8-fast` through AI Gateway `peoplelake`, JSON schema output with one repair retry). The 60-question accuracy eval across providers is below the core cut and not built, so no accuracy number is claimed.
+`POST /api/ask {"question": "..."}` (viewer) turns a question into a validated query (one of the five metrics, a department or `ALL`, a month range inside 2023-01 to 2025-12) and answers with the values from the committed metrics snapshot (`reports/metrics/latest.json`); numbers never come from a model. `AI_PROVIDER` picks the translator: `stub` (a deterministic rule parser, the local and CI default), `openai-compatible` (llama-server with Qwen3-1.7B on 127.0.0.1:8150, `llama-server -m <gguf> --host 127.0.0.1 --port 8150 -np 1 -c 8192 -ngl 99` and `--var AI_PROVIDER:openai-compatible` on `wrangler dev`), or `workers-ai` (production: `@cf/meta/llama-3.3-70b-instruct-fp8-fast` through AI Gateway `peoplelake`, JSON schema output with one repair retry). `POST /api/ask/query` (viewer) runs only the translation step and returns the provider and the validated query.
+
+`peoplelake eval ask --provider stub|llama|workers-ai` sends the 60 hand-written questions in [evals/ask/questions.jsonl](evals/ask/questions.jsonl) (12 per metric; labeling conventions in [evals/ask/README.md](evals/ask/README.md)) to `/api/ask/query` and scores the answers: exact match on all four fields, accuracy per field, invalid answers and latency. `stub` and `llama` start `wrangler dev` on 127.0.0.1:8791 with that provider (`llama` also starts llama-server on 127.0.0.1:8150 with `-np 1 -c 8192 -ngl 99` and stops it afterwards); `workers-ai` calls the production Worker with the `pl-doctor` service token, so it runs only after the production setup. The questions were written before any provider ran on them and the providers are not tuned to them. Results land in `evals/results/ask-<provider>-<date>.json` and the README Results section.
+
+```bash
+uv run --project pipeline peoplelake eval ask --provider stub
+uv run --project pipeline peoplelake eval ask --provider llama        # needs llama-server and the Qwen3-1.7B GGUF (PL_LLAMA_GGUF)
+uv run --project pipeline peoplelake eval ask --provider workers-ai   # production only
+```
 
 ### Freshness
 

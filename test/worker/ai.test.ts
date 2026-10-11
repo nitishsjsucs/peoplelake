@@ -137,6 +137,42 @@ describe("POST /api/ask", () => {
   });
 });
 
+describe("POST /api/ask/query (translation only, scored by peoplelake eval ask)", () => {
+  it("returns the provider and the validated query without a committed snapshot", async () => {
+    const res = await call("/api/ask/query", "viewer", { method: "POST", body: JSON.stringify({ question: "Hires in Engineering in Q2 2023" }) });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      provider: "stub",
+      model: null,
+      query: { metric: "hires", department_id: "D01", start_month: "2023-04", end_month: "2023-06" },
+    });
+  });
+
+  it("needs a viewer or operator and a question", async () => {
+    expect((await call("/api/ask/query", "runner", { method: "POST", body: JSON.stringify({ question: "x" }) })).status).toBe(403);
+    expect((await call("/api/ask/query", "hris", { method: "POST", body: JSON.stringify({ question: "x" }) })).status).toBe(403);
+    expect((await call("/api/ask/query", "operator", { method: "POST", body: JSON.stringify({ question: " " }) })).status).toBe(400);
+    expect((await call("/api/ask/query", "viewer", { method: "POST", body: JSON.stringify({ question: "x".repeat(501) }) })).status).toBe(400);
+  });
+
+  it("reports the Workers AI model and maps an invalid model answer to 422", async () => {
+    const app = createApp(mountAsk);
+    const ask = async (ai: MockAi) =>
+      app.fetch(
+        new Request("http://127.0.0.1/api/ask/query", {
+          method: "POST",
+          headers: { "Cf-Access-Jwt-Assertion": await devToken("viewer") },
+          body: JSON.stringify({ question: "fte in 2025" }),
+        }),
+        { ...env, AI_PROVIDER: "workers-ai", AI_MODEL: "@cf/test/model", AI_GATEWAY_ID: "peoplelake", AI: ai },
+      );
+    const ok = await ask(new MockAi({ metric: "fte", department_id: "ALL", start_month: "2025-01", end_month: "2025-12" }));
+    expect(await ok.json()).toEqual({ provider: "workers-ai", model: "@cf/test/model", query: { metric: "fte", department_id: "ALL", start_month: "2025-01", end_month: "2025-12" } });
+    const bad = await ask(new MockAi("nope", "still nope"));
+    expect(bad.status).toBe(422);
+  });
+});
+
 describe("GET /api/ops/ai", () => {
   it("reports that local runs have no Workers AI binding", async () => {
     const res = await call("/api/ops/ai", "operator");

@@ -14,7 +14,7 @@
     "typegen:check": "wrangler types worker-configuration.d.ts --strict-vars=false --env-file .dev.vars.example --check",
     "typecheck": "tsc -p tsconfig.worker.json && tsc -p tsconfig.worker-test.json && tsc -p tsconfig.node.json",
     "test": "TZ=UTC vitest run",
-    "test:py": "TZ=UTC uv run --project pipeline pytest",
+    "test:py": "TZ=UTC uv run --project pipeline pytest pipeline/tests",
     "check:prose": "TZ=UTC node scripts/check-prose.ts",
     "contracts:gen": "TZ=UTC node scripts/gen-contracts.ts",
     "contracts:check": "TZ=UTC node scripts/gen-contracts.ts --check",
@@ -27,7 +27,8 @@
     "doctor": "TZ=UTC node scripts/doctor.ts",
     "prod:e2e": "TZ=UTC uv run --project pipeline peoplelake prod e2e --duration 60m",
     "eval:scenarios": "TZ=UTC uv run --project pipeline peoplelake eval scenarios",
-    "eval:freshness": "TZ=UTC uv run --project pipeline peoplelake eval freshness"
+    "eval:freshness": "TZ=UTC uv run --project pipeline peoplelake eval freshness",
+    "eval:ask": "TZ=UTC uv run --project pipeline peoplelake eval ask"
   },
   "dependencies": {
     "hono": "4.13.13",

@@ -368,6 +368,36 @@ def _cmd_eval_freshness(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_eval_ask(args: argparse.Namespace) -> int:
+    from datetime import UTC, datetime
+
+    from .evals.ask import AskEvalError, load_questions, report, run_local, run_prod, write
+    from .paths import repo_root
+
+    questions = load_questions(Path(args.questions) if args.questions else None)
+    if args.limit:
+        questions = questions[: args.limit]
+    try:
+        if args.provider == "workers-ai":
+            outcome = run_prod(questions)
+        else:
+            outcome = run_local(args.provider, questions, gguf=Path(args.gguf) if args.gguf else None)
+    except AskEvalError as exc:
+        print(f"eval ask: {exc}", file=sys.stderr)
+        return 1
+    rep = report(args.provider, outcome, ("peoplelake eval ask " + " ".join(sys.argv[3:])).strip())
+    date = datetime.now(UTC).strftime("%Y-%m-%d")
+    out = Path(args.out) if args.out else repo_root() / "evals" / "results" / f"ask-{args.provider}-{date}.json"
+    write(rep, out)
+    s = rep["summary"]
+    print(
+        json.dumps(
+            {"exact_match": f"{s['exact_match']}/{s['questions']}", "fields": s["field_accuracy"], "out": str(out)}
+        )
+    )
+    return 0
+
+
 def _cmd_prod(args: argparse.Namespace) -> int:
     from .paths import repo_root
 
@@ -562,6 +592,21 @@ def build_parser() -> argparse.ArgumentParser:
     fr.add_argument("--from-delivery", help="production: the prod:e2e delivery id (default: the latest)")
     fr.add_argument("--out")
     fr.set_defaults(func=_cmd_eval_freshness)
+
+    ask = ev_sub.add_parser("ask", help="score each AiProvider on the 60 questions in evals/ask/questions.jsonl")
+    ask.add_argument(
+        "--provider",
+        choices=["stub", "llama", "workers-ai"],
+        required=True,
+        help="stub and llama run on the local stack; workers-ai calls the production Worker",
+    )
+    ask.add_argument(
+        "--gguf", help="llama only: the GGUF llama-server loads (default: PL_LLAMA_GGUF or the Qwen3-1.7B path)"
+    )
+    ask.add_argument("--questions", help="questions file (default: evals/ask/questions.jsonl)")
+    ask.add_argument("--limit", type=int, help="only the first N questions (smoke runs; never for README numbers)")
+    ask.add_argument("--out")
+    ask.set_defaults(func=_cmd_eval_ask)
 
     prod = sub.add_parser("prod", help="production: Google Cloud bootstrap, doctor, verify, drills (needs credentials)")
     prod_sub = prod.add_subparsers(dest="prod_command", required=True)

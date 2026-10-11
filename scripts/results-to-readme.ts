@@ -3,7 +3,7 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type Report, renderResults, replaceSection } from "./lib/results.ts";
+import { REPORT_KINDS, type Report, renderResults, replaceSection } from "./lib/results.ts";
 
 export function loadReports(root: string): { file: string; report: Report }[] {
   const dir = join(root, "evals", "results");
@@ -15,7 +15,7 @@ export function loadReports(root: string): { file: string; report: Report }[] {
   }
   return names
     .map((n) => ({ file: `evals/results/${n}`, report: JSON.parse(readFileSync(join(dir, n), "utf8")) as Report }))
-    .filter(({ report }) => report.kind === "scenario-equivalence" || report.kind === "freshness");
+    .filter(({ report }) => REPORT_KINDS.includes(report.kind));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

@@ -46,6 +46,7 @@ Freshness result: `peoplelake eval freshness --target local --duration 60m` (ful
 
 ## Builder 2 (below the core cut)
 - Fix: `peoplelake eval scenarios` named its default results file `scenarios-<profile>-duckdb-<date>.json` whatever the engine, so a `--target prod-drill` run (engine bigquery) would have overwritten the same day's DuckDB results and `doctor-gcp`'s go-live evidence check (`scenarios-*-bigquery-*.json`) could never pass. The name now comes from the report's engine (`results_name`, tested).
+- 19 (ask eval, code): `evals/ask/questions.jsonl` (60 hand-written questions, 12 per metric, written before any provider ran on them; labeling conventions in `evals/ask/README.md`), `POST /api/ask/query` (viewer or operator; translation only, the same provider path as `/api/ask`, no snapshot needed), `peoplelake eval ask --provider stub|llama|workers-ai` (`evals/ask.py`: stub and llama through `wrangler dev` on 8791 with that `AI_PROVIDER`, llama also starts and stops llama-server on 8150; workers-ai through the production Worker with the `pl-doctor` token; exact match, per-field accuracy, invalid answers, latency p50/p95; refuses an answer labeled with another provider), the README renderer for `kind: "ask"`, `npm run eval:ask`. Tests: questions file contract in workerd (every expected answer parses as `MetricQuery`), route tests (stub answer, roles, 400s, Workers AI model and 422), scoring and labeling in pytest, an e2e stub run through `wrangler dev`. `npm run test:py` now passes `pipeline/tests` so pytest reads its config (markers) from `pipeline/pyproject.toml`. Results are recorded in a later commit (the ports were held by the full-profile scenario run).
 
 ## Next
 - Below the core cut (not built): the 60-question ask eval, the dashboard, MetricFlow.
@@ -56,12 +57,12 @@ Freshness result: `peoplelake eval freshness --target local --duration 60m` (ful
 |---|---|
 | `npm run typecheck` | pass |
 | `npm run typegen:check` | pass |
-| `npm test` (vitest) | pass: 18 files, 181 tests (worker 12 files in workerd, node 6 files) |
-| `npm run check:prose` | pass (18 Markdown files) |
+| `npm test` (vitest) | pass: 19 files, 188 tests (worker 13 files in workerd, node 6 files) |
+| `npm run check:prose` | pass (19 Markdown files) |
 | `npm run contracts:check` | pass |
 | `npm run results:check` | pass |
 | `npm run deploy:dry-run` | pass (rendered production config bundles) |
-| `npm run test:py` (pytest, all markers) | at the previous commit: 228 passed, 0 skipped, including the e2e stack test. At this commit: `pytest -m "not e2e" pipeline/tests` 231 passed, 3 skipped (the stack tests skip while a full-profile scenario run in a worktree holds ports 8791 and 9241; the count includes 6 not-yet-committed ask eval tests) |
+| `npm run test:py` (pytest, all markers) | last full run (all markers, ports free) at `53c46cb`: 228 passed, 0 skipped. At this commit: `pytest -m "not e2e" pipeline/tests` 231 passed, 3 skipped (stack tests skip while the full-profile scenario run in a worktree holds ports 8791 and 9241); the new e2e test runs with the next full run |
 | `ruff check`, `ruff format --check` | pass |
 | `peoplelake dev bq-compile` | pass (both branches: 27 models and 94 tests compile, sqlglot parse and ORDER BY lint) |
 | `peoplelake generate --profile small --check` | pass |
