@@ -33,6 +33,9 @@ describe("stub provider (deterministic rules, CI default)", () => {
     ["attrition", { metric: "departures", department_id: "ALL", start_month: "2023-01", end_month: "2025-12" }],
     ["How many people left the company in 2025?", { metric: "departures", department_id: "ALL", start_month: "2025-01", end_month: "2025-12" }],
     ["Headcount of the People team in March 2024", { metric: "headcount", department_id: "D08", start_month: "2024-03", end_month: "2024-03" }],
+    // "department" contains "depart": it names a department and never means departures.
+    ["Headcount in the Sales department in 2025", { metric: "headcount", department_id: "D04", start_month: "2025-01", end_month: "2025-12" }],
+    ["Departures from the Sales department in 2025", { metric: "departures", department_id: "D04", start_month: "2025-01", end_month: "2025-12" }],
   ])("%s", async (question, expected) => {
     expect(await stub.toQuery(question)).toEqual(expected);
   });
@@ -77,6 +80,32 @@ describe("openai-compatible provider (local llama-server)", () => {
     expect(seen[0]?.url).toBe("http://127.0.0.1:8150/v1/chat/completions");
     expect(seen[0]?.body.response_format).toMatchObject({ type: "json_schema", json_schema: { name: "metric_query", strict: true } });
     expect(seen[0]?.body.temperature).toBe(0);
+  });
+});
+
+describe("openai-compatible provider with the runtime's own fetch", () => {
+  it("never calls fetch with the provider as `this` (workerd throws Illegal invocation)", async () => {
+    // Port 9 (discard) has no listener here: the call must fail as an unreachable LLM, not as an
+    // Illegal invocation of fetch, which is what `this.#fetch(...)` with workerd's fetch produced.
+    const provider = new OpenAiCompatibleProvider("http://127.0.0.1:9/v1");
+    const err = await provider.toQuery("hires in 2024").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AskError);
+    expect((err as AskError).status).toBe(502);
+    expect((err as AskError).message).toMatch(/^local LLM unreachable at http:\/\/127\.0\.0\.1:9\/v1/);
+    expect((err as AskError).message).not.toMatch(/Illegal invocation/);
+  });
+
+  it("maps an unreachable llama-server to 502 on /api/ask/query", async () => {
+    const app = createApp(mountAsk);
+    const res = await app.fetch(
+      new Request("http://127.0.0.1/api/ask/query", {
+        method: "POST",
+        headers: { "Cf-Access-Jwt-Assertion": await devToken("viewer") },
+        body: JSON.stringify({ question: "fte in 2025" }),
+      }),
+      { ...env, AI_PROVIDER: "openai-compatible", LLM_BASE_URL: "http://127.0.0.1:9/v1" },
+    );
+    expect(res.status).toBe(502);
   });
 });
 

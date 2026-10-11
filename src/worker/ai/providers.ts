@@ -98,7 +98,8 @@ function metricOf(q: string): MetricId {
   if (/accept/.test(q)) return "offer_acceptance_rate";
   if (/\bfte\b|full[- ]time equivalent/.test(q)) return "fte";
   if (/\bhire|hiring|\bhired/.test(q)) return "hires";
-  if (/depart|attrition|terminat|left|exits?\b|leavers/.test(q)) return "departures";
+  // "depart" but not "department", which names a department rather than the metric.
+  if (/depart(?!ment)|attrition|terminat|left|exits?\b|leavers/.test(q)) return "departures";
   return "headcount";
 }
 
@@ -150,28 +151,33 @@ export class OpenAiCompatibleProvider implements AiProvider {
   readonly #baseUrl: string;
   readonly #model: string;
   readonly #fetch: typeof fetch;
-  constructor(baseUrl: string, model = "local", fetchImpl: typeof fetch = fetch) {
+  constructor(baseUrl: string, model = "local", fetchImpl?: typeof fetch) {
     this.#baseUrl = baseUrl.replace(/\/$/, "");
     this.#model = model;
-    this.#fetch = fetchImpl;
+    // Always call fetch as a plain function: `this.#fetch(...)` would run workerd's fetch with the
+    // provider as `this`, which throws "Illegal invocation" (found by `peoplelake eval ask --provider llama`).
+    const f = fetchImpl ?? fetch;
+    this.#fetch = (input, init) => f(input, init);
   }
   async toQuery(question: string): Promise<MetricQuery> {
-    const res = await this.#fetch(`${this.#baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model: this.#model,
-        temperature: 0,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: `${question} /no_think` },
-        ],
-        response_format: { type: "json_schema", json_schema: { name: "metric_query", strict: true, schema: METRIC_QUERY_SCHEMA } },
-      }),
+    const body = JSON.stringify({
+      model: this.#model,
+      temperature: 0,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: `${question} /no_think` },
+      ],
+      response_format: { type: "json_schema", json_schema: { name: "metric_query", strict: true, schema: METRIC_QUERY_SCHEMA } },
     });
+    let res: Response;
+    try {
+      res = await this.#fetch(`${this.#baseUrl}/chat/completions`, { method: "POST", headers: { "content-type": "application/json" }, body });
+    } catch (err) {
+      throw new AskError(502, `local LLM unreachable at ${this.#baseUrl}: ${err instanceof Error ? err.message : String(err)}`);
+    }
     if (!res.ok) throw new AskError(502, `local LLM HTTP ${res.status}`);
-    const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    return validated(body.choices?.[0]?.message?.content ?? "", this.name);
+    const out = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    return validated(out.choices?.[0]?.message?.content ?? "", this.name);
   }
 }
 

@@ -47,6 +47,7 @@ Freshness result: `peoplelake eval freshness --target local --duration 60m` (ful
 ## Builder 2 (below the core cut)
 - Fix: `peoplelake eval scenarios` named its default results file `scenarios-<profile>-duckdb-<date>.json` whatever the engine, so a `--target prod-drill` run (engine bigquery) would have overwritten the same day's DuckDB results and `doctor-gcp`'s go-live evidence check (`scenarios-*-bigquery-*.json`) could never pass. The name now comes from the report's engine (`results_name`, tested).
 - 19 (ask eval, code): `evals/ask/questions.jsonl` (60 hand-written questions, 12 per metric, written before any provider ran on them; labeling conventions in `evals/ask/README.md`), `POST /api/ask/query` (viewer or operator; translation only, the same provider path as `/api/ask`, no snapshot needed), `peoplelake eval ask --provider stub|llama|workers-ai` (`evals/ask.py`: stub and llama through `wrangler dev` on 8791 with that `AI_PROVIDER`, llama also starts and stops llama-server on 8150; workers-ai through the production Worker with the `pl-doctor` token; exact match, per-field accuracy, invalid answers, latency p50/p95; refuses an answer labeled with another provider), the README renderer for `kind: "ask"`, `npm run eval:ask`. Tests: questions file contract in workerd (every expected answer parses as `MetricQuery`), route tests (stub answer, roles, 400s, Workers AI model and 422), scoring and labeling in pytest, an e2e stub run through `wrangler dev`. `npm run test:py` now passes `pipeline/tests` so pytest reads its config (markers) from `pipeline/pyproject.toml`. Results are recorded in a later commit (the ports were held by the full-profile scenario run).
+- Fixes found by the first ask eval runs (questions unchanged): (1) `OpenAiCompatibleProvider` called workerd's `fetch` as `this.#fetch(...)`, which throws "Illegal invocation", so `/api/ask` with llama-server never worked inside `wrangler dev` (the earlier smoke ran the provider under Node, where `fetch` ignores `this`); it now calls fetch as a plain function and maps an unreachable server to 502. A workerd test with the runtime's own fetch fails without the fix. (2) The stub read "department" as departures (`/depart/` matched it), so "headcount for the Sales department" became a departures query; it now matches `depart(?!ment)`, with two goldens. The first stub run at `10ce9e8` scored 43 of 60 exact (metric 88.3%, department 100%, start month 91.7%, end month 88.3%); 3 of its 17 misses were this bug. The remaining stub misses (year-end, half-year, "since", "joined", "turnover") are rule-parser limits and stay as measured.
 
 ## Next
 - Below the core cut (not built): the 60-question ask eval, the dashboard, MetricFlow.
@@ -57,7 +58,7 @@ Freshness result: `peoplelake eval freshness --target local --duration 60m` (ful
 |---|---|
 | `npm run typecheck` | pass |
 | `npm run typegen:check` | pass |
-| `npm test` (vitest) | pass: 19 files, 188 tests (worker 13 files in workerd, node 6 files) |
+| `npm test` (vitest) | pass: 19 files, 192 tests (worker 13 files in workerd, node 6 files) |
 | `npm run check:prose` | pass (19 Markdown files) |
 | `npm run contracts:check` | pass |
 | `npm run results:check` | pass |
