@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Commit 3 of 18 (core) done: contracts.
+Commit 4 of 18 (core) done: DuckDB loader and digests.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -12,8 +12,10 @@ Commit 3 of 18 (core) done: contracts.
 
 3. Contracts: zod contracts in `src/shared/contracts.ts` (three source batches, RawRecord, JobSpec, LoadResult, TransformResult, FaultSpec) generate `contracts/*.schema.json` (`npm run contracts:gen`, checked by a node test); pydantic mirrors in `pipeline/src/peoplelake/contracts.py` with field-by-field schema tests; one valid and one invalid fixture per contract; canonical JSON in TS (`src/worker/ingest/canonical-json.ts`) and Python with a shared golden; every generated envelope (both profiles) validates under pydantic.
 
+4. Warehouse: `open_duckdb` (default config, read-write, `SET TimeZone='UTC'`), `DuckDBWarehouse.load_deliveries` (batch dedupe by `delivery_id`, anti-join against `pl_raw.raw_event_deliveries`, stats incl. unique new events, 10 s histogram of first receipt of new events, `raw_max_load_seq`, `pl_ops.load_log`), digests by logical type with Python-side PK sort (`warehouse/digest.py`, 10 model specs), Python normalization mirror (`normalize.py`), direct loader and CLI `peoplelake warehouse load-direct`, `peoplelake digest`.
+
 ## Next
-4. Warehouse: DuckDB loader with single-owner UTC connections and canonical digests.
+5. dbt: staging, spells, effective-dated history with per-model bucket cursors, unit tests.
 
 ## Check status (last run at this commit)
 | Check | Result |
@@ -22,7 +24,7 @@ Commit 3 of 18 (core) done: contracts.
 | `npm run typegen:check` | pass |
 | `npm test` | pass (4 files, 42 tests) |
 | `npm run check:prose` | pass |
-| `npm run test:py` (pytest) | pass (99 tests) |
+| `npm run test:py` (pytest) | pass (125 tests) |
 | `ruff check` | pass |
 | `peoplelake generate --profile small --check` | pass |
 
@@ -33,4 +35,7 @@ Commit 3 of 18 (core) done: contracts.
 - Generator: extra modules `generator/records.py` (pre-sequencing record type), `generator/dataset.py` (sequencing and files), `generator/seeds.py` and `generator/pins.py`; `peoplelake/paths.py` finds the repo root (`PL_REPO_ROOT` overrides).
 - Oracle seed columns: `fte` and `offer_acceptance_rate` are decimal strings with 6 places (empty rate when nobody decided). `ALL` rows carry `transfers_in = transfers_out = ` total transfers in the month. `expected_event_counts.csv` columns are `profile,source,event_type,expected_count`.
 - `JobSpec`/`LoadResult`/`TransformResult`: failed and expired results share one smaller shape (`job_id, run_id, attempt, status, error, duration_ms?`) instead of the succeeded shape with optional fields; `FaultSpec` gains `attempt?` (S4 fails the transform on attempt 1 only); `TransformResult.digests` is a partial record (a verify step requires all 10).
+- Load job orchestration (`loader.py` in the spec) lands with the lake reader and runner; commit 4 puts the load SQL in `DuckDBWarehouse.load_deliveries` and the Worker-free path in `warehouse/direct.py`.
+- `received_histogram_10s` counts unique new events at their first `received_at` (what the freshness eval needs), not every inserted delivery.
+- Digest model specs live in `warehouse/digest.py` with logical column types; values are canonicalized by logical type so DuckDB `HUGEINT`/`DECIMAL` and BigQuery `INT64`/`NUMERIC` agree.
 - Correction events carry `effectiveDate` = the corrected date for date corrections and the target's date for value corrections; rescinds carry the target's date. The one-event-per-day rule is asserted on business events (hire, rehire, termination, transfer, job and FTE change) for both original and corrected dates.

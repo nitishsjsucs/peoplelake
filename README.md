@@ -13,7 +13,7 @@ v1 is under construction and this repository is published while it is built. Thi
 | Repo scaffold, TypeScript configs, generated Worker types, prose check | done |
 | Synthetic generator with exact counts and oracle | done: 100,000 events (full) and 10,000 (small) from `hris`, `ats`, `talent`, pinned sha256, committed oracle seeds |
 | Contracts and canonical JSON golden | done: zod contracts generate `contracts/*.schema.json`; pydantic mirrors; fixtures and a canonical JSON golden asserted by vitest (in workerd) and pytest |
-| DuckDB loader and output digests | not started |
+| DuckDB loader and output digests | done: idempotent load on `delivery_id`, UTC sessions, engine-independent digests for the 10 published models |
 | dbt models, five metrics, reconciliation checks | not started |
 | BigQuery configs and offline compile | not started |
 | Local Iceberg lake | not started |
@@ -104,6 +104,9 @@ npm run check:prose
 uv run --project pipeline peoplelake generate --profile small --out .data/generated/small --check
 uv run --project pipeline peoplelake generate --profile full --out .data/generated/full --check
 uv run --project pipeline peoplelake generate --write-seeds   # rewrites warehouse/seeds (committed)
+
+# load generated events straight into the local DuckDB stand-in (no Worker, no lake)
+uv run --project pipeline peoplelake warehouse load-direct --profile small
 ```
 
 ### Synthetic data
