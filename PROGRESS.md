@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-All 18 core commits done, plus the recorded 60-minute local freshness result. Builder 2 is working below the core cut (SPEC 23 items 19 to 22). Production go-live waits on the owner's accounts (README Production setup).
+Every item of the SPEC 23 plan is done: the 18 core commits and, below the cut, the ask eval (19), the dashboard (20), MetricFlow (21) and refreshed Results (22). All six scenarios are identical to the reference on both profiles, and the stub, llama-server and MetricFlow results are recorded. Everything is verified on the local stack only; production go-live waits on the owner's accounts (README Production setup).
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -55,7 +55,8 @@ Freshness result: `peoplelake eval freshness --target local --duration 60m` (ful
 - Fix: `npm run doctor -- --local-only` (README local setup) failed on every clone with "TZ=UTC in npm scripts: typecheck", because its `\bnode\b` rule matches `tsconfig.node.json`. `typecheck` now starts with `TZ=UTC`; the rule is `scriptsMissingTz` with a test that the repo's own `package.json` passes (it fails on the previous `package.json`). The local doctor now passes every check.
 
 ## Next
-- Owner go-live (needs accounts): README Production setup steps 1 to 14, then `npm run prod:e2e`, the BigQuery drill, `prod demo-masking`, `prod drill-restore`, `peoplelake eval ask --provider workers-ai`; CI runs once the repository is pushed.
+- Owner go-live (needs accounts): README Production setup steps 1 to 12, then step 13 (`npm run prod:e2e`, the BigQuery drill `eval scenarios --target prod-drill`, `prod demo-masking`, `eval ask --provider workers-ai`, `npm run results:readme`), `prod drill-restore` per `docs/runbooks/restore.md`, and a push of `main` so CI runs for the first time.
+- Not exercised against real services yet: Basin Pipelines, Basin Catalog (including whether a sink-created table can be dropped for `prod reset`), production Workflows, the Cloud Run Job, BigQuery, Workers AI and Access (including the dashboard sign-in). The S5 BigQuery drill skips its point-in-time half (no scratch `_pit` datasets).
 
 ## Check status (last run at this commit)
 | Check | Result |
@@ -67,13 +68,13 @@ Freshness result: `peoplelake eval freshness --target local --duration 60m` (ful
 | `npm run contracts:check` | pass |
 | `npm run results:check` | pass |
 | `npm run deploy:dry-run` | pass (builds the dashboard; rendered production config bundles with assets) |
-| `npm run test:py` (pytest) | at this commit: `pytest -m "not e2e" pipeline/tests` 238 passed, 0 skipped (the two e2e tests run in the final full run) |
+| `npm run test:py` (pytest, all markers) | pass: 242 passed, 0 skipped, including both e2e tests (stack up and down, stub ask eval through `wrangler dev`) |
 | `ruff check`, `ruff format --check` | pass |
 | `npm run doctor -- --local-only` | pass (every local check) |
-| `peoplelake dev bq-compile` | pass (both branches: 27 models and 94 tests compile, sqlglot parse and ORDER BY lint) |
+| `peoplelake dev bq-compile` | pass (both branches: 27 models and 94 tests compile, sqlglot parse and ORDER BY lint, semantic layer included) |
 | `peoplelake generate --profile small --check` | pass |
-| `peoplelake dev clean-clone-check` | pass at `bb7c9b8` |
-| Ports 8791, 9241, 8150 after the run | free |
+| `peoplelake dev clean-clone-check` | pass at `bb82fd5` |
+| Ports 8791, 9241, 8150 after the run | free; no wrangler, workerd, runner, ticker or llama-server process of this repo left |
 
 ## Deviations from SPEC.md
 - Dashboard: no Vite dev server (the shared machine allows only ports 8791, 9241 and 8150), so the dashboard is always served by `wrangler dev` from `web/dist`; locally the person pastes a dev token (kept in `sessionStorage` for the tab) because no Access session exists. `@types/react-dom` 19.3.0 and `@testing-library/dom` 10.4.2 are added (needed by `react-dom/client` types and as the peer of `@testing-library/react`).
