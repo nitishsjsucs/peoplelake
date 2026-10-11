@@ -17,7 +17,7 @@ v1 is under construction and this repository is published while it is built. Thi
 | dbt models, five metrics, reconciliation checks | done on DuckDB: staging, spells, SCD2 history with per-model bucket cursors, facts, metrics mart, reporting and ops models, 10 unit tests, reconciliation checks R1 to R11 |
 | BigQuery configs and offline compile | done offline: dbt-bigquery profiles, policy tags, authorized views, int64 range `insert_overwrite`, both compile branches parse as BigQuery, ORDER BY lint, BigQuery loader tested against a fake client; nothing has run on BigQuery yet |
 | Local Iceberg lake | done locally: pyiceberg SqlCatalog stand-in, committer for sink roll files (idempotent on key and etag), incremental reader with full-scan fallback; Basin Catalog configured through Iceberg REST but not exercised (needs production) |
-| Worker: auth, ingest, sinks | not started (only `GET /v1/health` exists) |
+| Worker: auth, ingest, sinks | in progress: fail-closed config, Access JWT verification (RS256, iss, aud, exp) with locally generated dev keys, role gates; ingest next |
 | Orchestration: Coordinator, Workflow, dispatchers | not started |
 | Runner and local stack | not started |
 | Scenario and freshness evals | not started |
@@ -95,6 +95,7 @@ Requirements: Node 22.18 or newer (CI uses 24), npm, uv 0.12.x, Python 3.12.
 git clone https://github.com/nitishsjsucs/peoplelake && cd peoplelake
 npm ci
 uv sync --locked --project pipeline
+uv run --project pipeline peoplelake auth dev-keys   # .dev/keys and DEV_ACCESS_JWKS in .dev.vars
 npm run typecheck
 npm test            # vitest (TZ=UTC)
 npm run test:py     # pytest (TZ=UTC)

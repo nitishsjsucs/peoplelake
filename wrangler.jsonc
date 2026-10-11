@@ -15,7 +15,19 @@
     "RUNNER_DISPATCH": "poll",
     "RUNS_ENABLED": "true",
     "ACCESS_TEAM_DOMAIN": "https://peoplelake-dev.local",
-    "ACCESS_AUD": "peoplelake-dev"
+    "ACCESS_AUD": "peoplelake-dev",
+    "ACCESS_ROLE_MAP": "{\"emails\":{\"dev@peoplelake.local\":[\"viewer\",\"operator\"]},\"service_tokens\":{\"src-hris.access\":\"source:hris\",\"src-ats.access\":\"source:ats\",\"src-talent.access\":\"source:talent\",\"runner.access\":\"runner\"}}",
+    "JOB_LEASE_SECONDS": "60",
+    "JOB_CLAIM_TIMEOUT_SECONDS": "30",
+    "JOB_MAX_ATTEMPTS": "3",
+    "RUN_TIMEOUT_MINUTES": "10",
+    "SINK_ROLL_SECONDS": "60",
+    "LOCAL_SINK_MAX_RECORDS": "50000",
+    "HEARTBEAT_MINUTES": "0",
+    "RUNNER_SEEN_WINDOW_SECONDS": "60",
+    "EVAL_FAULTS_ENABLED": "true",
+    "AI_PROVIDER": "stub",
+    "LLM_BASE_URL": "http://127.0.0.1:8150/v1"
   },
   "env": {
     "production": {
@@ -29,7 +41,24 @@
         "RUNNER_DISPATCH": "cloudrun",
         "RUNS_ENABLED": "__PL_RUNS_ENABLED__",
         "ACCESS_TEAM_DOMAIN": "__PL_ACCESS_TEAM_DOMAIN__",
-        "ACCESS_AUD": "__PL_ACCESS_AUD__"
+        "ACCESS_AUD": "__PL_ACCESS_AUD__",
+        "ACCESS_ROLE_MAP": "__PL_ACCESS_ROLE_MAP__",
+        "GCP_PROJECT": "__PL_GCP_PROJECT__",
+        "GCP_REGION": "us-central1",
+        "CLOUD_RUN_JOB": "peoplelake-runner",
+        "BASIN_CATALOG_URI": "__PL_CATALOG_URI__",
+        "BASIN_CATALOG_PREFIX": "__PL_CATALOG_PREFIX__",
+        "JOB_LEASE_SECONDS": "600",
+        "JOB_CLAIM_TIMEOUT_SECONDS": "300",
+        "JOB_MAX_ATTEMPTS": "3",
+        "RUN_TIMEOUT_MINUTES": "45",
+        "SINK_ROLL_SECONDS": "60",
+        "HEARTBEAT_MINUTES": "360",
+        "RUNNER_SEEN_WINDOW_SECONDS": "60",
+        "EVAL_FAULTS_ENABLED": "false",
+        "AI_PROVIDER": "workers-ai",
+        "AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "AI_GATEWAY_ID": "peoplelake"
       }
     }
   }

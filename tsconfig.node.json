@@ -4,12 +4,20 @@
     "noEmit": true,
     "module": "nodenext",
     "target": "es2023",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true,
     "skipLibCheck": true
   },
-  "include": ["scripts", "src/shared", "test/node", "vitest.config.ts"]
+  "include": [
+    "scripts",
+    "src/shared",
+    "test/node",
+    "test/setup/worker-vars.ts",
+    "vitest.config.ts"
+  ]
 }

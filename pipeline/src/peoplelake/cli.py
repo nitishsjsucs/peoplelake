@@ -210,6 +210,22 @@ def _cmd_lake(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_auth(args: argparse.Namespace) -> int:
+    from .auth.dev_tokens import generate_dev_keys, mint
+    from .config import load_settings
+    from .paths import repo_root
+
+    settings = load_settings()
+    if args.auth_command == "dev-keys":
+        jwks = generate_dev_keys(settings.dev_keys_dir, repo_root() / ".dev.vars")
+        print(
+            f"wrote {settings.dev_keys_dir}/private.pem, jwks.json and DEV_ACCESS_JWKS in .dev.vars (kid {jwks['keys'][0]['kid']})"
+        )
+        return 0
+    print(mint(args.identity, keys_dir=settings.dev_keys_dir, ttl_seconds=args.ttl))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="peoplelake", description="PeopleLake pipelines")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -237,6 +253,17 @@ def build_parser() -> argparse.ArgumentParser:
     dbt = sub.add_parser("dbt", help="run dbt in process with the repo's project and profiles directories")
     dbt.add_argument("dbt_args", nargs=argparse.REMAINDER)
     dbt.set_defaults(func=_cmd_dbt)
+
+    auth = sub.add_parser("auth", help="local dev keys and tokens")
+    auth_sub = auth.add_subparsers(dest="auth_command", required=True)
+    keys = auth_sub.add_parser(
+        "dev-keys", help="generate RS256 dev keys into .dev/keys and DEV_ACCESS_JWKS into .dev.vars"
+    )
+    keys.set_defaults(func=_cmd_auth)
+    tok = auth_sub.add_parser("dev-token", help="print a dev Access JWT")
+    tok.add_argument("identity", help="runner, hris, ats, talent, operator or an email address")
+    tok.add_argument("--ttl", type=int, default=300)
+    tok.set_defaults(func=_cmd_auth)
 
     lake = sub.add_parser("lake", help="Iceberg lake: local stand-in or Basin Catalog")
     lake_sub = lake.add_subparsers(dest="lake_command", required=True)

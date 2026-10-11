@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Commit 8 of 18 (core) done: lake.
+Commit 9 of 18 (core) done: Worker config and Access auth.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -22,17 +22,19 @@ Commit 8 of 18 (core) done: lake.
 
 8. Lake: `lake/catalog.py` (local `SqlCatalog` stand-in, Basin `RestCatalog`, `catalog_info` with the REST prefix), `lake/committer.py` (stand-in for Basin sink commits: one snapshot per `(key, etag)` sink file with `peoplelake.source-file/etag` properties, recommit fault), `lake/reader.py` (per-append-snapshot incremental reads keeping each row's snapshot id, replace and delete snapshots skipped, full-scan fallback for replays and expired watermarks), `infra/cloudflare/stream-schema.json`, `pipeline.sql`, `r2-notification.md`, `config.py` settings, CLI `peoplelake lake init|commit|scan|catalog-info`.
 
+9. Worker auth: `parseConfig` (every rule in SPEC 7.2 plus `ACCESS_AUD=pending` only with runs disabled, placeholders refused, dev auth requires `DEV_ACCESS_JWKS`), `verifyAccessJwt` with jose (remote team JWKS in production, local JWKS for dev; header only, cookie ignored), principals from `common_name` / `email` through `ACCESS_ROLE_MAP`, `requireRole`, Hono app with `/v1/health` and `/v1/health/auth`; vitest generates ephemeral keys per run; Python `peoplelake auth dev-keys|dev-token` and `AccessHeaders` (dev JWT locally, service-token headers in production). Checked by hand in this session: PyJWT-minted dev tokens verify in `wrangler dev` on 127.0.0.1:8791 (runner and operator roles, 401 without a token); processes stopped and ports 8791 and 9241 free afterwards.
+
 ## Next
-9. Worker: config (fail-closed rules), Access JWT verification with dev keys, roles.
+10. Ingest: three source envelopes, RawRecord normalization, Basin and local sinks (SinkRoller DO).
 
 ## Check status (last run at this commit)
 | Check | Result |
 |---|---|
 | `npm run typecheck` | pass |
 | `npm run typegen:check` | pass |
-| `npm test` | pass (4 files, 42 tests) |
+| `npm test` | pass (5 files, 68 tests) |
 | `npm run check:prose` | pass |
-| `npm run test:py` (pytest) | pass (173 tests) |
+| `npm run test:py` (pytest) | pass (178 tests) |
 | `peoplelake dev bq-compile` | pass (both branches) |
 | dbt unit tests (`dbt test --select test_type:unit` after `dbt run --empty`) | pass (10) |
 | `ruff check` | pass |
