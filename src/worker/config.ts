@@ -12,7 +12,8 @@ export type Role = (typeof ROLES)[number];
 const RoleMapSchema = z
   .object({
     emails: z.record(z.string().min(3), z.array(z.enum(["viewer", "operator"])).min(1)),
-    service_tokens: z.record(z.string().min(1), z.enum(["runner", "source:hris", "source:ats", "source:talent"])),
+    // One role per machine identity; `operator` is the doctor's token for the /api/ops/* checks.
+    service_tokens: z.record(z.string().min(1), z.enum(["runner", "source:hris", "source:ats", "source:talent", "operator"])),
   })
   .strict();
 export type RoleMap = z.infer<typeof RoleMapSchema>;

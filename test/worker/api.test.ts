@@ -88,3 +88,25 @@ describe("runner interface", () => {
     expect(await (await env.REPORTS_BUCKET.get(`reports/metrics/${run_id}.json`))?.text()).toBe(body);
   });
 });
+
+describe("operator reset", () => {
+  it("needs the confirmation, refuses during a run and starts a new generation", async () => {
+    const coordinator = coordinatorStub(env);
+    const before = await coordinator.generation();
+    const { run_id } = await coordinator.requestRun("test");
+    expect((await call("/api/ops/reset", "operator", json({}))).status).toBe(400);
+    expect((await call("/api/ops/reset", "viewer", json({ confirm: "peoplelake" }))).status).toBe(403);
+    expect((await call("/api/ops/reset", "operator", json({ confirm: "peoplelake" }))).status).toBe(409);
+    await coordinator.failRun(run_id ?? "", "x");
+    await coordinator.releaseRun(run_id ?? "");
+    const res = await call("/api/ops/reset", "operator", json({ confirm: "peoplelake" }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { generation: number };
+    expect(body.generation).toBeGreaterThan(before);
+    expect(await coordinator.listRuns()).toEqual([]);
+    await coordinator.setTestOptions({ startWorkflows: false });
+    const next = await coordinator.requestRun("after reset");
+    expect(next.run_id).toMatch(new RegExp(`^r-${body.generation.toString(36)}-000001$`));
+  });
+});
+

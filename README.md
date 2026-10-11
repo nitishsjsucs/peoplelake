@@ -23,7 +23,7 @@ v1 is under construction and this repository is published while it is built. Thi
 | Scenario and freshness evals | scenario equivalence done on DuckDB (see Results); live freshness eval built (`peoplelake eval freshness`), the 60-minute local measurement is running and lands in Results when it finishes |
 | CI | workflows written (`ci.yml` on every push, `eval-full.yml` weekly and on demand); they have not run on GitHub yet because the owner publishes the repo |
 | Workers AI and `/api/ask` | done: `AiProvider` with a deterministic stub (CI), llama-server (local) and Workers AI through AI Gateway (production, mocked in tests), `POST /api/ask` answering only from the committed metrics snapshot, `/api/ops/ai` gateway check; the 60-question ask eval is below the core cut and not built |
-| Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | not started |
+| Production setup (`setup:prod`, `doctor`, `bootstrap-gcp`) | built and tested offline (dry run, fake clients, rendered config bundles with `wrangler deploy --dry-run`); not run against real accounts yet, see Production setup |
 | Front end | none in v1 (the dashboard is below the core cut line); `/api/*` is the read interface |
 
 Identical outputs across the five scenarios: proven on DuckDB with the local stack (all six legs on the small profile; B, S2 and S4 on the full 100,000-event profile); BigQuery pending (needs the production setup below and the BigQuery drill).
@@ -86,6 +86,8 @@ flowchart LR
 | Auth | locally generated RS256 keys, same verifier code | Access JWT (RS256) against the team JWKS |
 | LLM | llama-server (Qwen3-1.7B) on 8150, or a deterministic stub in CI | Workers AI through AI Gateway `peoplelake` |
 | Cron | ticker process | Workers cron `* * * * *` |
+| Scenario equivalence | DuckDB with the local stack (every CI push, small profile) | BigQuery `_drill` datasets with the local Worker, Workflows and lake (`eval scenarios --target prod-drill`, a go-live step) |
+| Freshness | measured on the local stack | measured once from the `prod:e2e` live delivery |
 
 ## Local setup
 
@@ -96,6 +98,7 @@ git clone https://github.com/nitishsjsucs/peoplelake && cd peoplelake
 npm ci
 uv sync --locked --project pipeline
 uv run --project pipeline peoplelake auth dev-keys   # .dev/keys and DEV_ACCESS_JWKS in .dev.vars
+npm run doctor -- --local-only
 npm run typecheck
 npm test            # vitest (TZ=UTC)
 npm run test:py     # pytest (TZ=UTC)
@@ -202,7 +205,83 @@ Scenario step timeouts are twice the slowest leg measured in the build session (
 
 ## Production setup
 
-Production needs a Cloudflare account on Workers Paid with R2 and Zero Trust, and a Google Cloud project with billing for BigQuery and Cloud Run. The idempotent `npm run setup:prod` and `npm run doctor` commands that provision and check every resource are planned in SPEC.md sections 20 and 21 and are not built yet. Until they exist, nothing in this repo runs against Cloudflare production services or BigQuery.
+Production runs on Cloudflare (Workers, Workflows, Queues, Durable Objects, R2, Basin Pipelines, Basin Catalog, Workers AI, AI Gateway, Zero Trust Access) and Google Cloud (BigQuery and a Cloud Run Job runner). `npm run setup:prod` creates every resource from the CLIs and APIs once the accounts below exist, and `npm run doctor` checks every prerequisite and prints the exact fix for anything missing. Both are idempotent and safe to rerun. Nothing in production has been exercised from this repository yet: the commands below are what turns the offline-tested path on.
+
+### Accounts and expected cost
+
+| Item | Plan | Expected cost |
+|---|---|---|
+| Cloudflare Workers | Workers Paid (required by Basin Pipelines) | $5/month minimum |
+| R2 and Basin Catalog | R2 with a payment card (Basin Catalog requires it) | inside the free tier at this volume |
+| Queues, Workflows, Durable Objects, Workers AI, AI Gateway | included with Workers Paid or free tiers | about $0 at this volume |
+| Zero Trust Access | Free plan (up to 50 users) | $0 |
+| BigQuery | billing account required (the sandbox has no DML, and dbt incremental models need MERGE) | first 1 TiB of queries per month free; every query capped at 5 GB billed |
+| Cloud Run Job, Cloud Build, Artifact Registry, Secret Manager | pay as you go | cents per month |
+
+### Steps only a person can do (in order)
+
+Cloudflare dashboard:
+1. Workers & Pages, Plans: subscribe to **Workers Paid**.
+2. R2 Object Storage: enable R2 and add a payment card.
+3. Zero Trust (one.dash.cloudflare.com): create the organization on the **Free** plan and choose a team name; the team domain is `https://<team>.cloudflareaccess.com`.
+4. R2, Overview, Manage API tokens, Create API token, twice: `peoplelake-sink` with **Admin Read & Write**, and `peoplelake-catalog-read` with **Admin Read only**.
+5. My Profile, API Tokens, Create Custom Token `peoplelake-setup`, scoped to this account, with **Access: Apps and Policies** (edit), **Access: Service Tokens** (edit) and **AI Gateway** (edit). Do not name it `CLOUDFLARE_API_TOKEN` (wrangler would use it instead of your login).
+
+Cloudflare CLI:
+
+6. `npx wrangler login`, then `npx wrangler whoami` for the Account ID.
+
+Google Cloud:
+
+7. `brew install --cask gcloud-cli`, then `gcloud auth login`.
+8. Create a billing account in the console if you have none.
+9. In this order (the last command gives application default credentials a quota project; without it Data Catalog and Data Policy calls fail):
+   ```bash
+   gcloud projects create peoplelake-<suffix> --name="PeopleLake"
+   gcloud billing projects link peoplelake-<suffix> --billing-account=<BILLING_ACCOUNT_ID>
+   gcloud config set project peoplelake-<suffix>
+   gcloud auth application-default login
+   gcloud auth application-default set-quota-project peoplelake-<suffix>
+   ```
+   Use a project without a parent organization (a personal Gmail account has none). Organizations created on or after 2024-05-03 block service account key creation by default, and the Worker's Cloud Run dispatcher needs one key.
+
+Local files (both are gitignored; setup makes them mode 600 and refuses to continue if it cannot):
+
+10. `.prod/config.env`:
+    ```bash
+    PL_CF_ACCOUNT_ID=<account id from wrangler whoami>
+    PL_WORKERS_SUBDOMAIN=<only if the account has no workers.dev subdomain yet>
+    PL_ACCESS_TEAM_DOMAIN=https://<team>.cloudflareaccess.com
+    PL_OWNER_EMAIL=<your email, the only human allowed through Access>
+    PL_GCP_PROJECT=peoplelake-<suffix>
+    PL_GCP_REGION=us-central1
+    PL_BQ_LOCATION=US
+    ```
+    `.prod/secrets.env`:
+    ```bash
+    PL_CF_SETUP_TOKEN=<custom token from step 5>
+    PL_R2_SINK_TOKEN=<peoplelake-sink from step 4>
+    PL_R2_CATALOG_TOKEN=<peoplelake-catalog-read from step 4>
+    ```
+
+Then:
+
+11. `npm run setup:prod -- --dry-run` (prints every command and API call, secrets redacted), then `npm run setup:prod`.
+12. `npm run doctor` until every check passes.
+13. Go live:
+    ```bash
+    npm run prod:e2e    # one live 60-minute delivery of the full profile, prod verify, production freshness
+    uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10 --target prod-drill   # all five scenarios on BigQuery _drill datasets
+    uv run --project pipeline peoplelake prod demo-masking
+    npm run results:readme
+    ```
+14. Push `main` so CI runs. CI needs no secrets and holds no cloud credentials.
+
+### What `setup:prod` does for you
+
+workers.dev subdomain registration, R2 buckets `peoplelake-lake` and `peoplelake-reports`, Basin Catalog on the lake bucket with snapshot expiration and compaction, Queues `peoplelake-lake-events` and its dead-letter queue, the Basin stream `peoplelake_raw_stream`, sink `peoplelake_raw_sink` (Iceberg table `peoplelake.raw_events`, 60 s rolls) and pipeline, the R2 notification rule, five Access service tokens (`pl-source-hris`, `pl-source-ats`, `pl-source-talent`, `pl-runner`, and `pl-doctor` for the operator checks), AI Gateway `peoplelake`, a fail-closed first deploy (every request 401, no runs), the Access application with an owner policy and a service-auth policy, everything in Google Cloud through `peoplelake prod bootstrap-gcp` (APIs, twelve datasets with time travel, policy tags and masking policies, service accounts and roles, secrets, Artifact Registry, the runner image built by Cloud Build, the Cloud Run Job, the dispatcher key), and the final deploy with the real Access AUD, the role map and `RUNS_ENABLED=true` only if the Google Cloud bootstrap passed. Files it writes: `.prod/state.json`, `.prod/secrets.env` (service token secrets), `.prod/gcp.json`, `.prod/gcp-dispatcher-key.json`, all mode 600.
+
+Deploy only with `npm run deploy` (render, safety check, `wrangler deploy --env production`): the top-level Worker in `wrangler.jsonc` is named `peoplelake-local` with `workers_dev: false`, so a plain `wrangler deploy` can never replace production. `npm run deploy:runner` rebuilds the runner image and updates the job.
 
 ## Results
 

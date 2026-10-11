@@ -273,4 +273,48 @@ class BigQueryWarehouse:
         )
 
     def reset(self) -> None:
-        raise RuntimeError("BigQuery datasets are reset only by `peoplelake prod reset` (guarded) or drills")
+        """Empty the drill datasets (scenario drills start from empty state). Never touches production."""
+        if self.suffix != "drill":
+            raise RuntimeError("BigQuery datasets are reset only by `peoplelake prod reset` (guarded) or drills")
+        for base in ("pl_raw", "pl_staging", "pl_core", "pl_restricted", "pl_reporting", "pl_ops"):
+            for table in self.client.list_tables(self.dataset(base)):
+                self.client.delete_table(table.reference, not_found_ok=True)
+
+    def oracle_mismatches(self, profile: str) -> int:
+        from google.cloud import bigquery
+
+        sql = f"""
+            SELECT COUNT(*) AS n FROM `{self.dataset("pl_core")}.metrics_workforce_monthly` m
+            FULL OUTER JOIN (SELECT * FROM `{self.dataset("pl_ops")}.oracle_workforce_monthly` WHERE profile = @p) o
+              ON o.month = m.month AND o.department_id = m.department_id
+            WHERE m.month IS NULL OR o.month IS NULL
+               OR TO_JSON_STRING(STRUCT(m.headcount, m.fte, m.hires, m.rehires, m.departures, m.transfers_in, m.transfers_out,
+                    m.offers_extended, m.offers_accepted, m.offers_declined, m.offer_acceptance_rate))
+               != TO_JSON_STRING(STRUCT(o.headcount, o.fte, o.hires, o.rehires, o.departures, o.transfers_in, o.transfers_out,
+                    o.offers_extended, o.offers_accepted, o.offers_declined, o.offer_acceptance_rate))
+        """
+        rows = list(self._query(sql, [bigquery.ScalarQueryParameter("p", "STRING", profile)]).result())
+        return int(rows[0]["n"])
+
+    def raw_counts(self) -> dict:
+        rows = list(self._query(f"SELECT COUNT(*) AS d, COUNT(DISTINCT event_id) AS u FROM `{self.raw}`").result())
+        d, u = int(rows[0]["d"]), int(rows[0]["u"])
+        return {"raw_deliveries": d, "unique_events": u, "duplicate_deliveries_in_raw": d - u}
+
+
+def bigquery_client(project: str, location: str, impersonate: str | None = None):
+    """A BigQuery client from ADC, impersonating a service account when given (drills, masking demo)."""
+    from google.cloud import bigquery
+
+    if not impersonate:
+        return bigquery.Client(project=project, location=location)
+    import google.auth
+    from google.auth import impersonated_credentials
+
+    source, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    creds = impersonated_credentials.Credentials(
+        source_credentials=source,
+        target_principal=impersonate,
+        target_scopes=["https://www.googleapis.com/auth/cloud-platform"],
+    )
+    return bigquery.Client(project=project, location=location, credentials=creds)

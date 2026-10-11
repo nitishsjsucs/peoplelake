@@ -1,0 +1,19 @@
+{
+  "account_id": "00000000000000000000000000000000",
+  "workers_subdomain": "example-not-real",
+  "access": { "team_domain": "https://example-not-real.cloudflareaccess.com", "aud": "0000example0000aud0000example0000" },
+  "role_map": {
+    "emails": { "owner@example.com": ["viewer", "operator"] },
+    "service_tokens": {
+      "example-hris.access": "source:hris",
+      "example-ats.access": "source:ats",
+      "example-talent.access": "source:talent",
+      "example-runner.access": "runner"
+    }
+  },
+  "catalog": { "uri": "https://catalog.example.invalid/iceberg", "warehouse": "example_peoplelake-lake", "prefix": "example_prefix" },
+  "stream_id": "0123456789abcdef0123456789abcdef",
+  "gcp_project": "peoplelake-example",
+  "runs_enabled": true,
+  "gcp_bootstrap_passed": true
+}

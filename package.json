@@ -20,6 +20,12 @@
     "contracts:check": "TZ=UTC node scripts/gen-contracts.ts --check",
     "results:readme": "TZ=UTC node scripts/results-to-readme.ts",
     "results:check": "TZ=UTC node scripts/results-to-readme.ts --check",
+    "deploy:dry-run": "TZ=UTC node scripts/render-wrangler.ts --state scripts/fixtures/prod-state.example.json --out wrangler.production.jsonc && TZ=UTC node scripts/predeploy-check.ts --state scripts/fixtures/prod-state.example.json && wrangler deploy -c wrangler.production.jsonc --env production --dry-run --outdir .wrangler/dry-run",
+    "deploy": "TZ=UTC node scripts/setup-prod.ts --only worker",
+    "deploy:runner": "TZ=UTC uv run --project pipeline peoplelake prod deploy-runner",
+    "setup:prod": "TZ=UTC node scripts/setup-prod.ts",
+    "doctor": "TZ=UTC node scripts/doctor.ts",
+    "prod:e2e": "TZ=UTC uv run --project pipeline peoplelake prod e2e --duration 60m",
     "eval:scenarios": "TZ=UTC uv run --project pipeline peoplelake eval scenarios",
     "eval:freshness": "TZ=UTC uv run --project pipeline peoplelake eval freshness"
   },

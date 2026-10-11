@@ -24,6 +24,8 @@ jobs:
       - run: npm run typecheck
       - run: npx vitest run --project worker --project node
       - run: npm run contracts:check
+      - name: Production config renders from fixture state, passes the safety check and bundles (no upload)
+        run: npm run deploy:dry-run
       - run: npm run check:prose
 
   python:

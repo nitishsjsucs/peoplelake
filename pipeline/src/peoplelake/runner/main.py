@@ -74,15 +74,15 @@ class Runner:
             from ..warehouse.duckdb_wh import DuckDBWarehouse
 
             return DuckDBWarehouse(duckdb_path_for(self.settings, suffix))
-        from google.cloud import bigquery
-
-        from ..warehouse.bigquery_wh import BigQueryWarehouse
+        from ..warehouse.bigquery_wh import BigQueryWarehouse, bigquery_client
 
         drill = "drill" if self.settings.target == "prod-drill" else None
         project = self.settings.gcp_project
         if not project:
             raise RuntimeError("PL_GCP_PROJECT is not set")
-        client = bigquery.Client(project=project, location=self.settings.bq_location)
+        # prod: the Cloud Run Job's attached service account; prod-drill: the operator's ADC impersonating pl-runner.
+        impersonate = os.environ.get("PL_RUNNER_SA") if drill else None
+        client = bigquery_client(project, self.settings.bq_location, impersonate)
         return BigQueryWarehouse(client, project, location=self.settings.bq_location, suffix=suffix or drill)
 
     def _dbt_env(self, suffix: str | None) -> dict[str, str | None]:

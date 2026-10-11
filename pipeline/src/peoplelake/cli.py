@@ -369,6 +369,68 @@ def _cmd_eval_freshness(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_prod(args: argparse.Namespace) -> int:
+    from .paths import repo_root
+
+    prod_dir = repo_root() / ".prod"
+    if args.prod_command == "bootstrap-gcp":
+        from .prod.bootstrap_gcp import main as bootstrap
+
+        return bootstrap(plan=args.plan, prod_dir=prod_dir)
+    if args.prod_command == "doctor-gcp":
+        from .prod.doctor_gcp import doctor
+
+        checks = doctor(prod_dir)
+        for c in checks:
+            print(c.line())
+        return 0 if all(c.status in ("PASS", "WARN") for c in checks) else 1
+    from .prod.bootstrap_gcp import GcpConfig
+
+    config = GcpConfig.load(prod_dir)
+    if args.prod_command == "e2e":
+        from .prod.e2e import e2e
+
+        unit = args.duration[-1]
+        minutes = float(args.duration[:-1]) * (60 if unit == "h" else 1) if unit in "mh" else float(args.duration)
+        print(json.dumps(e2e(minutes), indent=2))
+        return 0
+    if args.prod_command == "deploy-runner":
+        from .prod.bootstrap_gcp import Bootstrap, Gcloud, git_head, real_clients
+
+        boot = Bootstrap(
+            config,
+            Gcloud(plan=False, project=config.project),
+            real_clients(config),
+            prod_dir=prod_dir,
+            git_sha=git_head(),
+        )
+        boot.taxonomy_and_policies()
+        image = boot.artifact_registry_and_build()
+        boot.run_job(image)
+        print(json.dumps({"image": image}))
+        return 0
+    if args.prod_command == "verify":
+        from .prod.verify import verify
+
+        result = verify(config, Path(args.reference) if args.reference else None)
+    elif args.prod_command == "demo-masking":
+        from .prod.demo_masking import demo
+
+        result = demo(config)
+    elif args.prod_command == "drill-restore":
+        from google.cloud import bigquery
+
+        from .prod.drills import drill_restore
+
+        expected = json.loads(Path(args.expected).read_text())["digests"]
+        client = bigquery.Client(project=config.project, location=config.bq_location)
+        result = drill_restore(client, config.project, int(args.as_of_ms), expected)
+    else:
+        from .prod.reset import reset
+
+        result = reset(config, args.confirm or "")
+    print(json.dumps(result, indent=2, default=str))
+    return 0 if result.get("passed", True) else 1
 
 
 def _cmd_sim_deliver(args: argparse.Namespace) -> int:
@@ -501,6 +563,34 @@ def build_parser() -> argparse.ArgumentParser:
     fr.add_argument("--from-delivery", help="production: the prod:e2e delivery id (default: the latest)")
     fr.add_argument("--out")
     fr.set_defaults(func=_cmd_eval_freshness)
+
+    prod = sub.add_parser("prod", help="production: Google Cloud bootstrap, doctor, verify, drills (needs credentials)")
+    prod_sub = prod.add_subparsers(dest="prod_command", required=True)
+    bs = prod_sub.add_parser("bootstrap-gcp", help="create every GCP resource, idempotent")
+    bs.add_argument("--plan", action="store_true", help="print every mutation without making it")
+    bs.set_defaults(func=_cmd_prod)
+    prod_sub.add_parser("doctor-gcp", help="check every GCP prerequisite").set_defaults(func=_cmd_prod)
+    prod_sub.add_parser(
+        "deploy-runner", help="build the runner image with Cloud Build and update the job"
+    ).set_defaults(func=_cmd_prod)
+    ver = prod_sub.add_parser(
+        "verify", help="100,000 unique events in BigQuery, R7 at error level, digests equal the reference"
+    )
+    ver.add_argument("--reference")
+    ver.set_defaults(func=_cmd_prod)
+    e2e_p = prod_sub.add_parser("e2e", help="one live delivery of the full profile, verify, production freshness")
+    e2e_p.add_argument("--duration", default="60m")
+    e2e_p.set_defaults(func=_cmd_prod)
+    prod_sub.add_parser("demo-masking", help="query restricted columns as pl-analyst").set_defaults(func=_cmd_prod)
+    dr = prod_sub.add_parser("drill-restore", help="time-travel restore into _drill datasets and compare digests")
+    dr.add_argument("--as-of-ms", required=True)
+    dr.add_argument(
+        "--expected", required=True, help="JSON with the digests the ledger recorded for the run committed then"
+    )
+    dr.set_defaults(func=_cmd_prod)
+    rs = prod_sub.add_parser("reset", help="guarded full production reset")
+    rs.add_argument("--confirm")
+    rs.set_defaults(func=_cmd_prod)
 
     dev = sub.add_parser("dev", help="developer and CI tools")
     dev_sub = dev.add_subparsers(dest="dev_command", required=True)

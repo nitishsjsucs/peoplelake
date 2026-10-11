@@ -110,6 +110,7 @@ class LocalStack:
         lease_seconds: int | None = None,
         claim_timeout_seconds: int | None = None,
         extra_vars: dict[str, str] | None = None,
+        runner_env: dict[str, str] | None = None,
     ) -> None:
         self.root = repo_root()
         self.state_dir = state_dir or data_dir() / "stack"
@@ -122,6 +123,7 @@ class LocalStack:
             claim_timeout_seconds if claim_timeout_seconds is not None else (10 if mode == "eval" else None)
         )
         self.extra_vars = extra_vars or {}
+        self.extra_runner_env = runner_env or {}
         self.processes: list[ManagedProcess] = []
         self._cleanup_registered = False
 
@@ -149,6 +151,7 @@ class LocalStack:
             "PL_LAKE_DIR": str(self.lake_dir),
             "PL_REPO_ROOT": str(self.root),
             "PYTHONUNBUFFERED": "1",
+            **self.extra_runner_env,
         }
 
     # -- lifecycle -------------------------------------------------------------------------------------
@@ -209,6 +212,7 @@ class LocalStack:
         self._write_state()
 
     def start_runner(self) -> ManagedProcess:
+        target = self.extra_runner_env.get("PL_TARGET", "local")
         argv = [
             sys.executable,
             "-m",
@@ -218,7 +222,7 @@ class LocalStack:
             "--worker-url",
             WORKER_URL,
             "--target",
-            "local",
+            target,
             "--interval",
             "0.5",
         ]

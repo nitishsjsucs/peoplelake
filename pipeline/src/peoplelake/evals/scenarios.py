@@ -142,7 +142,9 @@ def latest_checks(runs: list[dict]) -> dict | None:
     return None
 
 
-def rebuild_and_point_in_time(op: WorkerClient, stack: LocalStack, *, timeout: float) -> dict:
+def rebuild_and_point_in_time(
+    op: WorkerClient, stack: LocalStack, *, timeout: float, drill: DrillTarget | None = None
+) -> dict:
     """S5: delete the warehouse and replay everything from the lake; then replay up to the middle run's
     snapshot into a scratch warehouse (its own DuckDB file) and require that run's recorded digests."""
     runs = [
@@ -154,11 +156,21 @@ def rebuild_and_point_in_time(op: WorkerClient, stack: LocalStack, *, timeout: f
         raise EvalError("S5 needs committed runs with digests")
     middle = runs[len(runs) // 2]
     stack.stop_runner()
-    DuckDBWarehouse(stack.duckdb_path).reset()  # the runner was the only process holding the file
+    if drill:
+        drill.warehouse().reset()  # empty the _drill datasets
+    else:
+        DuckDBWarehouse(stack.duckdb_path).reset()  # the runner was the only process holding the file
     stack.start_runner()
     before = newest_seq(op)
     op.replay()
     rebuild = settle(op, before, timeout=timeout, request_after=timeout)
+    if drill:
+        return {
+            "rebuild_run": rebuild["run_id"],
+            "rebuild_status": rebuild["status"],
+            "point_in_time": "skipped on the BigQuery drill: it needs scratch datasets, which bootstrap does not create",
+            "point_in_time_identical_to_recorded": True,
+        }
     before = newest_seq(op)
     op.replay(to_snapshot=middle["to_snapshot"], dataset_suffix="pit")
     pit = settle(op, before, timeout=timeout, request_after=timeout)
@@ -186,14 +198,15 @@ def run_scenario(
     target: str = "local",
     chunk_timeout: float = 900.0,
 ) -> dict:
-    if target != "local":
-        raise EvalError(
-            "only --target local runs here; prod-drill needs BigQuery credentials (see README production setup)"
-        )
+    drill = drill_target() if target == "prod-drill" else None
     ds = generate(get_profile(profile))
     plan: Plan = build_plan(scenario, ds, n_chunks)
-    stack = LocalStack(mode="eval", profile=profile, state_dir=workdir / scenario)
+    stack = LocalStack(
+        mode="eval", profile=profile, state_dir=workdir / scenario, runner_env=drill.runner_env if drill else None
+    )
     stack.reset_state()
+    if drill:
+        drill.warehouse().reset()
     started = time.monotonic()
     started_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     stack.up()
@@ -216,7 +229,7 @@ def run_scenario(
         c.operator.request_run()
         settle(c.operator, before, timeout=chunk_timeout, request_after=chunk_timeout)
         if scenario == "S5":
-            extra = rebuild_and_point_in_time(c.operator, stack, timeout=chunk_timeout)
+            extra = rebuild_and_point_in_time(c.operator, stack, timeout=chunk_timeout, drill=drill)
         ledger = ledger_summary(c.operator)
     finally:
         busy = stack.down()
@@ -226,9 +239,16 @@ def run_scenario(
         (r["digests"] for r in reversed(runs) if r["status"] == "committed" and r["digests"] and not r.get("options")),
         {},
     )
-    file_digests = DuckDBWarehouse(stack.duckdb_path).digests()  # opened only after stack down (ADR 0008)
+    if drill:
+        bq = drill.warehouse()
+        file_digests = bq.digests()
+        mismatches = bq.oracle_mismatches(profile)
+        raw = bq.raw_counts()
+    else:
+        file_digests = DuckDBWarehouse(stack.duckdb_path).digests()  # opened only after stack down (ADR 0008)
+        mismatches = oracle_mismatches(stack.duckdb_path, profile)
+        raw = raw_counts(stack.duckdb_path)
     identical = {m: file_digests.get(m) == reference[m] and ledger_digests.get(m) == reference[m] for m in reference}
-    mismatches = oracle_mismatches(stack.duckdb_path, profile)
     warn_total = sum(checks["warn"].values())
     error_total = sum(checks["error"].values())
     passed = all(identical.values()) and mismatches == 0 and warn_total == 0 and error_total == 0 and not busy
@@ -250,24 +270,60 @@ def run_scenario(
         "ports_busy_after_stack_down": busy,
         "planned": plan.planned,
         "faults": plan.faults,
-        "observed": {
-            "deliveries_sent": stats.records,
-            "requests_sent": stats.requests,
-            **raw_counts(stack.duckdb_path),
-            **ledger,
-        },
+        "engine": "bigquery" if drill else "duckdb",
+        "observed": {"deliveries_sent": stats.records, "requests_sent": stats.requests, **raw, **ledger},
         "chunk_seconds": chunk_seconds,
         **({"rebuild": extra} if extra else {}),
     }
 
 
+@dataclass
+class DrillTarget:
+    """`--target prod-drill`: local Worker, Workflows and lake stand-ins; the runner writes BigQuery `_drill`
+    datasets as pl-runner (the operator's ADC impersonating it)."""
+
+    project: str
+    location: str
+    runner_sa: str
+    runner_env: dict
+
+    def warehouse(self):
+        from ..warehouse.bigquery_wh import BigQueryWarehouse, bigquery_client
+
+        return BigQueryWarehouse(
+            bigquery_client(self.project, self.location, self.runner_sa),
+            self.project,
+            location=self.location,
+            suffix="drill",
+        )
+
+
+def drill_target() -> DrillTarget:
+    gcp_file = repo_root() / ".prod" / "gcp.json"
+    if not gcp_file.exists():
+        raise EvalError("--target prod-drill needs `peoplelake prod bootstrap-gcp` first (.prod/gcp.json)")
+    gcp = json.loads(gcp_file.read_text())
+    runner_sa = gcp["service_accounts"]["runner"]
+    env = {
+        "PL_TARGET": "prod-drill",
+        "PL_GCP_PROJECT": gcp["project"],
+        "PL_BQ_LOCATION": gcp["bq_location"],
+        "PL_RUNNER_SA": runner_sa,
+        "PL_DATASET_SUFFIX": "drill",
+        "PL_PT_COMPENSATION": gcp["policy_tags"].get("compensation", ""),
+        "PL_PT_PERFORMANCE": gcp["policy_tags"].get("performance", ""),
+    }
+    return DrillTarget(gcp["project"], gcp["bq_location"], runner_sa, env)
+
+
 def scenarios_report(results: list[dict], *, profile: str, reference: dict, command: str) -> dict:
+    engine = results[0].get("engine", "duckdb") if results else "duckdb"
     return {
         "kind": "scenario-equivalence",
         "command": command,
         "date": datetime.now(UTC).strftime("%Y-%m-%d"),
         "profile": profile,
-        "engine": "duckdb",
+        "engine": engine,
         "orchestration": "local (wrangler dev / Miniflare Workflows)",
         "lake": "local stand-in (SinkRoller + pyiceberg SqlCatalog)",
         "runner": "peoplelake runner poll (local process)",

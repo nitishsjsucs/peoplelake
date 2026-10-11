@@ -660,6 +660,19 @@ export class Coordinator extends DurableObject<Env> {
     return true;
   }
 
+  /** Guarded full reset of the ledger (runbook prod-reset.md). A new generation keeps run ids unique. */
+  async resetAll(confirm: string, now: number = Date.now()): Promise<{ reset: boolean; generation: number }> {
+    if (confirm !== "peoplelake") throw new Error("reset needs confirm=peoplelake");
+    if (this.#get("active_run_id") !== null) throw new Error("a run is active; wait for it or disable runs first");
+    const previous = this.generation();
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    for (const ddl of COORDINATOR_DDL) this.#sql.exec(ddl);
+    const generation = Math.max(Math.floor(now / 1000), previous + 1);
+    this.#set("generation", String(generation));
+    return { reset: true, generation };
+  }
+
   setTestOptions(options: { startWorkflows: boolean }): void {
     if (this.#config().environment !== "local") throw new Error("test options exist only locally");
     this.#set("test_start_workflows", options.startWorkflows ? null : "0");

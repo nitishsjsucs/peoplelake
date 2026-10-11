@@ -55,4 +55,15 @@ export function mountOpsApi(app: App): void {
       return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 502);
     }
   });
+
+  // Guarded ledger reset before a second prod:e2e (runbook prod-reset.md).
+  app.post("/api/ops/reset", requireRole("operator"), async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { confirm?: unknown };
+    if (body.confirm !== "peoplelake") return c.json({ error: "confirm must be peoplelake" }, 400);
+    try {
+      return c.json(await coordinatorStub(c.env).resetAll("peoplelake"));
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 409);
+    }
+  });
 }

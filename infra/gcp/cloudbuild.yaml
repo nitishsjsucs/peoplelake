@@ -1,0 +1,12 @@
+# Builds the runner image (Dockerfile at the repo root) and pushes it to Artifact Registry.
+# Submitted by `peoplelake prod bootstrap-gcp` and `npm run deploy:runner` with _IMAGE set to
+# <region>-docker.pkg.dev/<project>/peoplelake/runner:<git sha>.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "--tag", "${_IMAGE}", "."]
+images:
+  - "${_IMAGE}"
+options:
+  logging: CLOUD_LOGGING_ONLY
+substitutions:
+  _IMAGE: unset

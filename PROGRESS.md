@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Commit 16 of 18 (core) done: Workers AI and /api/ask; the 60-minute local freshness measurement is still running.
+Commit 17 of 18 (core) done: production tooling; the 60-minute local freshness measurement is still running.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -38,8 +38,10 @@ Commit 16 of 18 (core) done: Workers AI and /api/ask; the 60-minute local freshn
 
 16. AI: `src/worker/ai/providers.ts` (`MetricQuery` zod contract, JSON schema for the model, stub rule parser, `OpenAiCompatibleProvider`, `WorkersAiProvider` with `{gateway: {id}}` and one repair retry), `src/worker/ai/ask.ts` (`POST /api/ask` from the committed snapshot), `/api/ops/ai`, `ai` binding in `env.production` only, 17 tests with a mocked AI binding and an injected fetch. Checked by hand: llama-server (Qwen3-1.7B, port 8150, `-np 1 -c 8192 -ngl 99`) answered five questions through `OpenAiCompatibleProvider` in 1.2 to 2.2 s each, 3 of 5 matching the intended query (it widened "December 2025" to the year and picked a department for "people left the company"); the same smoke found and fixed a stub bug (the word "people" matched the People department). llama-server stopped, port 8150 free.
 
+17. Production: `scripts/render-wrangler.ts` and `scripts/predeploy-check.ts` (placeholders from `.prod/state.json`, unsafe configs refused), `npm run deploy:dry-run` (fixture state, bundles with `wrangler deploy --dry-run`, also in CI), `scripts/setup-prod.ts` (steps 1 to 17 of SPEC 21.1, idempotent, `--dry-run` with secrets redacted, `--only cloudflare|gcp|worker`), `scripts/doctor.ts` (local, `.prod` files, Cloudflare and Access checks, then `peoplelake prod doctor-gcp`), `peoplelake prod bootstrap-gcp|doctor-gcp|deploy-runner|verify|e2e|drill-restore|demo-masking|reset`, `infra/gcp/` (Cloud Build config, cleanup policy, README), the BigQuery drill target for `eval scenarios --target prod-drill` (impersonated pl-runner, `_drill` datasets emptied per scenario), `POST /api/ops/reset` (operator, confirmation, new generation), service tokens may hold the operator role. Checked offline in this session: `npm run setup:prod -- --dry-run` walks all 17 steps without credentials, the rendered production config bundles, bootstrap plan tests against fake clients (empty and complete projects), restore drill SQL parses as BigQuery. Nothing has run against Cloudflare production or Google Cloud (no logins or credentials here).
+
 ## Next
-17. Production: render and predeploy check, setup:prod, doctor, bootstrap-gcp, drills, masking demo, reset, prod e2e, BigQuery drill target; then record the freshness result.
+18. Docs: ADRs 0001 to 0008, runbooks, README production setup and local versus production matrix; then record the 60-minute freshness result.
 
 ## Check status (last run at this commit)
 | Check | Result |
@@ -82,6 +84,12 @@ Commit 16 of 18 (core) done: Workers AI and /api/ask; the 60-minute local freshn
 - Extra route `GET /api/status` (viewer) exposes the Coordinator state the eval driver needs.
 - `read_appends` reports `fallback_full_scan` only when a watermark snapshot was given but no longer exists; a first load or replay is a planned full read.
 - The ticker calls `/cdn-cgi/handler/scheduled?cron=...` and falls back to `/__scheduled`.
+- A fifth Access service token `pl-doctor` (role operator) lets `npm run doctor` call the operator-only `/api/ops/*` checks; the role map accepts `operator` for service tokens.
+- The Access application is created as a hostname application on `peoplelake.<subdomain>.workers.dev` (destination type `public`) with previews disabled, the SPEC's documented fallback, because the field that takes a `worker_id` is unverified.
+- `wrangler basin catalog ... --token` and `wrangler pipelines sinks create --catalog-token` only accept the token on the command line; setup passes it there and redacts it in every printed line (all other secrets go through mode 600 files).
+- `npm run deploy` is `setup:prod --only worker` (render with the real state, safety check, deploy with `--secrets-file`).
+- `prod:e2e` is one command (`peoplelake prod e2e`): refuse when production already holds runs, live delivery, wait for quiescence, `prod verify`, production freshness from that delivery.
+- On the BigQuery drill, S5 runs the full rebuild and records the point-in-time half as skipped (it needs scratch datasets that bootstrap does not create).
 - CI job-level `timeout-minutes` are not set (none were measured); only the scenario steps carry measured timeouts. S5 was not measured on the full profile, so its `eval-full` leg may need a longer timeout after the first run.
 - The README results renderer landed with commit 13 (planned for 15) so the scenario results could be rendered when they were recorded.
 - Scenario plans send each source's events in its own requests of up to 500 (canonical order within a source), alternating sources inside a chunk; strictly canonical cross-source order made thousands of tiny requests.

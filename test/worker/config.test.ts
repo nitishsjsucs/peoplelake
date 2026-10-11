@@ -50,6 +50,13 @@ describe("parseConfig fail-closed rules", () => {
     expect(Object.isFrozen(cfg)).toBe(true);
   });
 
+  it("lets a service token hold the operator role (the doctor's identity) but nothing else unknown", () => {
+    const map = JSON.stringify({ emails: {}, service_tokens: { "doctor.access": "operator" } });
+    expect(parseConfig({ ...local(), ACCESS_ROLE_MAP: map }, "127.0.0.1").access.roleMap.service_tokens["doctor.access"]).toBe("operator");
+    const bad = JSON.stringify({ emails: {}, service_tokens: { "x.access": "admin" } });
+    fails({ ...local(), ACCESS_ROLE_MAP: bad }, "127.0.0.1", /role map/);
+  });
+
   it("refuses a local configuration served on another host", () => {
     fails(local(), "peoplelake-local.example.workers.dev", /serves only 127.0.0.1/);
   });
