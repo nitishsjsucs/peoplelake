@@ -1,0 +1,631 @@
+{
+  "description": "RawRecords produced from the valid source fixtures; asserted by vitest (normalize.ts) and pytest (normalize.py).",
+  "context": {
+    "received_at": "2026-10-10T12:00:00.123Z",
+    "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+    "producer": "peoplelake-ingest/0.1.0"
+  },
+  "cases": [
+    {
+      "source": "hris",
+      "envelope": {
+        "eventId": "651c29db-7927-534f-a108-40967d0a1b21",
+        "eventType": "worker.hired",
+        "workerId": "E000261",
+        "sequence": 1,
+        "recordedAt": "2012-01-13T18:29:26Z",
+        "effectiveDate": "2012-01-10",
+        "schemaVersion": 1,
+        "data": {
+          "spell_no": 1,
+          "department_id": "D08",
+          "job_code": "J15",
+          "location_id": "L1",
+          "fte_bp": 10000,
+          "ats_candidate_id": null,
+          "hire_source": "initial_load"
+        }
+      },
+      "raw_record": {
+        "event_id": "651c29db-7927-534f-a108-40967d0a1b21",
+        "source": "hris",
+        "event_type": "worker.hired",
+        "entity_id": "E000261",
+        "source_sequence": 1,
+        "source_updated_at": "2012-01-13T18:29:26Z",
+        "effective_date": "2012-01-10",
+        "schema_version": 1,
+        "payload": "{\"ats_candidate_id\":null,\"department_id\":\"D08\",\"fte_bp\":10000,\"hire_source\":\"initial_load\",\"job_code\":\"J15\",\"location_id\":\"L1\",\"spell_no\":1}",
+        "payload_sha256": "b59a702ac46c7944755ff302cc83017243b78beb8652b872ba5a215d82036c95",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000001",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "hris",
+      "envelope": {
+        "eventId": "150a6881-4943-5d2d-b1d8-5496e6c43cc8",
+        "eventType": "worker.job_changed",
+        "workerId": "E000268",
+        "sequence": 401,
+        "recordedAt": "2023-01-04T10:44:56Z",
+        "effectiveDate": "2023-01-04",
+        "schemaVersion": 1,
+        "data": {
+          "from_job_code": "J09",
+          "to_job_code": "J13",
+          "change_type": "promotion"
+        }
+      },
+      "raw_record": {
+        "event_id": "150a6881-4943-5d2d-b1d8-5496e6c43cc8",
+        "source": "hris",
+        "event_type": "worker.job_changed",
+        "entity_id": "E000268",
+        "source_sequence": 401,
+        "source_updated_at": "2023-01-04T10:44:56Z",
+        "effective_date": "2023-01-04",
+        "schema_version": 1,
+        "payload": "{\"change_type\":\"promotion\",\"from_job_code\":\"J09\",\"to_job_code\":\"J13\"}",
+        "payload_sha256": "8f956bb710d50a73358e32a8288d55748cc26c3b47e4bfcf85a8ccb99c3b5865",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000002",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "hris",
+      "envelope": {
+        "eventId": "a77a2912-a312-5acd-b3e4-30fd36b5d42f",
+        "eventType": "worker.terminated",
+        "workerId": "E000351",
+        "sequence": 402,
+        "recordedAt": "2023-01-05T10:14:27Z",
+        "effectiveDate": "2023-01-02",
+        "schemaVersion": 1,
+        "data": {
+          "termination_type": "involuntary",
+          "reason_code": "RESTRUCTURE"
+        }
+      },
+      "raw_record": {
+        "event_id": "a77a2912-a312-5acd-b3e4-30fd36b5d42f",
+        "source": "hris",
+        "event_type": "worker.terminated",
+        "entity_id": "E000351",
+        "source_sequence": 402,
+        "source_updated_at": "2023-01-05T10:14:27Z",
+        "effective_date": "2023-01-02",
+        "schema_version": 1,
+        "payload": "{\"reason_code\":\"RESTRUCTURE\",\"termination_type\":\"involuntary\"}",
+        "payload_sha256": "6fc8b3163d9cb20f7d4fd1fbbb929c8c4dc8dace8179ab7dc0bbecd90bc17a66",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000003",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "hris",
+      "envelope": {
+        "eventId": "afa7e044-9604-592a-acbc-5b3ad3eabf0c",
+        "eventType": "worker.fte_changed",
+        "workerId": "E000323",
+        "sequence": 407,
+        "recordedAt": "2023-01-11T19:09:13Z",
+        "effectiveDate": "2023-01-09",
+        "schemaVersion": 1,
+        "data": {
+          "from_fte_bp": 10000,
+          "to_fte_bp": 6000
+        }
+      },
+      "raw_record": {
+        "event_id": "afa7e044-9604-592a-acbc-5b3ad3eabf0c",
+        "source": "hris",
+        "event_type": "worker.fte_changed",
+        "entity_id": "E000323",
+        "source_sequence": 407,
+        "source_updated_at": "2023-01-11T19:09:13Z",
+        "effective_date": "2023-01-09",
+        "schema_version": 1,
+        "payload": "{\"from_fte_bp\":10000,\"to_fte_bp\":6000}",
+        "payload_sha256": "97b8ecda8e3bdf5f974a12b3c21f5d1a44bb80ad0152caf7fd3e797b6265b55b",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000004",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "hris",
+      "envelope": {
+        "eventId": "9f966b2a-9644-5c16-9465-492431528b4e",
+        "eventType": "worker.transferred",
+        "workerId": "E000021",
+        "sequence": 410,
+        "recordedAt": "2023-01-18T11:13:16Z",
+        "effectiveDate": "2023-01-17",
+        "schemaVersion": 1,
+        "data": {
+          "from_department_id": "D09",
+          "to_department_id": "D04"
+        }
+      },
+      "raw_record": {
+        "event_id": "9f966b2a-9644-5c16-9465-492431528b4e",
+        "source": "hris",
+        "event_type": "worker.transferred",
+        "entity_id": "E000021",
+        "source_sequence": 410,
+        "source_updated_at": "2023-01-18T11:13:16Z",
+        "effective_date": "2023-01-17",
+        "schema_version": 1,
+        "payload": "{\"from_department_id\":\"D09\",\"to_department_id\":\"D04\"}",
+        "payload_sha256": "7154d7416321eb23c746268d7bde014ce38963c00e915c57d434a1c1a74b7afa",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000005",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "hris",
+      "envelope": {
+        "eventId": "6b179aca-6a89-5b48-b011-f41ea17097d8",
+        "eventType": "worker.event_corrected",
+        "workerId": "E000220",
+        "sequence": 453,
+        "recordedAt": "2023-03-11T18:36:55Z",
+        "effectiveDate": "2023-01-18",
+        "schemaVersion": 1,
+        "data": {
+          "corrects_event_id": "94691b21-e6b5-552e-b2a7-bced3a700f19",
+          "corrected_fields": {
+            "effective_date": "2023-01-18"
+          }
+        }
+      },
+      "raw_record": {
+        "event_id": "6b179aca-6a89-5b48-b011-f41ea17097d8",
+        "source": "hris",
+        "event_type": "worker.event_corrected",
+        "entity_id": "E000220",
+        "source_sequence": 453,
+        "source_updated_at": "2023-03-11T18:36:55Z",
+        "effective_date": "2023-01-18",
+        "schema_version": 1,
+        "payload": "{\"corrected_fields\":{\"effective_date\":\"2023-01-18\"},\"corrects_event_id\":\"94691b21-e6b5-552e-b2a7-bced3a700f19\"}",
+        "payload_sha256": "3de1395ec80f480a90de56d74fdc3361107553f28d31c3de394a58b64e82af36",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000006",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "hris",
+      "envelope": {
+        "eventId": "47522757-5487-582c-befe-ce123745a8b5",
+        "eventType": "worker.event_rescinded",
+        "workerId": "E000300",
+        "sequence": 631,
+        "recordedAt": "2023-10-13T18:23:34Z",
+        "effectiveDate": "2023-10-04",
+        "schemaVersion": 1,
+        "data": {
+          "rescinds_event_id": "df775022-7299-5547-a6bf-8e4a82c70f0b"
+        }
+      },
+      "raw_record": {
+        "event_id": "47522757-5487-582c-befe-ce123745a8b5",
+        "source": "hris",
+        "event_type": "worker.event_rescinded",
+        "entity_id": "E000300",
+        "source_sequence": 631,
+        "source_updated_at": "2023-10-13T18:23:34Z",
+        "effective_date": "2023-10-04",
+        "schema_version": 1,
+        "payload": "{\"rescinds_event_id\":\"df775022-7299-5547-a6bf-8e4a82c70f0b\"}",
+        "payload_sha256": "dfa1bc5b403fad2ba2564e074c34f13098081ca2d7f36fbd4fe27d7e99e6c9fe",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000007",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "hris",
+      "envelope": {
+        "eventId": "3a84e059-4244-5514-9f0d-c8440d88c92a",
+        "eventType": "worker.rehired",
+        "workerId": "E000015",
+        "sequence": 847,
+        "recordedAt": "2024-05-27T16:08:09Z",
+        "effectiveDate": "2024-05-25",
+        "schemaVersion": 1,
+        "data": {
+          "spell_no": 2,
+          "department_id": "D05",
+          "job_code": "J10",
+          "location_id": "L4",
+          "fte_bp": 10000,
+          "ats_candidate_id": "C001115",
+          "hire_source": "rehire"
+        }
+      },
+      "raw_record": {
+        "event_id": "3a84e059-4244-5514-9f0d-c8440d88c92a",
+        "source": "hris",
+        "event_type": "worker.rehired",
+        "entity_id": "E000015",
+        "source_sequence": 847,
+        "source_updated_at": "2024-05-27T16:08:09Z",
+        "effective_date": "2024-05-25",
+        "schema_version": 1,
+        "payload": "{\"ats_candidate_id\":\"C001115\",\"department_id\":\"D05\",\"fte_bp\":10000,\"hire_source\":\"rehire\",\"job_code\":\"J10\",\"location_id\":\"L4\",\"spell_no\":2}",
+        "payload_sha256": "2d55328bfc7e2d66174b134b8d934ddaecd424da5f4de45a35a8ae1fe9750762",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000008",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "ats",
+      "envelope": {
+        "id": "6b57484b-c0b0-58e9-964d-c37a19962c22",
+        "type": "requisition.opened",
+        "object": {
+          "kind": "requisition",
+          "id": "Q000001"
+        },
+        "seq": 1,
+        "occurred_at": "2023-01-01T12:00:06Z",
+        "effective_on": "2023-01-01",
+        "v": 1,
+        "attributes": {
+          "requisition_id": "Q000001",
+          "department_id": "D04",
+          "job_code": "J01"
+        }
+      },
+      "raw_record": {
+        "event_id": "6b57484b-c0b0-58e9-964d-c37a19962c22",
+        "source": "ats",
+        "event_type": "requisition.opened",
+        "entity_id": "Q000001",
+        "source_sequence": 1,
+        "source_updated_at": "2023-01-01T12:00:06Z",
+        "effective_date": "2023-01-01",
+        "schema_version": 1,
+        "payload": "{\"department_id\":\"D04\",\"job_code\":\"J01\",\"requisition_id\":\"Q000001\"}",
+        "payload_sha256": "1c83c55840df89d494b0006e91a35b263bb4d2b7bdde24e3b8163a69ec617b9a",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000009",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "ats",
+      "envelope": {
+        "id": "01d81b95-3c4b-532b-9021-af23028f216e",
+        "type": "application.submitted",
+        "object": {
+          "kind": "application",
+          "id": "A000002"
+        },
+        "seq": 2,
+        "occurred_at": "2023-01-02T10:17:45Z",
+        "effective_on": "2023-01-02",
+        "v": 1,
+        "attributes": {
+          "application_id": "A000002",
+          "requisition_id": "Q000001",
+          "candidate_id": "C000002"
+        }
+      },
+      "raw_record": {
+        "event_id": "01d81b95-3c4b-532b-9021-af23028f216e",
+        "source": "ats",
+        "event_type": "application.submitted",
+        "entity_id": "A000002",
+        "source_sequence": 2,
+        "source_updated_at": "2023-01-02T10:17:45Z",
+        "effective_date": "2023-01-02",
+        "schema_version": 1,
+        "payload": "{\"application_id\":\"A000002\",\"candidate_id\":\"C000002\",\"requisition_id\":\"Q000001\"}",
+        "payload_sha256": "237433ce4797ce9c6cf27531daa8bd931fec8e96b77ddd53140ed1fb67f0968f",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000010",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "ats",
+      "envelope": {
+        "id": "71b13ad7-7f4b-57b7-9d63-13d040d20cc6",
+        "type": "application.stage_changed",
+        "object": {
+          "kind": "application",
+          "id": "A000006"
+        },
+        "seq": 20,
+        "occurred_at": "2023-01-05T16:26:25Z",
+        "effective_on": "2023-01-05",
+        "v": 1,
+        "attributes": {
+          "application_id": "A000006",
+          "from_stage": "applied",
+          "to_stage": "screen"
+        }
+      },
+      "raw_record": {
+        "event_id": "71b13ad7-7f4b-57b7-9d63-13d040d20cc6",
+        "source": "ats",
+        "event_type": "application.stage_changed",
+        "entity_id": "A000006",
+        "source_sequence": 20,
+        "source_updated_at": "2023-01-05T16:26:25Z",
+        "effective_date": "2023-01-05",
+        "schema_version": 1,
+        "payload": "{\"application_id\":\"A000006\",\"from_stage\":\"applied\",\"to_stage\":\"screen\"}",
+        "payload_sha256": "21f38749ea8f216b6ccbea7522d7a09f6acbe787dcd19754d1518b9696f08745",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000011",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "ats",
+      "envelope": {
+        "id": "e1bb2b0a-925d-541c-8e14-b03e48b5fcf4",
+        "type": "offer.extended",
+        "object": {
+          "kind": "offer",
+          "id": "O000001"
+        },
+        "seq": 74,
+        "occurred_at": "2023-01-13T09:48:40Z",
+        "effective_on": "2023-01-13",
+        "v": 1,
+        "attributes": {
+          "offer_id": "O000001",
+          "application_id": "A000001",
+          "requisition_id": "Q000001",
+          "candidate_id": "C000001",
+          "proposed_start_date": "2023-02-12"
+        }
+      },
+      "raw_record": {
+        "event_id": "e1bb2b0a-925d-541c-8e14-b03e48b5fcf4",
+        "source": "ats",
+        "event_type": "offer.extended",
+        "entity_id": "O000001",
+        "source_sequence": 74,
+        "source_updated_at": "2023-01-13T09:48:40Z",
+        "effective_date": "2023-01-13",
+        "schema_version": 1,
+        "payload": "{\"application_id\":\"A000001\",\"candidate_id\":\"C000001\",\"offer_id\":\"O000001\",\"proposed_start_date\":\"2023-02-12\",\"requisition_id\":\"Q000001\"}",
+        "payload_sha256": "22655a29c2c07d4a107c0462199431e428c1972b057db18b36e438f17f9eb12c",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000012",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "ats",
+      "envelope": {
+        "id": "21ec65e4-14c7-5f14-bf1e-9eb585ddc06f",
+        "type": "offer.accepted",
+        "object": {
+          "kind": "offer",
+          "id": "O000001"
+        },
+        "seq": 105,
+        "occurred_at": "2023-01-18T08:05:34Z",
+        "effective_on": "2023-01-18",
+        "v": 1,
+        "attributes": {
+          "offer_id": "O000001",
+          "start_date": "2023-02-12"
+        }
+      },
+      "raw_record": {
+        "event_id": "21ec65e4-14c7-5f14-bf1e-9eb585ddc06f",
+        "source": "ats",
+        "event_type": "offer.accepted",
+        "entity_id": "O000001",
+        "source_sequence": 105,
+        "source_updated_at": "2023-01-18T08:05:34Z",
+        "effective_date": "2023-01-18",
+        "schema_version": 1,
+        "payload": "{\"offer_id\":\"O000001\",\"start_date\":\"2023-02-12\"}",
+        "payload_sha256": "e01cd35b3f3ba624ac75cb6516914e7bb1cf03d04134fadaa0ab0ca965f423d2",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000013",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "ats",
+      "envelope": {
+        "id": "f63b0106-8d58-5ccc-8a6b-19b4778b77ff",
+        "type": "requisition.closed",
+        "object": {
+          "kind": "requisition",
+          "id": "Q000001"
+        },
+        "seq": 106,
+        "occurred_at": "2023-01-18T08:12:16Z",
+        "effective_on": "2023-01-18",
+        "v": 1,
+        "attributes": {
+          "requisition_id": "Q000001",
+          "close_reason": "filled"
+        }
+      },
+      "raw_record": {
+        "event_id": "f63b0106-8d58-5ccc-8a6b-19b4778b77ff",
+        "source": "ats",
+        "event_type": "requisition.closed",
+        "entity_id": "Q000001",
+        "source_sequence": 106,
+        "source_updated_at": "2023-01-18T08:12:16Z",
+        "effective_date": "2023-01-18",
+        "schema_version": 1,
+        "payload": "{\"close_reason\":\"filled\",\"requisition_id\":\"Q000001\"}",
+        "payload_sha256": "a8fce9ccce18c3a60a3291cfff94c78040c3d82f2dd0321e20c456a35036b710",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000014",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "ats",
+      "envelope": {
+        "id": "dcf854b7-9ea6-5162-a514-ca72794c3508",
+        "type": "offer.declined",
+        "object": {
+          "kind": "offer",
+          "id": "O000006"
+        },
+        "seq": 163,
+        "occurred_at": "2023-01-27T16:00:45Z",
+        "effective_on": "2023-01-27",
+        "v": 1,
+        "attributes": {
+          "offer_id": "O000006"
+        }
+      },
+      "raw_record": {
+        "event_id": "dcf854b7-9ea6-5162-a514-ca72794c3508",
+        "source": "ats",
+        "event_type": "offer.declined",
+        "entity_id": "O000006",
+        "source_sequence": 163,
+        "source_updated_at": "2023-01-27T16:00:45Z",
+        "effective_date": "2023-01-27",
+        "schema_version": 1,
+        "payload": "{\"offer_id\":\"O000006\"}",
+        "payload_sha256": "b2c1ac75e253d61b34253a63b6613a02900f344be80eceecfa0f17d4ddb2044f",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000015",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "ats",
+      "envelope": {
+        "id": "d4ab87d6-2e70-59ef-8336-6e93f2950a09",
+        "type": "offer.rescinded",
+        "object": {
+          "kind": "offer",
+          "id": "O000076"
+        },
+        "seq": 1312,
+        "occurred_at": "2023-09-20T11:32:39Z",
+        "effective_on": "2023-09-20",
+        "v": 1,
+        "attributes": {
+          "offer_id": "O000076"
+        }
+      },
+      "raw_record": {
+        "event_id": "d4ab87d6-2e70-59ef-8336-6e93f2950a09",
+        "source": "ats",
+        "event_type": "offer.rescinded",
+        "entity_id": "O000076",
+        "source_sequence": 1312,
+        "source_updated_at": "2023-09-20T11:32:39Z",
+        "effective_date": "2023-09-20",
+        "schema_version": 1,
+        "payload": "{\"offer_id\":\"O000076\"}",
+        "payload_sha256": "98bbd6187c1ef3657f237176a58ac286d9668070b78e625d8dab3c704dbe66ba",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000016",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "talent",
+      "envelope": {
+        "uuid": "55bc9d98-9efc-530d-b308-33debe504f4c",
+        "kind": "compensation.changed",
+        "subject": "E000261",
+        "revision": 1,
+        "updated": "2012-01-12T08:13:12Z",
+        "asOf": "2012-01-10",
+        "version": 1,
+        "body": {
+          "change_id": "K000001",
+          "reason": "initial",
+          "base_salary": 127400,
+          "currency": "USD",
+          "bonus_target_bp": 1000
+        }
+      },
+      "raw_record": {
+        "event_id": "55bc9d98-9efc-530d-b308-33debe504f4c",
+        "source": "talent",
+        "event_type": "compensation.changed",
+        "entity_id": "E000261",
+        "source_sequence": 1,
+        "source_updated_at": "2012-01-12T08:13:12Z",
+        "effective_date": "2012-01-10",
+        "schema_version": 1,
+        "payload": "{\"base_salary\":127400,\"bonus_target_bp\":1000,\"change_id\":\"K000001\",\"currency\":\"USD\",\"reason\":\"initial\"}",
+        "payload_sha256": "579f401659aea49e68df3f5a70a1d6d9f00b09fac5c0ff78c5375fa637562141",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000017",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    },
+    {
+      "source": "talent",
+      "envelope": {
+        "uuid": "bdb00f37-2151-5e4b-a73d-d7d9e1992e70",
+        "kind": "review.submitted",
+        "subject": "E000253",
+        "revision": 896,
+        "updated": "2023-12-15T08:14:24Z",
+        "asOf": "2023-12-15",
+        "version": 1,
+        "body": {
+          "review_id": "V000207",
+          "cycle": "2023",
+          "rating": 4,
+          "reviewer_id": "E000588"
+        }
+      },
+      "raw_record": {
+        "event_id": "bdb00f37-2151-5e4b-a73d-d7d9e1992e70",
+        "source": "talent",
+        "event_type": "review.submitted",
+        "entity_id": "E000253",
+        "source_sequence": 896,
+        "source_updated_at": "2023-12-15T08:14:24Z",
+        "effective_date": "2023-12-15",
+        "schema_version": 1,
+        "payload": "{\"cycle\":\"2023\",\"rating\":4,\"review_id\":\"V000207\",\"reviewer_id\":\"E000588\"}",
+        "payload_sha256": "cca5a6ce2c9af50ef41bddf869de0a20b61bb4e38f0ad774138672d38e3c5df9",
+        "received_at": "2026-10-10T12:00:00.123Z",
+        "delivery_id": "00000000-0000-4000-8000-000000000018",
+        "ingest_request_id": "11111111-2222-4333-8444-555555555555",
+        "producer": "peoplelake-ingest/0.1.0"
+      }
+    }
+  ]
+}

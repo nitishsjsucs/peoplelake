@@ -29,6 +29,20 @@
     "AI_PROVIDER": "stub",
     "LLM_BASE_URL": "http://127.0.0.1:8150/v1"
   },
+  "r2_buckets": [
+    { "binding": "LAKE_BUCKET", "bucket_name": "peoplelake-lake-local" },
+    { "binding": "REPORTS_BUCKET", "bucket_name": "peoplelake-reports-local" }
+  ],
+  "queues": {
+    "producers": [{ "binding": "LAKE_EVENTS", "queue": "peoplelake-lake-events" }]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "SINK_ROLLER", "class_name": "SinkRoller" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SinkRoller"] }],
+  // Miniflare runs a Pipeline binding offline and its send() discards data; locally the SinkRoller
+  // Durable Object is the labeled stand-in for Basin Pipelines (ADR 0003).
+  "pipelines": [{ "binding": "RAW_STREAM", "stream": "00000000000000000000000000000000" }],
   "env": {
     "production": {
       "name": "peoplelake",
@@ -59,7 +73,12 @@
         "AI_PROVIDER": "workers-ai",
         "AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
         "AI_GATEWAY_ID": "peoplelake"
-      }
+      },
+      "r2_buckets": [{ "binding": "REPORTS_BUCKET", "bucket_name": "peoplelake-reports" }],
+      "durable_objects": {
+        "bindings": [{ "name": "SINK_ROLLER", "class_name": "SinkRoller" }]
+      },
+      "pipelines": [{ "binding": "RAW_STREAM", "stream": "__PL_STREAM_ID__" }]
     }
   }
 }

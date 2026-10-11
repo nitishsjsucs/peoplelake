@@ -3,7 +3,7 @@
 Builder log for the commit plan in SPEC.md section 23. Updated in every commit.
 
 ## Position
-Commit 9 of 18 (core) done: Worker config and Access auth.
+Commit 10 of 18 (core) done: ingest and sinks.
 
 ## Done
 1. Scaffold: README, SPEC, CONTEXT, LICENSE, tsconfigs (worker, worker tests, node), `wrangler.jsonc` (vars only so far), generated `worker-configuration.d.ts`, `scripts/check-prose.ts`, vitest projects `worker` and `node`.
@@ -24,17 +24,19 @@ Commit 9 of 18 (core) done: Worker config and Access auth.
 
 9. Worker auth: `parseConfig` (every rule in SPEC 7.2 plus `ACCESS_AUD=pending` only with runs disabled, placeholders refused, dev auth requires `DEV_ACCESS_JWKS`), `verifyAccessJwt` with jose (remote team JWKS in production, local JWKS for dev; header only, cookie ignored), principals from `common_name` / `email` through `ACCESS_ROLE_MAP`, `requireRole`, Hono app with `/v1/health` and `/v1/health/auth`; vitest generates ephemeral keys per run; Python `peoplelake auth dev-keys|dev-token` and `AccessHeaders` (dev JWT locally, service-token headers in production). Checked by hand in this session: PyJWT-minted dev tokens verify in `wrangler dev` on 127.0.0.1:8791 (runner and operator roles, 401 without a token); processes stopped and ports 8791 and 9241 free afterwards.
 
+10. Ingest: `POST /v1/ingest/:source` (own-source tokens only, 1 MiB and 500-event limits, 413/422/400, all-or-nothing with per-index reasons, RawRecord validated before send), `normalize.ts` (canonical payload, sha256, a delivery_id per record per request), `contracts/golden/raw-records.json` generated from Python normalization and asserted by vitest, `LakeSink` with `BasinStreamSink` and `LocalRollingSink`, `SinkRoller` Durable Object (alarm roll, max-records roll, crash between put and delete rewrites the same key with a superset, R2-notification-shaped lake events), local-only `/internal/dev/sink/*` routes (404 before auth outside local). Checked by hand: `wrangler dev` accepted an 8-event batch, flushed one roll file and listed it; stopped afterwards with ports free.
+
 ## Next
-10. Ingest: three source envelopes, RawRecord normalization, Basin and local sinks (SinkRoller DO).
+11. Orchestration: Coordinator DO, WarehouseRunWorkflow, poll and Cloud Run dispatchers, catalog poll, lake events, cron.
 
 ## Check status (last run at this commit)
 | Check | Result |
 |---|---|
 | `npm run typecheck` | pass |
 | `npm run typegen:check` | pass |
-| `npm test` | pass (5 files, 68 tests) |
+| `npm test` | pass (7 files, 101 tests) |
 | `npm run check:prose` | pass |
-| `npm run test:py` (pytest) | pass (178 tests) |
+| `npm run test:py` (pytest) | pass (179 tests) |
 | `peoplelake dev bq-compile` | pass (both branches) |
 | dbt unit tests (`dbt test --select test_type:unit` after `dbt run --empty`) | pass (10) |
 | `ruff check` | pass |
@@ -58,4 +60,6 @@ Commit 9 of 18 (core) done: Worker config and Access auth.
 - The BigQuery MERGE inserts an explicit column list instead of `INSERT ROW` (the stage carries `_pl_snapshot_id` and an ordering column, the target five `_pl_*` columns); `QUALIFY` is paired with `WHERE TRUE`.
 - `read_appends` with no watermark (replay) reads the full table as of the target snapshot rather than an incremental scan from the oldest ancestor, so compaction rewrites can never hide data from a replay; it reports `fallback_full_scan: true`.
 - The committer's `SinkSource` protocol has a directory implementation now; the Worker-backed source (`/internal/dev/sink/files`) lands with the runner.
+- The `/internal/dev/*` guard runs before authentication, so in production those paths are 404 for everyone rather than 401 then 404.
+- The migration tag `v1` currently lists only `SinkRoller`; the Coordinator joins it in commit 11 (nothing has been deployed, so the tag is still free to change).
 - Correction events carry `effectiveDate` = the corrected date for date corrections and the target's date for value corrections; rescinds carry the target's date. The one-event-per-day rule is asserted on business events (hire, rehire, termination, transfer, job and FTE change) for both original and corrected dates.

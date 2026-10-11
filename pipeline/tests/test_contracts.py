@@ -113,3 +113,12 @@ def test_pipeline_sql_lists_every_column_explicitly():
     assert "SELECT *" not in sql.upper()
     for col in c.RAW_RECORD_COLUMNS:
         assert col in sql
+
+
+def test_raw_records_golden_is_current():
+    from peoplelake.devtools.goldens import render_raw_records_golden
+
+    path = CONTRACTS / "golden" / "raw-records.json"
+    assert path.read_text() == render_raw_records_golden()
+    for case in json.loads(path.read_text())["cases"]:
+        c.RawRecord.model_validate_json(json.dumps(case["raw_record"]))

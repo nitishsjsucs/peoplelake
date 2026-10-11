@@ -49,6 +49,11 @@ export function createApp(mount: (app: App) => void = () => {}): App {
     const config = c.get("config");
     return c.json({ ok: true, version: VERSION, environment: config.environment, lake_mode: config.lakeMode });
   });
+  // Local-only routes do not exist at all outside ENVIRONMENT=local (404 before authentication).
+  app.use("/internal/dev/*", async (c, next) => {
+    if (!c.get("config").devRoutes) return c.json({ error: "not_found" }, 404);
+    await next();
+  });
   app.use("*", authMiddleware);
   app.get("/v1/health/auth", (c) => {
     const p = c.get("principal");
