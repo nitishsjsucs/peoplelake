@@ -46,7 +46,8 @@ NOT_SENT: tuple[type[Exception], ...] = (httpx.ConnectError, httpx.ConnectTimeou
 @dataclass(frozen=True)
 class RetryPolicy:
     """At most 10 attempts per batch, never sleeping past 10 minutes from its first attempt (an attempt in
-    flight may still run to the client's 60 s timeout); backoff 0.5 s doubling to 30 s, jittered between
+    flight is bounded only by the client's per-phase 60 s httpx timeouts for connect, read, write and pool,
+    not by a total duration); backoff 0.5 s doubling to 30 s, jittered between
     half and all of it; Retry-After honored up to 120 s (the Worker's backpressure answer says 60)."""
 
     max_attempts: int = 10
@@ -69,15 +70,17 @@ def retry_after_seconds(value: str | None, now: float) -> float | None:
     if value is None:
         return None
     v = value.strip()
-    if v.isdigit():
-        return float(int(v))
+    if v.isascii() and v.isdigit():
+        # str.isdigit alone accepts non-ASCII digits that int() rejects; very long values are clamped (the
+        # policy caps the wait at max_retry_after_s anyway) so int() and float() can never raise.
+        return float(int(v)) if len(v) <= 9 else 1e9
     try:
         when = parsedate_to_datetime(v)
-    except (TypeError, ValueError, IndexError):
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        return max(0.0, when.timestamp() - now)
+    except (TypeError, ValueError, IndexError, OverflowError):
         return None
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=UTC)
-    return max(0.0, when.timestamp() - now)
 
 
 @dataclass(frozen=True)

@@ -66,6 +66,19 @@ def test_retry_after_is_read_as_seconds_or_an_http_date():
     assert retry_after_seconds("-5", WALL) is None
 
 
+def test_a_malformed_retry_after_is_ignored_or_clamped_never_fatal():
+    # non-ASCII digits pass str.isdigit but not int(); huge values would overflow float() or hit the
+    # int-string digit limit; an absurd HTTP date can overflow timestamp(). None of them may raise.
+    assert retry_after_seconds("\u00b2", WALL) is None  # superscript two
+    assert retry_after_seconds("\u0661\u0662", WALL) is None  # Arabic-Indic digits
+    assert retry_after_seconds("9" * 400, WALL) == 1e9
+    assert retry_after_seconds("9" * 5000, WALL) == 1e9
+    assert retry_after_seconds("123456789", WALL) == 123456789.0
+    assert retry_after_seconds("Fri, 31 Dec 99999 23:59:59 GMT", WALL) is None
+    p = RetryPolicy()
+    assert p.delay(1, 0.0, retry_after_seconds("9" * 400, WALL)) == p.max_retry_after_s
+
+
 def test_backoff_doubles_from_the_base_is_capped_and_jittered_between_half_and_full():
     p = RetryPolicy(base_delay_s=0.5, max_delay_s=30.0)
     assert [p.delay(n, 1.0, None) for n in range(1, 9)] == [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0]

@@ -184,7 +184,7 @@ describe("results renderer", () => {
     expect(text).toContain("#### Delivery recovery, full profile, duckdb (2026-10-12)");
     expect(text).toContain("failed 14 of the 2077 ingest requests it carried on purpose");
     expect(text).toContain("connection dropped before the Worker 2, 500 before the Worker 5, 503 landing_backpressure 2, landed then the answer lost 3, landed then 500 2");
-    expect(text).toContain("at most 10 attempts and 600 s per batch");
+    expect(text).toContain("at most 10 attempts per batch and no sleep past 600 s from the first attempt");
     expect(text).toContain("| 14 | 14 | 2063 | 100000 | 250 | 250 | 600 | 100000 | 100000 | 2 | 0 | 0 |");
     expect(text).toContain("Checks passed: 2 of 2. Recovered with every event in the warehouse exactly once: **yes**.");
     expect(findProseViolations(text)).toEqual([]);
