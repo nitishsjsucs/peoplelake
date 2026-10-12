@@ -1,0 +1,200 @@
+{
+  "checks": {
+    "client_bound_holds": true,
+    "every_batch_accepted": true,
+    "every_fault_fired": true,
+    "freshness_ledger_counts_each_event_once": true,
+    "one_retry_per_fault": true,
+    "raw_duplicates_equal_landed_then_failed": true,
+    "scenario_checks_pass": true,
+    "stg_events_hold_each_event_once": true
+  },
+  "chunks": 20,
+  "command": "peoplelake eval delivery-recovery --profile full --chunks 20 --reference .data/reference/reference-digests-full.json",
+  "date": "2026-10-12",
+  "delivery": {
+    "attempts": 2044,
+    "deliveries_sent": 100000,
+    "possible_duplicate_deliveries": 600,
+    "requests_sent": 2030,
+    "retries": 14,
+    "retry_reasons": {
+      "http_500": 7,
+      "http_503": 2,
+      "transport:RemoteProtocolError": 5
+    }
+  },
+  "duration_s": 116.2,
+  "engine": "duckdb",
+  "error_checks_at_quiescence": {
+    "recon_headcount_roll_forward_company": 0,
+    "recon_headcount_roll_forward_department": 0,
+    "recon_history_as_of_matches_snapshot": 0,
+    "recon_history_contiguity": 0,
+    "recon_no_event_id_conflicts": 0,
+    "recon_rehire_continuity": 0,
+    "recon_rescinded_terminations_excluded": 0,
+    "recon_retro_corrections_applied": 0
+  },
+  "fault_kinds": {
+    "backpressure_503": "the proxy answers 503 `landing_backpressure` (accepted 0) with Retry-After: 1",
+    "drop": "the proxy closes the connection without forwarding the request (the Worker never sees it)",
+    "error_500": "the proxy answers 500 `Error: Network connection lost.` without forwarding",
+    "error_500_after_landing": "the Worker lands the batch, then the proxy answers 500 instead of its 202",
+    "lost_answer": "the Worker lands the batch, then the proxy closes the connection without answering"
+  },
+  "faults": [
+    {
+      "kind": "drop",
+      "landed": false,
+      "ordinal": 41,
+      "records": 50,
+      "source": "hris"
+    },
+    {
+      "kind": "error_500",
+      "landed": false,
+      "ordinal": 42,
+      "records": 50,
+      "source": "hris"
+    },
+    {
+      "kind": "lost_answer",
+      "landed": true,
+      "ordinal": 203,
+      "records": 50,
+      "source": "ats"
+    },
+    {
+      "kind": "error_500_after_landing",
+      "landed": true,
+      "ordinal": 406,
+      "records": 50,
+      "source": "ats"
+    },
+    {
+      "kind": "backpressure_503",
+      "landed": false,
+      "ordinal": 407,
+      "records": 50,
+      "source": "ats"
+    },
+    {
+      "kind": "error_500",
+      "landed": false,
+      "ordinal": 710,
+      "records": 50,
+      "source": "talent"
+    },
+    {
+      "kind": "error_500",
+      "landed": false,
+      "ordinal": 711,
+      "records": 50,
+      "source": "talent"
+    },
+    {
+      "kind": "error_500",
+      "landed": false,
+      "ordinal": 712,
+      "records": 50,
+      "source": "talent"
+    },
+    {
+      "kind": "backpressure_503",
+      "landed": false,
+      "ordinal": 1015,
+      "records": 50,
+      "source": "ats"
+    },
+    {
+      "kind": "lost_answer",
+      "landed": true,
+      "ordinal": 1218,
+      "records": 50,
+      "source": "ats"
+    },
+    {
+      "kind": "lost_answer",
+      "landed": true,
+      "ordinal": 1219,
+      "records": 50,
+      "source": "ats"
+    },
+    {
+      "kind": "drop",
+      "landed": false,
+      "ordinal": 1522,
+      "records": 50,
+      "source": "talent"
+    },
+    {
+      "kind": "error_500_after_landing",
+      "landed": true,
+      "ordinal": 1726,
+      "records": 50,
+      "source": "ats"
+    },
+    {
+      "kind": "error_500",
+      "landed": false,
+      "ordinal": 1928,
+      "records": 50,
+      "source": "ats"
+    }
+  ],
+  "faults_by_kind": {
+    "backpressure_503": 2,
+    "drop": 2,
+    "error_500": 5,
+    "error_500_after_landing": 2,
+    "lost_answer": 3
+  },
+  "identical_to_reference": {
+    "dim_department": true,
+    "dim_employee": true,
+    "dim_employee_history": true,
+    "dim_job": true,
+    "fct_compensation_history": true,
+    "fct_employment_events": true,
+    "fct_offers": true,
+    "fct_performance_reviews": true,
+    "fct_workforce_monthly": true,
+    "metrics_workforce_monthly": true
+  },
+  "kind": "delivery-recovery",
+  "landed_then_failed_records": 250,
+  "machine": "Darwin arm64",
+  "oracle_rows_mismatched": 0,
+  "orchestration": "local (wrangler dev / Miniflare Workflows)",
+  "passed": true,
+  "planned_requests": 2030,
+  "ports_busy_after_stack_down": [],
+  "profile": "full",
+  "proxy": "HTTP proxy on a Unix socket between the source clients and wrangler dev, failing chosen ingest requests (pipeline/src/peoplelake/evals/delivery_recovery.py)",
+  "proxy_ingest_requests": 2044,
+  "retry_policy": {
+    "base_delay_s": 0.5,
+    "budget_s": 600.0,
+    "max_attempts": 10,
+    "max_delay_s": 30.0,
+    "max_retry_after_s": 120.0
+  },
+  "started_at": "2026-10-12T02:46:06Z",
+  "warehouse": {
+    "duplicate_deliveries_in_raw": 250,
+    "freshness_ledger_events": 100000,
+    "raw_deliveries": 100250,
+    "runs": 21,
+    "runs_committed": 21,
+    "stg_events_rows": 100000,
+    "stg_events_unique": 100000,
+    "unique_events": 100000
+  },
+  "warn_checks_at_quiescence": {
+    "recon_anomalies_open": 0,
+    "recon_event_counts_vs_manifest": 0,
+    "recon_metrics_vs_oracle": 0,
+    "recon_offer_to_hire": 0
+  }
+}
