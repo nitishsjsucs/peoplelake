@@ -111,7 +111,10 @@
         "AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
         "AI_GATEWAY_ID": "peoplelake",
         "AI_MAX_TOKENS": "96",
-        "AI_DAILY_NEURON_CAP": "1800"
+        "AI_DAILY_NEURON_CAP": "1800",
+        // Vars are not inherited from the top level, so every top-level var is declared here too
+        // (predeploy-check refuses one that is missing). Empty: production uses workers-ai, not llama-server.
+        "LLM_BASE_URL": ""
       },
       // Production only: an `ai` binding makes `wrangler dev` wait for a remote connection, so local runs
       // use llama-server or the stub and tests inject a mocked AI binding.

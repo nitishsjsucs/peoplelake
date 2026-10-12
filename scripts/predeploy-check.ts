@@ -11,6 +11,7 @@ import { parseJsonc } from "./render-wrangler.ts";
 interface WranglerConfig {
   name?: string;
   workers_dev?: boolean;
+  vars?: Record<string, string>;
   assets?: { directory?: string; run_worker_first?: string[] | boolean };
   env?: { production?: { name?: string; preview_urls?: boolean; vars?: Record<string, string> } };
 }
@@ -41,6 +42,11 @@ export function predeployProblems(configText: string, state: Pick<ProdState, "gc
   };
   for (const [k, v] of Object.entries(expect)) {
     if (vars[k] !== v) problems.push(`production ${k} must be ${v} (is ${vars[k] ?? "unset"})`);
+  }
+  // wrangler does not inherit top-level vars into an environment (it warns and deploys without them), so
+  // production must state every one explicitly, even when its value is empty.
+  for (const k of Object.keys(config.vars ?? {})) {
+    if (!(k in vars)) problems.push(`vars.${k} is set at the top level but not in env.production.vars (vars are not inherited; set it there explicitly)`);
   }
   const runs = vars["RUNS_ENABLED"];
   if (runs !== "true" && runs !== "false") problems.push("production RUNS_ENABLED must be true or false");

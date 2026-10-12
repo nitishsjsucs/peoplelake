@@ -155,7 +155,7 @@ Computed by `npm run budget` from the repo's constants and `wrangler.jsonc` `env
 | AI Gateway gateways | 10 gateways (account) | 2 | 1 | 10.0% | yes | gateway peoplelake |
 | Zero Trust seats | 50 users (account) | 10 | 2 | 4.0% | yes | the owner and the persona addresses |
 | Access service tokens | 50 tokens (account) | 10 | 5 | 10.0% | yes | three sources, the runner and the doctor |
-| Environment variables | 64 variables (per Worker) | 64 | 32 | 50.0% | yes | production vars and secrets |
+| Environment variables | 64 variables (per Worker) | 64 | 33 | 51.6% | yes | production vars and secrets |
 | Events per ingest request | 50 events (per request, set by the 10 ms CPU limit) | 50 | 50 | 100.0% | yes | MAX_BATCH_EVENTS (npm run bench:ingest measures the CPU) |
 | R2 storage | 10.0 GB (GB-month, account) | 2.0 GB | 85 MB | 0.85% | yes | 100000 records x 632 bytes of landing NDJSON + Iceberg data and reports |
 | R2 Class A operations | 1,000,000 operations (a month, account) | 200,000 | 392 | 0.04% | yes | roll puts, Iceberg writes, lists and reports on the peak day |

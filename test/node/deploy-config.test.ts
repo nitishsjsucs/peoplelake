@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { freePlanConfigProblems } from "../../scripts/lib/free-plan.ts";
 import { PLACEHOLDERS, type ProdState } from "../../scripts/lib/prod-state.ts";
 import { CRON_EXPRESSION, PRODUCTION_GUARDS } from "../../src/shared/free-budget.ts";
+import { parseConfig } from "../../src/worker/config.ts";
 import { predeployProblems } from "../../scripts/predeploy-check.ts";
 import { parseJsonc, renderWrangler } from "../../scripts/render-wrangler.ts";
 
@@ -84,6 +85,24 @@ describe("production config", () => {
     expect(predeployProblems(faults, state)).toContain("production EVAL_FAULTS_ENABLED must be false (is true)");
     const sameName = rendered.replace('"name": "peoplelake-local"', '"name": "peoplelake"');
     expect(predeployProblems(sameName, state)).toContain("the top-level Worker name must differ from the production name");
+  });
+
+  it("declares every top-level var in production, since wrangler does not inherit vars (LLM_BASE_URL empty: production uses workers-ai)", () => {
+    type Vars = { vars: Record<string, string>; env: { production: { vars: Record<string, string> } } };
+    const config = parseJsonc<Vars>(wrangler, "wrangler.jsonc");
+    const prod = config.env.production.vars;
+    expect(Object.keys(config.vars).filter((k) => !(k in prod))).toEqual([]);
+    expect(prod["AI_PROVIDER"]).toBe("workers-ai");
+    expect(prod["LLM_BASE_URL"]).toBe("");
+    // The empty value parses as no base URL, exactly as an unset one did.
+    const rendered = parseJsonc<Vars>(renderWrangler(wrangler, state), "rendered").env.production.vars;
+    const ai = parseConfig({ ...rendered, GCP_DISPATCHER_KEY: "{}" }, null).ai;
+    expect([ai.provider, ai.llmBaseUrl]).toEqual(["workers-ai", null]);
+    // predeploy-check refuses a top-level var that production leaves out (the dry run's wrangler warning).
+    const dropped = renderWrangler(wrangler, state).replace(/\n\s*"LLM_BASE_URL": "",?/, "");
+    expect(predeployProblems(dropped, state)).toContain(
+      "vars.LLM_BASE_URL is set at the top level but not in env.production.vars (vars are not inherited; set it there explicitly)",
+    );
   });
 
   it("serves the dashboard as assets with the API routes running the Worker first, and refuses an unbuilt dashboard", () => {
