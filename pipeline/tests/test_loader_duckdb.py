@@ -98,6 +98,38 @@ def test_a_retried_load_attempt_reports_the_same_events_as_the_attempt_that_merg
     assert (nxt.rows_inserted, nxt.unique_new_events) == (50, 50)
 
 
+def _retry_of(table: pa.Table, received_at: str) -> pa.Table:
+    """What a source retry after a lost answer lands: the same events, new delivery ids, a later receipt."""
+    n = table.num_rows
+    ids = pa.array([f"00000000-0000-4000-8000-{i:012d}" for i in range(n)])
+    later = pa.array([received_at] * n).cast(table.schema.field("received_at").type)
+    for name, column in (("delivery_id", ids), ("received_at", later)):
+        i = table.column_names.index(name)
+        table = table.set_column(i, table.schema.field(i), column)
+    return table
+
+
+@pytest.mark.parametrize("same_load", [True, False])
+def test_a_source_retry_after_the_batch_landed_counts_each_event_once_at_its_first_receipt(wh, items, same_load):
+    """SPEC 29.4.1: a retried batch whose first attempt landed is a second delivery of the same events. The
+    freshness ledger (received_histogram_10s, unique_new_events) counts each event once, at the first
+    receipt, whether the duplicate lands in the same load or a later one; raw keeps both deliveries."""
+    first = direct_table(items[:50])  # received 2026-10-01T00:00:00Z
+    retry = _retry_of(first, "2026-10-01T00:00:40Z")
+    wh.ensure_raw()
+    if same_load:
+        stats = wh.load_deliveries(pa.concat_tables([first, retry]), run_id="r", job_id="j", load_seq=1)
+        assert (stats.rows_inserted, stats.unique_new_events) == (100, 50)
+        assert stats.received_histogram_10s == [(1790812800, 50)]
+    else:
+        one = wh.load_deliveries(first, run_id="r", job_id="j1", load_seq=1)
+        two = wh.load_deliveries(retry, run_id="r2", job_id="j2", load_seq=2)
+        assert one.received_histogram_10s == [(1790812800, 50)]
+        assert (two.rows_inserted, two.unique_new_events, two.received_histogram_10s) == (50, 0, [])
+    assert count(wh) == 100
+    assert count(wh, "SELECT count(DISTINCT event_id) FROM peoplelake_raw.raw_event_deliveries") == 50
+
+
 def test_reset_removes_the_file(wh, items):
     load_direct(wh, items[:3])
     wh.reset()

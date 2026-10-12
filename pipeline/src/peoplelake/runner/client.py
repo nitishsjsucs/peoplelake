@@ -19,11 +19,26 @@ class WorkerError(RuntimeError):
         self.status = status
 
 
+INGEST_KEYS = {"hris": "events", "ats": "records", "talent": "items"}
+
+
+def ingest_body(source: str, envelopes: list[str]) -> bytes:
+    """The POST /v1/ingest/:source body for canonical JSON envelopes (built once, sent on every attempt)."""
+    return ('{"' + INGEST_KEYS[source] + '":[' + ",".join(envelopes) + "]}").encode("ascii")
+
+
 class WorkerClient:
-    def __init__(self, base_url: str, headers: AccessHeaders, *, timeout: float = 60.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        headers: AccessHeaders,
+        *,
+        timeout: float = 60.0,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.headers = headers
-        self.http = httpx.Client(base_url=self.base_url, timeout=timeout)
+        self.http = httpx.Client(base_url=self.base_url, timeout=timeout, transport=transport)
 
     def close(self) -> None:
         self.http.close()
@@ -141,12 +156,9 @@ class WorkerClient:
 
     # -- sources ------------------------------------------------------------------------------------------
 
-    def ingest(self, source: str, envelopes: list[str]) -> dict:
-        key = {"hris": "events", "ats": "records", "talent": "items"}[source]
-        body = '{"' + key + '":[' + ",".join(envelopes) + "]}"
-        return self._json(
-            "POST", f"/v1/ingest/{source}", content=body.encode("ascii"), headers={"content-type": "application/json"}
-        )
+    def post_ingest(self, source: str, body: bytes) -> httpx.Response:
+        """One attempt, any status; `SourceClients.deliver` decides what to retry (sim/retry.py)."""
+        return self._req("POST", f"/v1/ingest/{source}", content=body, headers={"content-type": "application/json"})
 
 
 class WorkerLandingSource:

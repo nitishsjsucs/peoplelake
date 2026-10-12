@@ -99,6 +99,8 @@ flowchart LR
 
 Exactly-once effects without Basin Pipelines: a roll is planned before it is written (a retried roll rewrites identical bytes under the same key), the runner's committer appends each new roll as one Iceberg snapshot whose summary carries the landing cursor (so Basin's free snapshot expiration can never cause a re-append), and the warehouse merges on `delivery_id` (ADR 0001), so even a double append changes no published row.
 
+Sources retry. Every simulated source (`sim deliver`, `prod:e2e`, the evals) retries a batch after a transport error or any 5xx, 503 `landing_backpressure` included, with exponential backoff from 0.5 s to 30 s, jittered, and at least the response's `Retry-After` (seconds or an HTTP date, capped at 120 s); any other status (400, 401, 403, 413, 422, 429 and so on) stops the delivery at once. A batch gets at most 10 attempts within 10 minutes, then the delivery stops. A retry after a request that landed but lost its answer adds a second delivery of the same events, which `stg_events` drops (it keeps each event's first delivery, as in scenario S1). Delivery records and eval results count each batch once and report `attempts`, `retries`, the reasons and `possible_duplicate_deliveries` beside it; the freshness ledger counts each event once, at its first receipt (SPEC 29.4.1, item 11).
+
 ## What runs where
 
 | Concern | Local (offline, CI) | Production |
@@ -128,7 +130,7 @@ Exactly-once effects without Basin Pipelines: a roll is planned before it is wri
 
 Production must not depend on Workers Paid anywhere: there is no `pipelines` binding, no `limits` setting, no paid-billing Workers AI model and no Logpush, every Durable Object is a SQLite class, and there is one cron. The Free plan's daily allowances are per account and five other Workers projects may share this account, so this repo plans to use at most 20% of each account-wide Cloudflare allowance; the Google Cloud project is shared by four repos, so at most 25% of each free tier. What enforces it:
 
-- Ingest: at most 50 events per request (measured CPU, see Results), the ingest path prewarmed at isolate startup, production sources posting every 10 s (at most 3,080 requests for a 100,000-event delivery).
+- Ingest: at most 50 events per request (measured CPU, see Results), the ingest path prewarmed at isolate startup, production sources posting every 10 s (at most 3,080 requests for a 100,000-event delivery, plus one per retry, which the delivery record counts as `attempts`).
 - Landing: one SQLite row per request and one R2 object and one Queue message per minute of data; 503 `landing_backpressure` above 64 MiB buffered.
 - Coordinator: indexed queries, per-day row counters (alarm sets included), a 5-minute cron backstop, a 240 s minimum interval between automatic runs, failure backoff up to 6 hours, 30 automatic runs a UTC day and a 274 GB monthly BigQuery guard that counts every byte the runner's jobs bill (failed attempts too) and takes the month total measured in `INFORMATION_SCHEMA` (drills and owner queries included) as a floor; `GET /api/ops/budget` reports the state.
 - Workers AI: `max_tokens` 96 and 1,800 neurons a UTC day (429 `ai_budget` past it); the Workers AI ask eval resumes on a later day.

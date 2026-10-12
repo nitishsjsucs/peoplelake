@@ -605,6 +605,7 @@ def _cmd_sim_deliver(args: argparse.Namespace) -> int:
 
     from .sim.deliver import deliver
 
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     if args.scenario != "baseline":
         print("sim deliver sends the baseline; scenarios run through `peoplelake eval scenarios`", file=sys.stderr)

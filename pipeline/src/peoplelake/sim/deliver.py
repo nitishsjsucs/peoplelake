@@ -6,12 +6,15 @@ against https://peoplelake.<subdomain>.workers.dev. `--mode live` paces the whol
 sends it as fast as possible. Each delivery writes a record with its id, window and counts, which
 `peoplelake eval freshness --target prod --from-delivery <id>` reads. Live mode posts once per tick:
 every 10 s in production (at most 50 events per request, so at most 3,080 requests for the full profile)
-and every second locally unless `--tick-seconds` says otherwise.
+and every second locally unless `--tick-seconds` says otherwise. Every batch is retried after a transport
+error or a 5xx within a bounded budget (sim/retry.py); the record counts each batch once and reports the
+retries separately.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import time
 from datetime import UTC, datetime
 
@@ -23,6 +26,8 @@ from ..sim.plan import LOCAL_TICK_SECONDS, MAX_BATCH, PROD_TICK_SECONDS, live_ti
 from ..warehouse.direct import canonical_order, envelopes_from_dataset
 
 DELIVERIES = "deliveries"
+
+log = logging.getLogger("peoplelake.sim.deliver")
 
 
 def prod_clients() -> tuple[SourceClients, str]:
@@ -51,15 +56,21 @@ def deliver(
     delivery_id = datetime.now(UTC).strftime("d-%Y%m%dT%H%M%SZ")
     stats = DeliveryStats()
     started = datetime.now(UTC)
-    if mode == "live":
-        send_live(sources, items, duration_minutes * 60, tick, stats)
-    else:
-        by_source: dict[str, list[dict]] = {}
-        for source, env in items:
-            by_source.setdefault(source, []).append(env)
-        for source, envs in by_source.items():
-            for i in range(0, len(envs), MAX_BATCH):
-                sources.deliver(source, envs[i : i + MAX_BATCH], stats)
+    try:
+        if mode == "live":
+            send_live(sources, items, duration_minutes * 60, tick, stats)
+        else:
+            by_source: dict[str, list[dict]] = {}
+            for source, env in items:
+                by_source.setdefault(source, []).append(env)
+            for source, envs in by_source.items():
+                for i in range(0, len(envs), MAX_BATCH):
+                    sources.deliver(source, envs[i : i + MAX_BATCH], stats)
+    except Exception:
+        # A batch was refused (4xx) or ran out of retries: nothing more is sent and no record is written.
+        log.error("delivery %s stopped; sent so far: %s", delivery_id, json.dumps(stats.summary()))
+        sources.close()
+        raise
     record = {
         "delivery_id": delivery_id,
         "target": target,
@@ -70,9 +81,9 @@ def deliver(
         "tick_seconds": tick if mode == "live" else None,
         "started_at": started.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "finished_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "records": stats.records,
-        "requests": stats.requests,
-        "by_source": stats.by_source,
+        # records, requests and by_source count each accepted batch once; attempts, retries and
+        # possible_duplicate_deliveries say what the retries cost (sim/retry.py).
+        **stats.summary(),
     }
     out = data_dir() / DELIVERIES / f"{delivery_id}.json"
     out.parent.mkdir(parents=True, exist_ok=True)

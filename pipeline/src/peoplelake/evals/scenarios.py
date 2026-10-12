@@ -273,7 +273,16 @@ def run_scenario(
         "planned": plan.planned,
         "faults": plan.faults,
         "engine": "bigquery" if drill else "duckdb",
-        "observed": {"deliveries_sent": stats.records, "requests_sent": stats.requests, **raw, **ledger},
+        "observed": {
+            "deliveries_sent": stats.records,
+            "requests_sent": stats.requests,
+            "attempts": stats.attempts,
+            "retries": stats.retries,
+            "retry_reasons": stats.retry_reasons,
+            "possible_duplicate_deliveries": stats.possible_duplicate_deliveries,
+            **raw,
+            **ledger,
+        },
         "chunk_seconds": chunk_seconds,
         **({"rebuild": extra} if extra else {}),
     }

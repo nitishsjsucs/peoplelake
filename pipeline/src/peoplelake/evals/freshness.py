@@ -59,11 +59,13 @@ def _deliver_paced(sources, items: list[tuple[str, dict]], rate: float, *, tick:
     start = time.monotonic()
     stats = DeliveryStats()
     send_live(sources, items, len(items) / rate, tick, stats)
+    summary = stats.summary()
     return {
         "delivered": stats.records,
         "requests": stats.requests,
         "seconds": round(time.monotonic() - start, 1),
         "tick_seconds": tick,
+        **{k: summary[k] for k in ("attempts", "retries", "retry_reasons", "possible_duplicate_deliveries")},
     }
 
 
@@ -297,6 +299,11 @@ def prod_freshness(delivery: dict) -> dict:
         "stand_ins": "none (LandingRoller on R2, Basin Catalog, Cloudflare Workflows, Cloud Run Job, BigQuery)",
         "events": delivery["records"],
         "duration_minutes": delivery["duration_minutes"],
+        # Each batch is counted once in records and requests; the retries are reported apart (sim/retry.py).
+        "delivery": {
+            k: delivery.get(k)
+            for k in ("requests", "attempts", "retries", "retry_reasons", "possible_duplicate_deliveries")
+        },
         "overall": summarize(values),
         "excluding_first_5_minutes": summarize(late),
         "pending_events": coverage["ledger_pending_events"],
