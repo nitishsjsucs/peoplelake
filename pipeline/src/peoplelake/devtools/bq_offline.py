@@ -9,6 +9,7 @@ BigQuery drill scenarios are the runtime proof.
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,6 +38,10 @@ class CompileReport:
 
 
 def compile_branch(branch: str, target_path: Path) -> CompileReport:
+    """Compile one branch into `target_path` and count, parse and lint what this compile wrote. dbt never
+    deletes compiled files of models or tests that no longer exist, so the compiled output of an earlier
+    run in a reused target is removed first (dbt's parse cache next to it is kept)."""
+    shutil.rmtree(target_path / "compiled", ignore_errors=True)
     dbt = DbtRunner(target="bq_offline", target_path=target_path)
     outcome = dbt.invoke(["compile", "--no-introspect", "--no-populate-cache", "--vars", json.dumps(BRANCHES[branch])])
     report = CompileReport(branch=branch)
