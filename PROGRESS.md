@@ -205,7 +205,7 @@ The final gate found four issues at `0e6b55c` (1 important, 3 minor). Each code 
 - Not exercised against real services yet: Basin Catalog, production Workflows, the Cloud Run Job, BigQuery, Workers AI and Access (including the dashboard sign-in). The S5 BigQuery drill skips its point-in-time half (no scratch `_pit` datasets).
 
 ## Check status (last run at this commit)
-Run by the final gate fix session on 2026-10-12 at `118814a` (this commit changes only PROGRESS; the prose check ran again on it).
+Run by the final gate fix session on 2026-10-12 at `118814a`; the commits after it (`ef6f441` and this one) change only PROGRESS and CONTEXT prose, and the prose check ran again on them.
 
 | Check | Result |
 |---|---|
