@@ -6,6 +6,7 @@ Single-context repo. Terms used in code, tests, docs and commit messages.
 - **Domain**: the four business areas the sources carry: HR (hris), recruiting (ats), compensation and performance (talent).
 - **Event**: a source fact with a stable `event_id` (UUIDv5 from profile, source and source sequence).
 - **Delivery**: one accepted copy of an event, with its own Worker-minted `delivery_id`. A client retry of the same event is a second delivery of one event.
+- **Source retry**: a source posting the same batch again after a transport error or a 5xx (`sim/retry.py`, bounded by attempts and time). Each HTTP try is a delivery attempt (`attempts` in delivery records), not a job attempt. A retry after the Worker had already landed the batch adds a second delivery of its events, which `stg_events` drops; delivery records count the batch once.
 - **Raw record**: the normalized delivery row (14 columns) that is identical in the landing rolls, the lake and the warehouse raw table.
 - **Landing roll**: an immutable NDJSON object `landing/raw_events/g<generation>/r<roll_seq>.ndjson` in R2, written by the `LandingRoller` Durable Object from the requests it buffered since the previous roll (the same code locally and in production). A retried roll rewrites identical bytes under the same key.
 - **Landing cursor**: `peoplelake.landing-through` in the newest Iceberg snapshot summary that has it; the committer appends only rolls after it.
