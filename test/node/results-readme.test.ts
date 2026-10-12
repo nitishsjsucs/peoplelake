@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type AskReport, END, type FreshnessReport, type IngestCpuReport, type ParityReport, renderResults, replaceSection, type ScenarioReport, START } from "../../scripts/lib/results.ts";
+import { type AskReport, type DeliveryRecoveryReport, END, type FreshnessReport, type IngestCpuReport, type ParityReport, renderResults, replaceSection, type ScenarioReport, START } from "../../scripts/lib/results.ts";
 import { findProseViolations } from "../../scripts/lib/prose.ts";
 
 const scenario: ScenarioReport = {
@@ -153,6 +153,56 @@ describe("results renderer", () => {
     ]);
     expect(paced).toContain("Run guards: 240 s minimum interval between automatic runs, 30 automatic runs a day (the production values). Sources posted every 10 s (production: every 10 s). Wall time 62 min 5 s.");
     expect(findProseViolations(paced)).toEqual([]);
+  });
+
+  it("renders delivery recovery with the injected faults, the retries and the exactly-once accounting", () => {
+    const recovery: DeliveryRecoveryReport = {
+      kind: "delivery-recovery",
+      command: "peoplelake eval delivery-recovery --profile full",
+      date: "2026-10-12",
+      profile: "full",
+      engine: "duckdb",
+      chunks: 20,
+      orchestration: "local (wrangler dev / Miniflare Workflows)",
+      proxy: "HTTP proxy on a Unix socket",
+      machine: "Darwin arm64",
+      duration_s: 130.4,
+      retry_policy: { max_attempts: 10, base_delay_s: 0.5, max_delay_s: 30, max_retry_after_s: 120, budget_s: 600 },
+      planned_requests: 2063,
+      proxy_ingest_requests: 2077,
+      faults_by_kind: { drop: 2, error_500: 5, backpressure_503: 2, lost_answer: 3, error_500_after_landing: 2 },
+      landed_then_failed_records: 250,
+      delivery: { deliveries_sent: 100000, requests_sent: 2063, attempts: 2077, retries: 14, retry_reasons: { http_500: 7 }, possible_duplicate_deliveries: 600 },
+      warehouse: { raw_deliveries: 100250, unique_events: 100000, duplicate_deliveries_in_raw: 250, stg_events_rows: 100000, stg_events_unique: 100000, freshness_ledger_events: 100000, runs: 21, runs_committed: 21 },
+      identical_to_reference: { a: true, b: true },
+      oracle_rows_mismatched: 0,
+      warn_checks_at_quiescence: { w: 0 },
+      checks: { scenario_checks_pass: true, every_fault_fired: true },
+      passed: true,
+    };
+    const text = renderResults([{ file: "evals/results/delivery-recovery-full-duckdb-2026-10-12.json", report: recovery }]);
+    expect(text).toContain("#### Delivery recovery, full profile, duckdb (2026-10-12)");
+    expect(text).toContain("failed 14 of the 2077 ingest requests it carried on purpose");
+    expect(text).toContain("connection dropped before the Worker 2, 500 before the Worker 5, 503 landing_backpressure 2, landed then the answer lost 3, landed then 500 2");
+    expect(text).toContain("at most 10 attempts and 600 s per batch");
+    expect(text).toContain("| 14 | 14 | 2063 | 100000 | 250 | 250 | 600 | 100000 | 100000 | 2 | 0 | 0 |");
+    expect(text).toContain("Checks passed: 2 of 2. Recovered with every event in the warehouse exactly once: **yes**.");
+    expect(findProseViolations(text)).toEqual([]);
+    const failed = renderResults([{ file: "evals/results/r.json", report: { ...recovery, passed: false, checks: { every_fault_fired: false, scenario_checks_pass: true } } }]);
+    expect(failed).toContain("Checks passed: 1 of 2 (failed: every_fault_fired). Recovered with every event in the warehouse exactly once: **no**.");
+  });
+
+  it("says how many retries a freshness delivery needed when the result records them", () => {
+    const retried = renderResults([
+      {
+        file: "evals/results/f.json",
+        report: { ...freshness, delivery: { tick_seconds: 10, attempts: 2518, retries: 2, retry_reasons: { http_500: 1, "transport:RemoteProtocolError": 1 }, possible_duplicate_deliveries: 100 } },
+      },
+    ]);
+    expect(retried).toContain("Source retries: 2 in 2518 HTTP attempts (http_500 1, transport:RemoteProtocolError 1), at most 100 duplicate deliveries, which the warehouse merges.");
+    const none = renderResults([{ file: "evals/results/f.json", report: { ...freshness, delivery: { tick_seconds: 10, attempts: 2516, retries: 0, retry_reasons: {}, possible_duplicate_deliveries: 0 } } }]);
+    expect(none).toContain("Source retries: none in 2516 HTTP attempts.");
+    expect(renderResults([{ file: "evals/results/f.json", report: freshness }])).not.toContain("Source retries");
   });
 
   it("renders the production ledger coverage", () => {

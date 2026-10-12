@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
+
 from ..auth.dev_tokens import AccessHeaders
 from ..budget import BQ_MONTHLY_BYTES_CAP, BQ_TRANSFORM_RESERVE_BYTES
 from ..generator import generate, get_profile
@@ -39,11 +41,12 @@ class Clients:
     sources: SourceClients
 
 
-def clients() -> Clients:
+def clients(source_transport: httpx.BaseTransport | None = None) -> Clients:
+    """`source_transport` routes only the sources' requests (the delivery-recovery eval's fault proxy)."""
     keys = repo_root() / ".dev" / "keys"
     return Clients(
         operator=WorkerClient(WORKER_URL, AccessHeaders(local=True, identity="operator", keys_dir=keys)),
-        sources=SourceClients(WORKER_URL, local=True, keys_dir=keys),
+        sources=SourceClients(WORKER_URL, local=True, keys_dir=keys, transport=source_transport),
     )
 
 
@@ -199,7 +202,10 @@ def run_scenario(
     workdir: Path,
     target: str = "local",
     chunk_timeout: float = 900.0,
+    source_transport: httpx.BaseTransport | None = None,
+    observe: Callable[[WorkerClient], dict] | None = None,
 ) -> dict:
+    """`observe(operator)` runs at quiescence, before the stack stops; its fields join `observed`."""
     drill = drill_target() if target == "prod-drill" else None
     ds = generate(get_profile(profile))
     plan: Plan = build_plan(scenario, ds, n_chunks)
@@ -213,8 +219,9 @@ def run_scenario(
     started_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     stack.up()
     extra: dict = {}
+    observed_extra: dict = {}
     try:
-        c = clients()
+        c = clients(source_transport)
         if plan.faults:
             c.operator.install_faults(plan.faults)
         stats = DeliveryStats()
@@ -233,6 +240,8 @@ def run_scenario(
         if scenario == "S5":
             extra = rebuild_and_point_in_time(c.operator, stack, timeout=chunk_timeout, drill=drill)
         ledger = ledger_summary(c.operator)
+        if observe is not None:
+            observed_extra = observe(c.operator)
     finally:
         busy = stack.down()
     runs = ledger.pop("_runs")
@@ -282,6 +291,7 @@ def run_scenario(
             "possible_duplicate_deliveries": stats.possible_duplicate_deliveries,
             **raw,
             **ledger,
+            **observed_extra,
         },
         "chunk_seconds": chunk_seconds,
         **({"rebuild": extra} if extra else {}),

@@ -54,8 +54,20 @@ export interface FreshnessReport {
   /** Local runs: the Coordinator's automatic-run guards and the sources' post interval in effect. */
   run_guards?: { run_min_interval_s: number; auto_runs_max_per_day: number; production_values: boolean };
   tick_seconds?: number;
-  delivery?: { tick_seconds?: number | null };
+  /** The sources' delivery; results recorded after the retries landed (SPEC 29.4.1 item 11) carry the retry counters. */
+  delivery?: { tick_seconds?: number | null; attempts?: number; retries?: number; retry_reasons?: Record<string, number>; possible_duplicate_deliveries?: number };
   wall_time_s?: number;
+}
+
+/** What a freshness delivery's retries cost, when the result records them (older results do not). */
+export function deliveryRetries(r: FreshnessReport): string | null {
+  const d = r.delivery;
+  if (d?.retries === undefined || d.attempts === undefined) return null;
+  if (d.retries === 0) return `Source retries: none in ${d.attempts} HTTP attempts.`;
+  const reasons = Object.entries(d.retry_reasons ?? {})
+    .map(([k, n]) => `${k} ${n}`)
+    .join(", ");
+  return `Source retries: ${d.retries} in ${d.attempts} HTTP attempts (${reasons}), at most ${d.possible_duplicate_deliveries ?? 0} duplicate deliveries, which the warehouse merges.`;
 }
 
 /** How a freshness run was paced: the run guards and the sources' post interval (older local results did
@@ -136,9 +148,43 @@ export interface IngestCpuReport {
   other_paths?: { path: string; detail: string; warm_p99_ms: number; first_call_fresh_ms: [number, number] }[];
 }
 
-export type Report = ScenarioReport | FreshnessReport | AskReport | ParityReport | IngestCpuReport;
+export interface DeliveryRecoveryReport {
+  kind: "delivery-recovery";
+  command: string;
+  date: string;
+  profile: string;
+  engine: string;
+  chunks: number;
+  orchestration: string;
+  proxy: string;
+  machine?: string;
+  duration_s: number;
+  retry_policy: { max_attempts: number; base_delay_s: number; max_delay_s: number; max_retry_after_s: number; budget_s: number };
+  planned_requests: number;
+  proxy_ingest_requests: number;
+  faults_by_kind: Record<string, number>;
+  landed_then_failed_records: number;
+  delivery: { deliveries_sent: number; requests_sent: number; attempts: number; retries: number; retry_reasons: Record<string, number>; possible_duplicate_deliveries: number };
+  warehouse: {
+    raw_deliveries: number;
+    unique_events: number;
+    duplicate_deliveries_in_raw: number;
+    stg_events_rows: number;
+    stg_events_unique: number;
+    freshness_ledger_events: number;
+    runs: number;
+    runs_committed: number;
+  };
+  identical_to_reference: Record<string, boolean>;
+  oracle_rows_mismatched: number;
+  warn_checks_at_quiescence: Record<string, number>;
+  checks: Record<string, boolean>;
+  passed: boolean;
+}
 
-export const REPORT_KINDS: readonly Report["kind"][] = ["scenario-equivalence", "freshness", "ask", "metricflow-parity", "ingest-cpu"];
+export type Report = ScenarioReport | FreshnessReport | AskReport | ParityReport | IngestCpuReport | DeliveryRecoveryReport;
+
+export const REPORT_KINDS: readonly Report["kind"][] = ["scenario-equivalence", "freshness", "ask", "metricflow-parity", "ingest-cpu", "delivery-recovery"];
 
 const fmtS = (s: number | null | undefined): string => (s === null || s === undefined ? "n/a" : `${s} s`);
 
@@ -181,6 +227,8 @@ export function renderFreshnessReport(r: FreshnessReport, file: string): string 
     const c = r.ledger_coverage;
     details.push(`Ledger coverage: ${c.ledger_published_events} of ${c.delivered_unique_events} delivered unique events published (${c.complete ? "complete" : "INCOMPLETE"}).`);
   }
+  const retries = deliveryRetries(r);
+  if (retries) details.push(retries);
   if (r.target_15_minutes_p95_met !== undefined) details.push(`15-minute p95 target (reported, not asserted): ${r.target_15_minutes_p95_met ? "met" : "not met"}.`);
   return [
     `#### Freshness, ${r.target}, ${r.profile} profile${r.target === "local" ? (r.run_guards?.production_values ? ", production run guards" : ", wide run guards") : ""} (${r.date})`,
@@ -251,8 +299,44 @@ export function renderIngestCpuReport(r: IngestCpuReport, file: string): string 
   ].join("\n");
 }
 
+const FAULT_LABELS: Record<string, string> = {
+  drop: "connection dropped before the Worker",
+  error_500: "500 before the Worker",
+  backpressure_503: "503 landing_backpressure",
+  lost_answer: "landed then the answer lost",
+  error_500_after_landing: "landed then 500",
+};
+
+export function renderDeliveryRecoveryReport(r: DeliveryRecoveryReport, file: string): string {
+  const injected = Object.values(r.faults_by_kind).reduce((a, b) => a + b, 0);
+  const kinds = Object.entries(r.faults_by_kind)
+    .map(([k, n]) => `${FAULT_LABELS[k] ?? k} ${n}`)
+    .join(", ");
+  const p = r.retry_policy;
+  const d = r.delivery;
+  const w = r.warehouse;
+  const identical = Object.values(r.identical_to_reference).filter(Boolean).length;
+  const warn = Object.values(r.warn_checks_at_quiescence).reduce((a, b) => a + b, 0);
+  const failed = Object.entries(r.checks)
+    .filter(([, ok]) => !ok)
+    .map(([k]) => k);
+  return [
+    `#### Delivery recovery, ${r.profile} profile, ${r.engine} (${r.date})`,
+    "",
+    `Command: \`${r.command}\`. The baseline delivery (B, ${r.chunks} chunks) went through ${r.proxy}, which failed ${injected} of the ${r.proxy_ingest_requests} ingest requests it carried on purpose: ${kinds}. Retry policy: at most ${p.max_attempts} attempts and ${p.budget_s} s per batch, backoff ${p.base_delay_s} s doubling to ${p.max_delay_s} s with jitter, Retry-After honored up to ${p.max_retry_after_s} s. "Landed, then failed" counts the records of requests the Worker accepted before the proxy failed the answer; the client's bound is its \`possible_duplicate_deliveries\`. Orchestration: ${r.orchestration}.${r.machine ? ` Machine: ${r.machine}.` : ""} Duration ${r.duration_s} s. Source: \`${file}\`.`,
+    "",
+    "| Faults injected | Retries | Batches accepted | Events accepted | Landed, then failed | Duplicate deliveries in raw | Client's bound | Events in stg_events | Freshness ledger events | Identical models (of 10) | Oracle rows mismatched | Warn checks |",
+    "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    `| ${injected} | ${d.retries} | ${d.requests_sent} | ${d.deliveries_sent} | ${r.landed_then_failed_records} | ${w.duplicate_deliveries_in_raw} | ${d.possible_duplicate_deliveries} | ${w.stg_events_rows} | ${w.freshness_ledger_events} | ${identical} | ${r.oracle_rows_mismatched} | ${warn} |`,
+    "",
+    `Checks passed: ${Object.keys(r.checks).length - failed.length} of ${Object.keys(r.checks).length}${failed.length ? ` (failed: ${failed.join(", ")})` : ""}. Recovered with every event in the warehouse exactly once: **${r.passed ? "yes" : "no"}**.`,
+  ].join("\n");
+}
+
 function renderReport(report: Report, file: string): string {
   switch (report.kind) {
+    case "delivery-recovery":
+      return renderDeliveryRecoveryReport(report, file);
     case "ingest-cpu":
       return renderIngestCpuReport(report, file);
     case "metricflow-parity":

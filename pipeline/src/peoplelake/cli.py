@@ -456,6 +456,39 @@ def _cmd_eval_freshness(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_eval_delivery_recovery(args: argparse.Namespace) -> int:
+    import logging
+    from datetime import UTC, datetime
+
+    from .devtools.reference import reference_digests
+    from .evals.delivery_recovery import run_delivery_recovery, write
+    from .evals.scenarios import EvalError
+    from .paths import data_dir, repo_root
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    chunks = args.chunks or (20 if args.profile == "full" else 10)
+    workdir = data_dir() / "eval" / f"delivery-recovery-{args.profile}"
+    if args.reference:
+        reference = json.loads(Path(args.reference).read_text())["digests"]
+    else:
+        reference = reference_digests(args.profile, workdir / "reference")["digests"]
+    try:
+        report = run_delivery_recovery(args.profile, chunks, reference, workdir=workdir)
+    except EvalError as exc:
+        print(f"eval delivery-recovery: {exc}", file=sys.stderr)
+        return 2
+    date = datetime.now(UTC).strftime("%Y-%m-%d")
+    out = (
+        Path(args.out)
+        if args.out
+        else repo_root() / "evals" / "results" / f"delivery-recovery-{args.profile}-{report['engine']}-{date}.json"
+    )
+    write(report, out, "peoplelake eval delivery-recovery " + " ".join(sys.argv[3:]))
+    print(json.dumps({"passed": report["passed"], "checks": report["checks"], "out": str(out)}))
+    return 0 if report["passed"] else 1
+
+
 def _cmd_eval_oracle(args: argparse.Namespace) -> int:
     """SPEC 16.3: the metrics mart against the oracle seed, on a warehouse file (open it only after `stack down`)."""
     from .evals.scenarios import oracle_mismatches
@@ -765,6 +798,16 @@ def build_parser() -> argparse.ArgumentParser:
     fr.add_argument("--from-delivery", help="production: the prod:e2e delivery id (default: the latest)")
     fr.add_argument("--out")
     fr.set_defaults(func=_cmd_eval_freshness)
+
+    rec = ev_sub.add_parser(
+        "delivery-recovery",
+        help="the baseline delivery through a proxy that fails ingest requests; every event must land exactly once",
+    )
+    rec.add_argument("--profile", choices=["small", "full"], default="small")
+    rec.add_argument("--chunks", type=int)
+    rec.add_argument("--reference", help="reference digests JSON (default: computed now)")
+    rec.add_argument("--out")
+    rec.set_defaults(func=_cmd_eval_delivery_recovery)
 
     orc = ev_sub.add_parser("oracle", help="metrics mart against the oracle seed (open the file only after stack down)")
     orc.add_argument("--profile", choices=["small", "full"], default="small")
