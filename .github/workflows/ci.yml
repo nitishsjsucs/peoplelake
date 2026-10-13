@@ -12,7 +12,7 @@ env:
 
 jobs:
   node:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -33,7 +33,7 @@ jobs:
       - run: npm run check:prose
 
   python:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0
@@ -45,7 +45,7 @@ jobs:
       - run: uv run --project pipeline pytest -q -m "not e2e and not dbt" pipeline/tests
 
   dbt:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0
@@ -67,7 +67,7 @@ jobs:
           path: reference-digests-small.json
 
   clean-clone:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0
@@ -78,7 +78,7 @@ jobs:
       - run: uv run --project pipeline peoplelake dev clean-clone-check
 
   runner-image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - run: docker build --tag peoplelake-runner:ci .
@@ -90,7 +90,7 @@ jobs:
 
   e2e:
     needs: [node, python, dbt]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:

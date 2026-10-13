@@ -20,7 +20,7 @@ env:
 
 jobs:
   reference:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0
@@ -36,7 +36,7 @@ jobs:
 
   scenarios:
     needs: [reference]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -78,7 +78,7 @@ jobs:
     # The optional local freshness run (SPEC 16.2, 17): the full profile through the local stack for
     # freshness_minutes (default 20, also on the weekly schedule; 0 skips it). Reports only.
     if: ${{ (inputs.freshness_minutes || '20') != '0' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
