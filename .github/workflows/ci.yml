@@ -112,8 +112,9 @@ jobs:
           name: reference-digests-small
       - run: uv run --project pipeline peoplelake auth dev-keys
       - name: Scenario ${{ matrix.scenario }} on the small profile (local stack, DuckDB)
-        # Twice the slowest small-profile scenario step measured on this runner so far (S4, 148 s; see README CI).
-        timeout-minutes: 5
+        # Twice the slowest small-profile scenario step measured on this runner so far (S4, 153 s at
+        # 3573645), 306 s rounded up (see README CI).
+        timeout-minutes: 6
         run: >
           uv run --project pipeline peoplelake eval scenarios --profile small --chunks 10
           --scenarios ${{ matrix.scenario }} --reference reference-digests-small.json
